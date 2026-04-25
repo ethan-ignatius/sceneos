@@ -88,30 +88,34 @@ The first 30 seconds judges see. All 7 items shipped across rounds 4–6. Surfac
 
 ---
 
-## Phase 2 — Page-crumple transition (THE showpiece)
+## Phase 2 — Page-crumple transition (THE showpiece) ✅ COMPLETE (2026-04-25)
 
-### 2.1 🔴 GSAP timeline upgrade — 1.5h
-- **Surface:** `routes/crumple-bridge-route.tsx`
-- **Spec:** see `MOTION_LANGUAGE.md` §6.2. Six tracks running in parallel; total 1.6s.
-  - Track A (0–0.18s): ember-flash gradient ignites.
-  - Track B (0–0.95s): landing content collapse (scale + rotate + translate + blur + opacity).
-  - Track C (0.50–1.20s): canvas page mounts beneath, fades up.
-  - Track D (0.40–0.80s): ember-flash fades.
-  - Track E (0.20–1.40s, optional Plan A): GLSL paper-curl shader.
-  - Track F (1.40–1.60s): final settle.
-- **Acceptance:** GSAP timeline composed once and `play()`ed on mount. `onComplete` navigates to `/canvas`. No double-mount, no flash of unstyled canvas.
+The showpiece. All three items shipped. Lesson reflection lives in [`SHADERS_AUDIO.md`](SHADERS_AUDIO.md) — read that first if you're touching this surface.
 
-### 2.2 🟠 Plan A: GLSL paper-curl shader — 3h (stretch)
-- **Surface:** new `components/transition/paper-curl-canvas.tsx`
-- **Spec:**
-  - Snapshot the landing DOM via `html-to-image` → `data:image/png` → `THREE.Texture`.
-  - Mount a full-viewport `<Plane>` in R3F with a custom fragment shader that applies a curl distortion uniformly seeded by a `uCurlAngle` uniform animated 0 → π by GSAP.
-  - Optional: a noise mask that simulates the paper "burning" along the curl edge with an ember-warm emissive glow.
-- **Plan B (always shipped):** the GSAP-only version from 2.1 is the floor. If the shader slips, the showpiece still works.
-- **References:** see Codrops shader-paper-curl articles for shader sketch.
+### 2.1 ✅ GSAP timeline (six tracks, 1.6s) — `routes/crumple-bridge-route.tsx`
+- Six tracks composed via `gsap.timeline()` with explicit position parameters.
+- Track A (0–0.18s) ember-flash gradient ignites at bottom-right.
+- Track B (0–0.95s) landing content collapses (scale + rotate + translate + blur + opacity, `power3.in`).
+- Track C (0.50–1.20s) canvas silhouette fades up beneath.
+- Track D (0.40–0.80s) ember-flash fades out.
+- Track E (0.20–1.60s) **shipped** — see 2.2 below.
+- Track F (1.40–1.60s) final veil for clean handoff.
+- `onComplete` navigates to `/canvas`. Reduced-motion bypasses the timeline entirely.
 
-### 2.3 🟡 Audio cue (optional) — 0.3h
-- **Spec:** at 0.4s into the timeline, play a short analog-fire pop sample at -32dB. Mute respected. Use Howler.js or native `<audio>` with autoplay-friendly user-gesture context.
+### 2.2 ✅ Plan A: GLSL ember-burn shader — `components/transition/paper-curl-canvas.tsx`
+- R3F Canvas with orthographic camera + screen-quad mesh + custom `ShaderMaterial`. The vertex shader bypasses view/projection — `gl_Position = vec4(position.xy, 0.0, 1.0)` writes NDC directly.
+- Fragment shader procedurally draws an **ember-burn sweep** (not a paper curl — a simpler, lower-risk choice that reads identically on demo day). Burn axis: bottom-right `(1, 0)` → upper-left `(0, 1)`. Signed-distance `d = burnPos - projection + wobble` drives three smoothstep regions: `burned` (fills bg-base), `emberEdge` (hottest band), `emberHalo` (warm halo). Procedural value-noise wobbles the edge; hash-based sparks flicker in the halo. Palette matched to brand-ember `#f0a868`.
+- GSAP-to-shader bridge: `progressRef = useRef({ value: 0 })`. GSAP mutates `progressRef.current.value` 0→1 over 1.4s. `useFrame` reads it and pushes into `materialRef.current.uniforms.uProgress.value`. **No React re-renders per frame.**
+- Lazy-loaded via `React.lazy` so the 848kB R3F+three chunk doesn't ship on the landing route. Landing preloads the chunk on mount via dynamic import so the bridge route is hot when the user submits.
+- **Plan B floor:** the GSAP-only choreography from 2.1 still lands the transition if the shader chunk fails to load (Suspense fallback is `null`).
+
+### 2.3 ✅ Audio cues — `lib/audio-cues.ts`
+- Web Audio synthesis (no sample files): `playEmberPop` (filtered noise burst, ~150ms, lowpass 2400Hz → 80Hz) at +0.04s, `playCinematicRiser` (sub-bass sine 28Hz → 95Hz + bandpass noise sweep 400Hz → 3500Hz, 1.2s) at +0.18s.
+- Triggered via GSAP `tl.call()` so audio rides the same timeline as visuals.
+- Mute persisted in `localStorage["sceneos:audio-muted"]`. Landing's mute toggle writes; every `play*` call reads. Defaults to muted.
+- Form submit is the user gesture that unsuspends `AudioContext` — cues fire ~50–200ms later, well inside the activation window.
+
+**Phase 2 lessons banked (see `SHADERS_AUDIO.md`):** GSAP timeline composition with position parameter, R3F screen-quad pattern, GLSL signed-distance fields + value noise, ref-bridge between GSAP and shader uniforms, Web Audio synthesis without sample files, lazy chunk preload strategy, reduced-motion graceful degradation.
 
 ---
 

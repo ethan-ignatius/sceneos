@@ -1,4 +1,4 @@
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { Volume2, VolumeX, HelpCircle } from "lucide-react";
@@ -9,6 +9,7 @@ import { CursorSpotlight } from "@/components/ui/cursor-spotlight";
 import { TextSplitter } from "@/lib/text-splitter";
 import { useLongPress } from "@/lib/use-long-press";
 import { DEMO_PROMPT } from "@/lib/demo-project";
+import { isAudioMuted, setAudioMuted } from "@/lib/audio-cues";
 import { cn } from "@/lib/utils";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
 import type { VideoType } from "@/types/manifest";
@@ -43,10 +44,25 @@ export function LandingRoute() {
   const navigate = useNavigate();
   const { masterPrompt, videoType, setMasterPrompt, setVideoType } = usePromptStore();
   const initialize = useBeatGraphStore((s) => s.initialize);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(() => isAudioMuted());
   const [draft, setDraft] = useState(masterPrompt);
   const [inputFocused, setInputFocused] = useState(false);
   const [keystrokeKey, setKeystrokeKey] = useState(0);
+
+  // Preload the page-crumple R3F+three chunk so that the bridge route
+  // doesn't pay the network cost when the user submits. This makes the
+  // showpiece feel like the same page, not a fresh load.
+  useEffect(() => {
+    void import("@/components/transition/paper-curl-canvas").catch(() => {});
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      setAudioMuted(next);
+      return next;
+    });
+  }, []);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -264,7 +280,7 @@ export function LandingRoute() {
 
         <div className="flex items-center gap-3">
           <button
-            onClick={() => setMuted((m) => !m)}
+            onClick={toggleMute}
             className="text-fg-tertiary transition-colors hover:text-fg-primary"
             aria-label={muted ? "Unmute" : "Mute"}
           >

@@ -1,25 +1,34 @@
-import { useEffect, useRef } from "react";
+import { Suspense, lazy, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import gsap from "gsap";
-import { DURATIONS } from "@/lib/motion-presets";
+import { playCinematicRiser, playEmberPop } from "@/lib/audio-cues";
+
+const PaperCurlCanvas = lazy(() =>
+  import("@/components/transition/paper-curl-canvas").then((m) => ({
+    default: m.PaperCurlCanvas,
+  })),
+);
 
 /**
  * Page-crumple bridge between Landing and Canvas. The showpiece.
  *
- * Choreography (see docs/MOTION_LANGUAGE.md §6.2):
+ * Choreography (see docs/MOTION_LANGUAGE.md §6.2 + docs/SHADERS_AUDIO.md):
  *   Track A (0.00–0.18s)  Ember-flash radial gradient ignites at bottom-right.
  *   Track B (0.00–0.95s)  Landing-vibe content collapses (scale, rotate, blur, opacity).
  *   Track C (0.50–1.20s)  Canvas-page silhouette fades up beneath.
  *   Track D (0.40–0.80s)  Ember-flash fades.
- *   Track E (0.20–1.40s)  [Plan A only] GLSL paper-curl shader. Skipped in v0.
- *   Track F (1.40–1.60s)  Final settle.
+ *   Track E (0.20–1.60s)  GLSL ember-burn shader sweeps diagonally.
+ *   Track F (1.40–1.60s)  Final settle veil.
  *
- * Plan A (GLSL paper-curl) is deferred — see FRONTEND_TODO.md item 2.2.
- * The GSAP-only floor below already lands the showpiece on its own.
+ * Audio cues (synthesized — see lib/audio-cues.ts):
+ *   +0.04s  Ember pop (filtered noise burst, ~150ms).
+ *   +0.18s  Cinematic riser (sub-bass + bandpass sweep, ~1.2s).
  */
 export function CrumpleBridgeRoute() {
   const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
+  // GSAP-mutated ref bridge into the shader. Avoids per-frame React renders.
+  const progressRef = useRef({ value: 0 });
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -33,6 +42,10 @@ export function CrumpleBridgeRoute() {
     const tl = gsap.timeline({
       onComplete: () => navigate("/canvas", { replace: true }),
     });
+
+    // Audio cues — fired via tl.call so they ride the same timeline as visuals.
+    tl.call(() => playEmberPop({ volume: 0.07 }), [], 0.04);
+    tl.call(() => playCinematicRiser({ volume: 0.04 }), [], 0.18);
 
     // Track A — ember flash ignites at bottom-right
     tl.fromTo(
@@ -68,6 +81,10 @@ export function CrumpleBridgeRoute() {
 
     // Track D — flash fades
     tl.to(".crumple-flash", { opacity: 0, duration: 0.4, ease: "power2.in" }, 0.4);
+
+    // Track E — GLSL ember-burn shader sweeps the screen.
+    // The mutated ref is read every frame inside the shader's useFrame.
+    tl.to(progressRef.current, { value: 1, duration: 1.4, ease: "power1.inOut" }, 0.2);
 
     // Track F — final veil to ensure clean handoff to canvas mount
     tl.to(".crumple-veil", { opacity: 1, duration: 0.2, ease: "power2.out" }, 1.4);
@@ -116,11 +133,15 @@ export function CrumpleBridgeRoute() {
       {/* Track A — radial ember flash from bottom-right. */}
       <div className="crumple-flash pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_70%_70%,_rgba(240,168,104,0.55),_transparent_55%)] opacity-0" />
 
+      {/* Track E — GLSL ember-burn shader. Lazy-loaded so the R3F+three chunk
+          isn't paid on the landing route. Suspense fallback is null because
+          a missing burn for ~80ms is invisible against the GSAP-only floor. */}
+      <Suspense fallback={null}>
+        <PaperCurlCanvas progressRef={progressRef} />
+      </Suspense>
+
       {/* Track F — final veil. */}
       <div className="crumple-veil pointer-events-none absolute inset-0 bg-bg-base opacity-0" />
     </div>
   );
 }
-
-// Avoid unused-import diagnostic if DURATIONS is later wired in.
-void DURATIONS;
