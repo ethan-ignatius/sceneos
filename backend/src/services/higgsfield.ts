@@ -36,6 +36,7 @@ import {
 import type { JobStatus, GenerationProvider } from "../types/api.js";
 import type { HiggsfieldClipPrompt } from "../types/manifest.js";
 import type { GenerateClipParams as ProviderGenerateClipParams } from "./provider.js";
+import { publicIdForScene, uploadVideoFromUrl } from "./cloudinary.js";
 
 export interface GenerateClipParams {
   clipPrompt: HiggsfieldClipPrompt;
@@ -52,6 +53,7 @@ export interface GenerateClipResult {
 export interface JobStatusResult {
   status: JobStatus;
   clipUrl?: string;
+  clipPublicId?: string;
   imageUrl?: string;
   error?: string;
 }
@@ -139,7 +141,12 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResult> {
   if (!job) return { status: "failed", error: `unknown job ${jobId}` };
 
   if (job.stage === "succeeded") {
-    return { status: "succeeded", clipUrl: job.videoUrl, imageUrl: job.imageUrl };
+    return {
+      status: "succeeded",
+      clipUrl: job.cloudinaryUrl ?? job.videoUrl,
+      clipPublicId: job.cloudinaryPublicId,
+      imageUrl: job.imageUrl,
+    };
   }
   if (job.stage === "failed") {
     return { status: "failed", error: job.error };
@@ -193,7 +200,24 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResult> {
         error: "image-to-video succeeded but no asset URL was returned",
       });
     }
-    return finalize(job, "succeeded", { videoUrl: remote.assetUrl });
+    try {
+      const publicId = publicIdForScene({
+        projectId: job.projectId,
+        beatId: job.beatId,
+        sceneId: job.sceneId,
+        fallbackJobId: job.jobId,
+      });
+      const uploaded = await uploadVideoFromUrl(remote.assetUrl, publicId);
+      return finalize(job, "succeeded", {
+        videoUrl: remote.assetUrl,
+        cloudinaryUrl: uploaded.url,
+        cloudinaryPublicId: uploaded.publicId,
+      });
+    } catch (err) {
+      return finalize(job, "failed", {
+        error: `Cloudinary upload failed: ${(err as Error).message}`,
+      });
+    }
   }
 
   return { status: "queued" };
@@ -224,18 +248,30 @@ export async function cancelJob(jobId: string): Promise<void> {
 function finalize(
   job: Job,
   stage: Extract<JobStage, "succeeded" | "failed">,
-  patch: { videoUrl?: string; error?: string },
+  patch: {
+    videoUrl?: string;
+    cloudinaryUrl?: string;
+    cloudinaryPublicId?: string;
+    error?: string;
+  },
 ): JobStatusResult {
   const next: Job = {
     ...job,
     stage,
     videoUrl: patch.videoUrl ?? job.videoUrl,
+    cloudinaryUrl: patch.cloudinaryUrl ?? job.cloudinaryUrl,
+    cloudinaryPublicId: patch.cloudinaryPublicId ?? job.cloudinaryPublicId,
     error: patch.error ?? job.error,
     updatedAt: new Date().toISOString(),
   };
   putJob(next);
   return stage === "succeeded"
-    ? { status: "succeeded", clipUrl: next.videoUrl, imageUrl: next.imageUrl }
+    ? {
+        status: "succeeded",
+        clipUrl: next.cloudinaryUrl ?? next.videoUrl,
+        clipPublicId: next.cloudinaryPublicId,
+        imageUrl: next.imageUrl,
+      }
     : { status: "failed", error: next.error };
 }
 

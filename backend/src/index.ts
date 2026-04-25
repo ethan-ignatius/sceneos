@@ -8,6 +8,7 @@ import { generateRoute } from "./routes/generate.js";
 import { statusRoute } from "./routes/status.js";
 import { stitchRoute } from "./routes/stitch.js";
 import { cutosRoute } from "./routes/cutos.js";
+import { cloudinaryRoute } from "./routes/cloudinary.js";
 import { isMockMode, logMockBanner } from "./lib/mock-mode.js";
 
 const app = new Hono();
@@ -38,6 +39,7 @@ app.route("/api/generate", generateRoute);
 app.route("/api/status", statusRoute);
 app.route("/api/stitch", stitchRoute);
 app.route("/api/cutos", cutosRoute);
+app.route("/api/cloudinary", cloudinaryRoute);
 
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 app.onError((err, c) => {

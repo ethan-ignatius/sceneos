@@ -22,6 +22,8 @@ export interface Job {
   i2vRequestId?: string;
   imageUrl?: string;
   videoUrl?: string;
+  cloudinaryUrl?: string;
+  cloudinaryPublicId?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;

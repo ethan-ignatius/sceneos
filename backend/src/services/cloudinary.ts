@@ -1,16 +1,6 @@
 /**
- * Cloudinary service — server-side signing + URL construction.
- *
- * Cloudinary is treated as our **post-production pipeline**, not just
- * storage. Every transformation a film team would normally need
- * (concat, color grade, audio dub, captions, thumbnail extraction,
- * watermarking, format conversion, CDN delivery) is exposed here as a
- * URL-builder helper.
- *
- * Reference:
- *   https://cloudinary.com/documentation/video_trimming_and_concatenating
- *   https://cloudinary.com/documentation/video_layers
- *   https://cloudinary.com/documentation/video_manipulation_and_delivery
+ * Cloudinary service: upload signing, provider-output persistence, and URL
+ * builders for stitched final cuts.
  */
 import { v2 as cloudinary } from "cloudinary";
 import type { Manifest, BeatMood } from "../types/manifest.js";
@@ -20,41 +10,17 @@ const apiKey = process.env.CLOUDINARY_API_KEY;
 const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
 if (cloudName && apiKey && apiSecret) {
-  cloudinary.config({ cloud_name: cloudName, api_key: apiKey, api_secret: apiSecret, secure: true });
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
 } else if (process.env.NODE_ENV !== "test") {
-  console.warn("[cloudinary] CLOUDINARY_* env vars not set. URL construction will use 'demo' cloud.");
+  console.warn("[cloudinary] CLOUDINARY_* env vars not set. Upload/signing disabled.");
 }
 
-const CLOUD = cloudName ?? "demo"; // demo cloud has public sample assets
-
-// ────────────────────────────────────────────────────────────────────────
-// Final cut: fl_splice concatenation
-// ────────────────────────────────────────────────────────────────────────
-
-/**
- * Build the final fl_splice URL from an ordered list of public_ids.
- *
- * Pattern:
- *   {base}/video/upload/<modifiers>/l_video:<id2>,fl_splice/.../<id1>.mp4
- *
- * Replaces "/" → ":" in overlay public_ids because Cloudinary uses ":" as
- * the separator inside l_video: references.
- */
-export function buildSpliceUrl(orderedPublicIds: string[], options: BuildUrlOptions = {}): string | null {
-  if (orderedPublicIds.length === 0) return null;
-  const [first, ...rest] = orderedPublicIds;
-  const overlays = rest.map((id) => `l_video:${id.replace(/\//g, ":")},fl_splice`).join("/");
-  const overlaySegment = overlays ? `${overlays}/` : "";
-
-  const modifiers: string[] = [];
-  if (options.colorGrade) modifiers.push(options.colorGrade);
-  if (options.audioOverlay) modifiers.push(`l_audio:${options.audioOverlay.replace(/\//g, ":")}`);
-  if (options.watermarkPublicId)
-    modifiers.push(`l_${options.watermarkPublicId.replace(/\//g, ":")},g_south_east,x_24,y_24`);
-  const modifierSegment = modifiers.length ? `${modifiers.join("/")}/` : "";
-
-  return `https://res.cloudinary.com/${CLOUD}/video/upload/${modifierSegment}${overlaySegment}${first}.mp4`;
-}
+const CLOUD = cloudName ?? "demo";
 
 interface BuildUrlOptions {
   colorGrade?: string;
@@ -62,19 +28,95 @@ interface BuildUrlOptions {
   watermarkPublicId?: string;
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// Color grade per beat mood (LUT-style normalization)
-// ────────────────────────────────────────────────────────────────────────
+export interface SignedUploadParams {
+  timestamp: number;
+  signature: string;
+  apiKey: string;
+  cloudName: string;
+  folder: string;
+}
 
-/**
- * Per-mood color grade. Used to:
- *   1. Give each beat a distinct visual signature (warm hook, tense climax).
- *   2. Normalize visual quality across provider tiers (kling output graded
- *      to match higgsfield-tier recorded clips on stage).
- *
- * Apply per-clip via /transformations/<grade>/<id> in the upload URL, OR
- * embed in buildSpliceUrl({ colorGrade }) for the final cut.
- */
+export function signUpload(folder = "sceneos/user-media"): SignedUploadParams {
+  requireCloudinaryCredentials("signUpload");
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = cloudinary.utils.api_sign_request(
+    { timestamp, folder },
+    apiSecret!,
+  );
+
+  return {
+    timestamp,
+    signature,
+    apiKey: apiKey!,
+    cloudName: cloudName!,
+    folder,
+  };
+}
+
+export async function uploadVideoFromUrl(
+  remoteUrl: string,
+  publicId: string,
+): Promise<{
+  publicId: string;
+  url: string;
+  durationSeconds: number;
+}> {
+  requireCloudinaryCredentials("uploadVideoFromUrl");
+
+  const result = await cloudinary.uploader.upload(remoteUrl, {
+    resource_type: "video",
+    public_id: publicId,
+    overwrite: true,
+  });
+
+  return {
+    publicId: result.public_id,
+    url: result.secure_url,
+    durationSeconds: typeof result.duration === "number" ? result.duration : 0,
+  };
+}
+
+export function buildSpliceUrl(
+  orderedPublicIds: string[],
+  options: BuildUrlOptions = {},
+): string | null {
+  if (orderedPublicIds.length === 0) return null;
+
+  const [first, ...rest] = orderedPublicIds;
+  const overlays = rest
+    .map((id) => `l_video:${toLayerId(id)},fl_splice`)
+    .join("/");
+  const overlaySegment = overlays ? `${overlays}/` : "";
+
+  const modifiers: string[] = [];
+  if (options.colorGrade) modifiers.push(options.colorGrade);
+  if (options.audioOverlay) modifiers.push(`l_audio:${toLayerId(options.audioOverlay)}`);
+  if (options.watermarkPublicId) {
+    modifiers.push(`l_${toLayerId(options.watermarkPublicId)},g_south_east,x_24,y_24`);
+  }
+  const modifierSegment = modifiers.length ? `${modifiers.join("/")}/` : "";
+
+  return `https://res.cloudinary.com/${CLOUD}/video/upload/${modifierSegment}${overlaySegment}${first}.mp4`;
+}
+
+export function buildClipUrl(
+  publicId: string,
+  opts: { mood?: BeatMood; format?: "mp4" | "webm" } = {},
+): string {
+  const transformations = opts.mood ? `${colorGradeFor(opts.mood)}/` : "";
+  return `https://res.cloudinary.com/${CLOUD}/video/upload/${transformations}${publicId}.${opts.format ?? "mp4"}`;
+}
+
+export function buildThumbnailUrl(publicId: string): string {
+  return `https://res.cloudinary.com/${CLOUD}/video/upload/so_auto/${publicId}.jpg`;
+}
+
+export function withCaption(url: string, caption: string): string {
+  const escaped = encodeURIComponent(caption).replace(/'/g, "%27");
+  const layer = `l_text:Inter_36_bold:${escaped},co_white,bo_2px_solid_black,g_south,y_60`;
+  return url.replace("/upload/", `/upload/${layer}/`);
+}
+
 export function colorGradeFor(mood: BeatMood): string {
   switch (mood) {
     case "wide-establish":
@@ -92,48 +134,40 @@ export function colorGradeFor(mood: BeatMood): string {
   }
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// Per-clip transforms (for inline previews)
-// ────────────────────────────────────────────────────────────────────────
-
-/** Build a delivery URL for a single clip with optional grade applied. */
-export function buildClipUrl(publicId: string, opts: { mood?: BeatMood; format?: "mp4" | "webm" } = {}): string {
-  const segments: string[] = [];
-  if (opts.mood) segments.push(colorGradeFor(opts.mood));
-  const segment = segments.length ? `${segments.join("/")}/` : "";
-  return `https://res.cloudinary.com/${CLOUD}/video/upload/${segment}${publicId}.${opts.format ?? "mp4"}`;
-}
-
-/** Extract a JPG thumbnail at the auto-best-frame point. */
-export function buildThumbnailUrl(publicId: string): string {
-  return `https://res.cloudinary.com/${CLOUD}/video/upload/so_auto/${publicId}.jpg`;
-}
-
-/** Add a caption layer (l_text) at the bottom of the frame. */
-export function withCaption(url: string, caption: string): string {
-  const escaped = encodeURIComponent(caption).replace(/'/g, "%27");
-  const layer = `l_text:Inter_36_bold:${escaped},co_white,bo_2px_solid_black,g_south,y_60`;
-  return url.replace("/upload/", `/upload/${layer}/`);
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// Server-side upload (Higgsfield URL → Cloudinary)
-// ────────────────────────────────────────────────────────────────────────
-
-export async function uploadVideoFromUrl(_remoteUrl: string, _publicId: string): Promise<{
-  publicId: string;
-  url: string;
-  durationSeconds: number;
-}> {
-  // const result = await cloudinary.uploader.upload(remoteUrl, { resource_type: "video", public_id: publicId });
-  // return { publicId: result.public_id, url: result.secure_url, durationSeconds: result.duration };
-  throw new Error("services/cloudinary.ts: uploadVideoFromUrl not implemented");
-}
-
-/** Sum of approved scene durations across the manifest. */
 export function totalDuration(manifest: Manifest): number {
   return manifest.beats
     .flatMap((b) => b.scenes)
     .filter((s) => s.approved)
     .reduce((sum, s) => sum + (s.durationSeconds ?? 0), 0);
+}
+
+export function publicIdForScene(args: {
+  projectId?: string;
+  beatId?: string;
+  sceneId?: string;
+  fallbackJobId: string;
+}): string {
+  const projectId = sanitizeSegment(args.projectId ?? "unknown-project");
+  const beatId = sanitizeSegment(args.beatId ?? "unknown-beat");
+  const sceneId = sanitizeSegment(args.sceneId ?? args.fallbackJobId);
+  return `sceneos/${projectId}/${beatId}/${sceneId}`;
+}
+
+function requireCloudinaryCredentials(caller: string): void {
+  if (!cloudName || !apiKey || !apiSecret) {
+    throw new Error(`${caller}: missing CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET`);
+  }
+}
+
+function toLayerId(publicId: string): string {
+  return publicId.replace(/\//g, ":");
+}
+
+function sanitizeSegment(segment: string): string {
+  return segment
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "unnamed";
 }
