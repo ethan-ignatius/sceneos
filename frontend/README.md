@@ -10,11 +10,12 @@ npm install
 npm run dev                # http://localhost:5173
 ```
 
-**Always run a backend alongside.** The frontend never mocks itself; it always talks to a real Hono server. For frontend-only dev, run the mock backend in a second terminal:
+**Always run a backend alongside.** The frontend never mocks itself; it always talks to a real FastAPI server. For frontend-only dev, run the mock backend in a second terminal:
 
 ```bash
-cd ../backend
-npm run dev:mock           # http://localhost:8787 — no keys needed
+cd ../backend_py
+MOCK_MODE=true uvicorn sceneos_py.app:app --reload --port 8787
+# http://localhost:8787 — loads .env.mock (no keys needed)
 ```
 
 See [`../docs/MOCK_BACKEND.md`](../docs/MOCK_BACKEND.md) for the contract and [`../docs/FRONTEND_BUILDOUT.md`](../docs/FRONTEND_BUILDOUT.md) for the screen-by-screen build guide.
@@ -37,7 +38,7 @@ src/
 │   └── ui/               # shared primitives
 ├── stores/               # Zustand
 ├── lib/                  # Cloudinary, api, motion presets, beat templates
-└── types/                # mirrors backend/src/types
+└── types/                # API contract mirrored manually with backend_py
 ```
 
 ## Stack

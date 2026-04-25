@@ -7,14 +7,15 @@ from .fixtures import request_with_turns
 
 
 def test_agent_endpoint_returns_question(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("MOCK_MODE", "true")
     client = TestClient(app)
     res = client.post("/api/agent", json=request_with_turns([], "An astronaut is alone."))
     assert res.status_code == 200
     assert res.json()["kind"] == "question"
 
 
-def test_generate_rejects_insufficient_prompt():
+def test_generate_accepts_short_prompt_in_mock_mode(monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "true")
     client = TestClient(app)
     res = client.post(
         "/api/generate",
@@ -22,11 +23,15 @@ def test_generate_rejects_insufficient_prompt():
             "projectId": "p",
             "beatId": "b",
             "sceneId": "s",
-            "refinedPrompt": "too short",
+            "refinedPrompt": "short prompt is fine in mock",
             "durationSeconds": 5,
+            "beatTemplate": "trailer.establishing",
         },
     )
-    assert res.status_code == 400
+    assert res.status_code == 200
+    body = res.json()
+    assert body["provider"] == "cached"
+    assert body["jobId"].startswith("mock::")
 
 
 def test_stitch_builds_url():

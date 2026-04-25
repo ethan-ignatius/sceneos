@@ -46,7 +46,7 @@ sceneos/
 ├── CONTEXT.md             # master overview
 ├── docs/                  # architecture & strategy
 ├── frontend/              # Vite + React 19 + TS
-└── backend/               # Hono + Node TS skeleton
+└── backend_py/            # FastAPI + LangGraph (Python 3.11+)
 ```
 
 ## Quick start
@@ -55,18 +55,20 @@ Two terminals, always.
 
 ```bash
 # terminal 1 — backend (mock mode, no keys needed)
-cd backend
-npm install
-npm run dev:mock           # http://localhost:8787
+cd backend_py
+python3 -m venv .venv
+source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+MOCK_MODE=true uvicorn sceneos_py.app:app --reload --port 8787
 
 # terminal 2 — frontend
 cd frontend
 cp .env.example .env
 npm install
-npm run dev                # http://localhost:5173
+npm run dev                   # http://localhost:5173
 ```
 
-The frontend is **never** mocked itself — it always makes real HTTP calls to a real backend. In mock mode, the **backend** returns canned realistic data. Flip to real services later by populating `backend/.env` and running `npm run dev` (auto-detects keys).
+The frontend is **never** mocked itself — it always makes real HTTP calls to a real backend. In mock mode, the **backend** loads `.env.mock` (no provider keys) and returns canned realistic data. Flip to real services by populating `backend_py/.env` and starting uvicorn without `MOCK_MODE`.
 
 ---
 
@@ -74,9 +76,9 @@ The frontend is **never** mocked itself — it always makes real HTTP calls to a
 
 **Frontend:** Vite 7 · React 19 · TypeScript 5.7 · Tailwind v4 · Motion · GSAP · React Three Fiber · drei · postprocessing · Zustand · TanStack Query · @cloudinary/react · @cloudinary/url-gen · Radix UI · Lucide · Sonner.
 
-**Backend:** Hono on Node · TypeScript · cloudinary SDK · openai SDK · zod.
+**Backend:** FastAPI · Python 3.11+ · LangGraph · Anthropic SDK (Vertex + direct) · google-auth · fal-client · httpx · pydantic.
 
-**External services:** Higgsfield (clip gen) · Cloudinary (media + concat + CDN) · OpenAI/Anthropic (questionnaire agent) · CutOS (optional editor handoff).
+**External services:** Higgsfield / Vertex AI Veo / Kling / fal / Replicate (clip gen, switchable via `GENERATION_PROVIDER`) · Cloudinary (media + concat + CDN) · Anthropic (questionnaire agent + decomposer) · CutOS (optional editor handoff).
 
 ---
 

@@ -1,5 +1,6 @@
 /**
- * API request/response shapes. Mirror of backend/src/types/api.ts.
+ * API request/response shapes. Frontend canonical copy; the FastAPI backend
+ * (backend_py/sceneos_py) accepts/returns these same shapes via dict bodies.
  * Source of truth: docs/SHARED_TYPES.md
  */
 import type { Manifest } from "./manifest";
@@ -38,10 +39,17 @@ export interface GenerateRequest {
  *  - higgsfield: recorded-demo tier (best quality, slow)
  *  - kling:      live-demo tier (faster, slightly lower quality)
  *  - fal:        fast/cheap real-AI tier via fal.ai (LTX-Video)
+ *  - vertex:     Google Cloud Vertex AI Veo (proof-of-concept tier)
  *  - replicate:  multi-model fallback
  *  - cached:     hard-coded demo project (instant, on-stage safety net)
  */
-export type GenerationProvider = "higgsfield" | "kling" | "fal" | "replicate" | "cached";
+export type GenerationProvider =
+  | "higgsfield"
+  | "kling"
+  | "fal"
+  | "vertex"
+  | "replicate"
+  | "cached";
 
 export interface GenerateResponse {
   jobId: string;

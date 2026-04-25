@@ -85,7 +85,7 @@ async def _poll(request_id: str) -> dict:
     return {"status": "running"}
 
 
-async def generate(params: dict) -> str:
+async def generate(params: dict) -> dict:
     prompt = params.get("clipPrompt") or {
         "imagePrompt": params["refinedPrompt"],
         "motionPrompt": params["refinedPrompt"],
@@ -118,7 +118,7 @@ async def generate(params: dict) -> str:
             scene_id=params.get("sceneId"),
         )
     )
-    return job_id
+    return {"jobId": job_id}
 
 
 async def status(job_id: str) -> dict:

@@ -38,21 +38,49 @@ def color_grade_for(mood: str) -> str:
     }.get(mood, "")
 
 
-def build_splice_url(clips: list[dict], audio_public_id: str | None = None) -> str | None:
+_NORMALIZE = "c_fill,w_1920,h_1080"
+
+
+def _clip_segments(clip: dict, normalize: bool = True) -> list[str]:
+    out: list[str] = []
+    if normalize:
+        out.append(_NORMALIZE)
+    if clip.get("colorGrade"):
+        out.append(clip["colorGrade"])
+    return out
+
+
+def build_splice_url(
+    clips: list[dict],
+    audio_public_id: str | None = None,
+    normalize: bool = True,
+) -> str | None:
+    """
+    Cloudinary fl_splice URL builder.
+
+    Mirrors backend/src/services/cloudinary.ts. Each clip is normalized to a
+    common 1920x1080 frame before splicing so mixed provider outputs stitch
+    cleanly. Mood color grade applied when provided per clip.
+    """
     if not clips:
         return None
     base, *overlays = clips
     segments: list[str] = []
-    if base.get("colorGrade"):
-        segments.append(base["colorGrade"])
+    segments.extend(_clip_segments(base, normalize))
+
     for clip in overlays:
         layer = f"l_video:{_layer_id(clip['publicId'])}"
-        if clip.get("colorGrade"):
-            segments.extend([layer, clip["colorGrade"], "fl_layer_apply,fl_splice"])
+        transforms = _clip_segments(clip, normalize)
+        if transforms:
+            segments.append(layer)
+            segments.extend(transforms)
+            segments.append("fl_layer_apply,fl_splice")
         else:
             segments.append(f"{layer},fl_splice")
+
     if audio_public_id:
         segments.append(f"l_audio:{_layer_id(audio_public_id)}")
+
     prefix = f"{'/'.join(segments)}/" if segments else ""
     return f"https://res.cloudinary.com/{CLOUD}/video/upload/{prefix}{base['publicId']}.mp4"
 

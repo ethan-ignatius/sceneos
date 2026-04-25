@@ -6,7 +6,7 @@ from typing import Iterable
 
 REQUIRED_FACETS = ("subject", "action", "setting", "framing", "mood")
 MIN_USER_TURNS = 2
-MAX_QUESTIONS = 5
+MAX_QUESTIONS = 6
 
 FACET_HINTS: dict[str, tuple[str, ...]] = {
     "subject": (

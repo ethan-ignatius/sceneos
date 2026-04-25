@@ -1,6 +1,6 @@
 /**
- * Mirror of backend/src/types/manifest.ts.
- * When you change a type here, update the other copy in the same commit.
+ * Manifest shape. Frontend canonical copy; the FastAPI backend (backend_py/sceneos_py)
+ * accepts this via dict bodies.
  * Source of truth: docs/SHARED_TYPES.md
  */
 

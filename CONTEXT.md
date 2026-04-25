@@ -104,9 +104,10 @@ Detailed diagrams in [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.
 └──────────────┬─────────────────────────────────────────────────┘
                │ HTTPS
        ┌───────▼────────────────────────────┐
-       │  SceneOS Backend (Hono + Node TS)   │
+       │  SceneOS Backend (FastAPI + Python) │
        │   • POST /api/agent (questionnaire) │
-       │   • POST /api/generate (Higgsfield) │
+       │   • POST /api/decompose (LLM)       │
+       │   • POST /api/generate (provider)   │
        │   • POST /api/cutos/import (handoff)│
        │   • GET  /api/status/:jobId          │
        └───┬─────────┬────────────┬──────────┘
@@ -138,12 +139,12 @@ sceneos/
 ├── frontend/                   ← Vite + React 19 + TS app
 │   ├── package.json
 │   └── src/
-└── backend/                    ← Hono + Node TS skeleton
-    ├── package.json
-    └── src/
+└── backend_py/                 ← FastAPI + LangGraph + Python 3.11+
+    ├── pyproject.toml
+    └── sceneos_py/
 ```
 
-Mirror of the FlowBoard layout (`frontend/` + `backend/`) so teammates feel at home.
+Mirrors the `frontend/` + `backend_py/` split so teammates feel at home.
 
 ---
 
@@ -164,10 +165,13 @@ Detailed rationale in `docs/FRONTEND_PHILOSOPHY.md` and `docs/BACKEND_ARCHITECTU
 - Radix UI primitives + Lucide icons + Sonner toasts
 
 **Backend**
-- Hono on Node + TypeScript (lightweight, fast, hackathon-friendly)
-- `cloudinary` SDK (server signing)
-- `zod` (request validation)
-- `openai` or `@ai-sdk/openai` (agent questionnaire LLM — mirrors CutOS choice)
+- FastAPI + Uvicorn on Python 3.11+
+- LangGraph (agent state machine scaffolding)
+- Anthropic SDK with Vertex AI routing (questionnaire agent + prompt decomposer)
+- `google-auth` (Vertex AI Veo + AnthropicVertex SA auth)
+- `fal-client` (fal.ai LTX-Video provider)
+- `httpx` (Higgsfield, CutOS, Cloudinary upload)
+- `pydantic` (request validation)
 
 ---
 
