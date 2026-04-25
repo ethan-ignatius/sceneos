@@ -65,7 +65,12 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     return registerElement(containerRef.current);
   }, [registerElement]);
 
-  const positions = useMemo(() => computeBeatPositions(beats), [beats]);
+  // Layout depends only on beat count, not per-beat data. Memoising on
+  // `beats` directly meant every applyDecomposition (which spreads m.beats
+  // into a new array reference) would rebuild positions, rebuild the
+  // ConnectingPath geometry, and re-flash every NodeMesh's `<group
+  // position=…>` prop — which read on screen as the orbs blinking out.
+  const positions = useMemo(() => computeBeatPositions(beats), [beats.length]);
 
   // Camera distance scales with beat count (#161): default 5.5 fits 5 beats;
   // 7 needs ~6.7, 12 needs ~10.5. Pull back so outer beats stay in frustum.
