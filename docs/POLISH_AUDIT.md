@@ -71,7 +71,7 @@ The promise: when the user's OS has `prefers-reduced-motion: reduce` set, every 
 | Landing flicker reveal | CSS `@media (prefers-reduced-motion: reduce)` in index.css | `.flicker-on-mount > span > span` set to `opacity: 1`, `animation: none` | ✅ |
 | Landing ember pulse on radial bg | Motion `animate={{ opacity: [0.4, 0.7, 0.4] }}` | landing-route.tsx | ❌ — no guard. **Fix needed.** |
 | Landing magnetic button hover | CSS — `@media (hover: hover) and (pointer: fine)` already gates it | index.css | ✅ |
-| Landing input keystroke pulse | Motion variants | landing-route.tsx | ❌ — no guard, but it's a 0.18s opacity flash; arguably fine. **Verify.** |
+| Landing input keystroke pulse | Motion variants gated on `useReducedMotion()` | landing-route.tsx | ✅ — gated; the scaleY transform is suppressed entirely under reduced-motion |
 | Crumple bridge GSAP timeline | manual `prefers-reduced-motion` check at top of effect | crumple-bridge-route.tsx | ✅ — bypasses to a 200ms timeout + navigate |
 | Crumple shader (paper-curl-canvas) | not animated under reduced-motion (shader doesn't run because GSAP timeline is bypassed) | — | ✅ via the bridge bypass |
 | Audio cues (ember pop, riser) | mute toggle is independent | audio-cues.ts | n/a |
@@ -165,7 +165,7 @@ Phase 0/2 shipped audio cues. Phase 8 adds one or two more so the experience has
 - `playApproveChime` — 2-note ascending sine (~120ms total) on Approve scene click. Hint of completion, no fanfare.
 - `playRenderWhoosh` — bandpass-noise sweep (~200ms) on Render CTA click — pairs with the navigate to /final.
 
-That's it. **Two more cues, not five.** Awwwards-tier sound design is *restrained* — the absence of sound makes the present sounds matter.
+That's it. **Two new cues; total palette is now five** (ember pop, cinematic riser, ambient projector, approve chime, render whoosh). Awwwards-tier sound design is *restrained* — the absence of sound makes the present sounds matter.
 
 **Where the cues fire:**
 
@@ -176,7 +176,7 @@ That's it. **Two more cues, not five.** Awwwards-tier sound design is *restraine
 
 Both respect `isAudioMuted()`; both are short one-shots (<250ms); both are synthesized via Web Audio (no sample files).
 
-**Volume calibration.** All cues should peak at ≤-32dB (linear ≈ 0.025–0.07). Anything louder dominates the room tone and feels intrusive. Tune by playing through the demo flow and listening; if a cue stands out *too much*, drop volume by half.
+**Volume calibration.** All cues peak in the -32dB to -27dB band (linear ≈ 0.025–0.05). Specifically: ember pop 0.07 (-23dB, the loudest — but it's the bridge ignition where it's the only audio), cinematic riser 0.04 (-28dB), ambient projector 0.025 (-32dB), approve chime 0.05 (-26dB), render whoosh 0.045 (-27dB). Anything louder than -23dB dominates and feels intrusive. Tune by playing through the demo flow and listening; if a cue stands out *too much*, drop volume by half.
 
 ---
 

@@ -332,12 +332,41 @@ The integration test of taste. Methodology + results documented in [`POLISH_AUDI
 
 ---
 
-## Phase 9 — Stretch (only if everything 🔴 and 🟠 is shipped)
+## Phase 9 — Stretch ✅ COMPLETE (2026-04-25)
 
-### 9.1 🟢 GLSL paper-curl shader (Plan A from 2.2) — 3h
-### 9.2 🟢 CutOS handoff modal — 0.5h
-### 9.3 🟢 Scrollable below-the-fold "About / How it works" — *probably skip*
-### 9.4 🟢 Below-fold testimonials / partner logos — *skip*
+LA Hacks 2026 is happening live; calculus is hackathon-mode. Skipped 9.1, 9.3, 9.4 with documented rationale. Shipped 9.2 plus a high-leverage hackathon-context bonus (9.B). Lesson reflection lives in [`STRETCH_DELIVERIES.md`](STRETCH_DELIVERIES.md).
+
+### 9.1 ❌ GLSL paper-curl shader — superseded by Phase 2 burn shader
+- The original Plan A (paper curl via `html-to-image` → `THREE.Texture`) was the fallback if Phase 2 stayed GSAP-only. **Phase 2 shipped the GLSL ember-burn instead** (signed-distance burn line, value noise, smoothstep regions, ember palette). That delivers the same emotional beat ("the page is being consumed") without the html-to-image dep. Adding paper-curl ON TOP would be a different metaphor (curl vs. burn) and visually muddy. Deferred-with-rationale; kept in stretch-bin only.
+
+### 9.2 ✅ CutOS handoff modal — `components/node/cutos-handoff-modal.tsx`
+- Replaces the old fire-and-forget `window.open` in the FinalDeliveryRoute with a state-machine modal.
+- New project-styled `components/ui/dialog.tsx` wrapping Radix Dialog (gives a11y for free: focus trap, esc-to-close, overlay click). Reused for 9.B as well.
+- Three states: `importing` (spinner + "Importing project to CutOS…"), `ready` (success badge + "Imported. Ready to open."), `failed` (error message + Retry button).
+- Project metadata (project shortId, beat count, duration) shown in a 3-col mono grid so judges see *what* is being handed off.
+- "Open in CutOS" button inside the modal IS the user gesture — popup-blocker friendly.
+- Lazy-loaded via `React.lazy` so Radix Dialog doesn't bloat the main bundle.
+
+### 9.B ✅ (bonus, hackathon-context) "How it works" walkthrough — `components/landing/how-it-works-modal.tsx`
+- Triggered by the previously-inert Help button in the landing footer. Three steps with lucide icons:
+  - **Direct** (Mic) — "You describe your idea in one sentence. No storyboards, no shot lists."
+  - **Refine** (MessagesSquare) — "A directorial agent asks two questions per beat — lens, blocking, color — using the language of cinema, not 'what mood?'."
+  - **Cut** (Film) — "Cloudinary stitches the final cinematic in a URL you can copy."
+- Footer reads "Built for LA Hacks 2026 · Cloudinary track" — sponsor-track signal.
+- Resists auto-show on first visit (would crash the flicker reveal entrance); strictly opt-in via Help click.
+- Lazy-loaded same as the CutOS modal.
+
+### 9.3 ❌ Below-fold "About / How it works" — superseded by 9.B
+- Spec said "probably skip" — the Help-button modal is the cleaner surface (judges who want context know to click Help; nobody scrolls below the fold on landing during a 30s demo).
+
+### 9.4 ❌ Below-fold testimonials / partner logos — skipped per spec
+- "Nobody at LA Hacks ships testimonials." — the docs.
+
+**Bundle impact:**
+- Main bundle: 192.32 KB gzipped — held the line under the 200KB target despite adding Radix Dialog + two modals.
+- New lazy chunks: `dialog-*.js` 11.68 KB gzipped, `how-it-works-modal-*.js` 1.23 KB, `cutos-handoff-modal-*.js` 1.42 KB. Only paid when a user opens a modal.
+
+**Phase 9 lessons banked (see `STRETCH_DELIVERIES.md`):** hackathon-mode prioritization (every choice documented so the call is defensible), Radix Dialog + Motion variants pattern for project-styled modals, when to lazy-load to hold a bundle budget (Radix Dialog is the canonical example — heavy primitive, infrequent use), explicit-skip-with-rationale > silent backlog.
 
 ---
 

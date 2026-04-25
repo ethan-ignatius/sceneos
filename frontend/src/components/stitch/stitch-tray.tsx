@@ -87,12 +87,15 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   };
 
   const handleRender = async () => {
+    // Early returns before the audio cue — a double-click during in-flight
+    // would otherwise stack two whooshes on top of each other.
     if (!manifest || !allReady || rendering) return;
-    // Whoosh fires at click-time; the navigate happens after stitchUrl
-    // resolves. The cue's tail (200ms) carries into the /final mount.
-    playRenderWhoosh();
     setRendering(true);
     setRenderError(null);
+    // Whoosh fires at click-time (after the early-return); the navigate
+    // happens after stitchUrl resolves. The cue's tail (200ms) carries
+    // into the /final mount.
+    playRenderWhoosh();
     try {
       const res = await api.stitchUrl({ manifest });
       if (!mountedRef.current) return;

@@ -66,12 +66,15 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   }
 
   const handleApprove = () => {
+    // Race guard: a double-click within the 220ms close-drawer window
+    // would re-fire approveScene + the chime. The timer ref doubles as
+    // an "in flight" flag — if it's set, we're already approving.
+    if (isApproved || approveTimerRef.current !== null) return;
     approveScene(beat.beatId, scene.sceneId);
     // Two-note chime — quiet completion punctuation; mute toggle respected.
     playApproveChime();
     // Brief pause (DURATIONS.quick) so the user sees the approve happen
     // before the drawer exit animation runs — feels more deliberate.
-    if (approveTimerRef.current !== null) window.clearTimeout(approveTimerRef.current);
     approveTimerRef.current = window.setTimeout(() => {
       approveTimerRef.current = null;
       setActiveBeat(null);

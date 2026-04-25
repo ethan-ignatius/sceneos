@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { MotionConfig, motion } from "motion/react";
+import { MotionConfig, motion, useReducedMotion } from "motion/react";
 import { Volume2, VolumeX, HelpCircle } from "lucide-react";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { MagneticButton } from "@/components/ui/magnetic-button";
 import { CursorSpotlight } from "@/components/ui/cursor-spotlight";
+// Lazy-loaded — keeps Radix Dialog out of the main bundle. Only loads
+// when the user actually opens Help.
+const HowItWorksModal = lazy(() =>
+  import("@/components/landing/how-it-works-modal").then((m) => ({
+    default: m.HowItWorksModal,
+  })),
+);
 import { TextSplitter } from "@/lib/text-splitter";
 import { useLongPress } from "@/lib/use-long-press";
 import { DEMO_PROMPT } from "@/lib/demo-project";
@@ -44,10 +51,12 @@ export function LandingRoute() {
   const navigate = useNavigate();
   const { masterPrompt, videoType, setMasterPrompt, setVideoType } = usePromptStore();
   const initialize = useBeatGraphStore((s) => s.initialize);
+  const reducedMotion = useReducedMotion();
   const [muted, setMuted] = useState(() => isAudioMuted());
   const [draft, setDraft] = useState(masterPrompt);
   const [inputFocused, setInputFocused] = useState(false);
   const [keystrokeKey, setKeystrokeKey] = useState(0);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Preload the page-crumple R3F+three chunk so that the bridge route
   // doesn't pay the network cost when the user submits. This makes the
@@ -170,8 +179,10 @@ export function LandingRoute() {
                 animate={{ scaleX: ready || inputFocused ? 1 : 0 }}
                 transition={{ duration: DURATIONS.quick, ease: EASE.outQuart, delay: TIMING.inputDelay }}
               />
-              {/* (3) Keystroke pulse — re-keyed per keystroke for a brief brightness boost */}
-              {keystrokeKey > 0 ? (
+              {/* (3) Keystroke pulse — re-keyed per keystroke for a brief brightness boost.
+                    Skipped under reduced-motion: the scaleY pulse is transform-based
+                    and the brief opacity flash isn't load-bearing UX. */}
+              {keystrokeKey > 0 && !reducedMotion ? (
                 <motion.span
                   key={keystrokeKey}
                   className="absolute inset-y-[-1px] left-0 origin-left bg-brand-ember"
@@ -293,14 +304,23 @@ export function LandingRoute() {
             {muted ? <VolumeX size={16} strokeWidth={1.5} /> : <Volume2 size={16} strokeWidth={1.5} />}
           </button>
           <button
+            onClick={() => setHelpOpen(true)}
             className="text-fg-tertiary transition-colors hover:text-fg-primary"
-            aria-label="Help"
-            title="Help"
+            aria-label="How it works"
+            title="How it works"
           >
             <HelpCircle size={16} strokeWidth={1.5} />
           </button>
         </div>
       </motion.footer>
+
+      {/* Suspense fallback null — modal is invisible while chunk fetches; user
+          sees the click registered (helpOpen=true) and the modal mounts on next tick. */}
+      {helpOpen ? (
+        <Suspense fallback={null}>
+          <HowItWorksModal open={helpOpen} onOpenChange={setHelpOpen} />
+        </Suspense>
+      ) : null}
     </main>
     </MotionConfig>
   );

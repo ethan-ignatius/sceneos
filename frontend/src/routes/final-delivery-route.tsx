@@ -1,16 +1,23 @@
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Download, Link2, ExternalLink, ArrowRight, Loader2 } from "lucide-react";
+import { Download, Link2, ExternalLink, ArrowRight } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
-import { api, ApiError } from "@/lib/api";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+
+// Lazy — keeps Radix Dialog + the modal's import graph out of the route's
+// initial chunk. Only loads when the user clicks Open in CutOS.
+const CutOSHandoffModal = lazy(() =>
+  import("@/components/node/cutos-handoff-modal").then((m) => ({
+    default: m.CutOSHandoffModal,
+  })),
+);
 
 /**
  * The exhale. The delivery. The screen the user shares.
@@ -34,7 +41,7 @@ export function FinalDeliveryRoute() {
   const resetPrompt = usePromptStore((s) => s.reset);
   const reducedMotion = useReducedMotion();
 
-  const [openingCutOS, setOpeningCutOS] = useState(false);
+  const [cutOSOpen, setCutOSOpen] = useState(false);
   const playerWrapRef = useRef<HTMLDivElement>(null);
 
   // Window-bound scroll velocity drives the parallax. The hook returns
@@ -69,22 +76,9 @@ export function FinalDeliveryRoute() {
     toast.success("Share link copied");
   }, [finalUrl]);
 
-  const handleCutOS = useCallback(async () => {
-    if (!manifest || openingCutOS) return;
-    setOpeningCutOS(true);
-    try {
-      const res = await api.cutosImport({ manifest });
-      if (!res.editUrl) {
-        toast.error("CutOS returned no edit URL");
-        return;
-      }
-      window.open(res.editUrl, "_blank", "noopener,noreferrer");
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "CutOS handoff failed.");
-    } finally {
-      setOpeningCutOS(false);
-    }
-  }, [manifest, openingCutOS]);
+  const handleCutOS = useCallback(() => {
+    setCutOSOpen(true);
+  }, []);
 
   const handleMakeAnother = useCallback(() => {
     // Reset BOTH stores before navigate — landing reads from prompt store
@@ -187,15 +181,10 @@ export function FinalDeliveryRoute() {
             size="lg"
             variant="ghost"
             onClick={handleCutOS}
-            disabled={openingCutOS}
             className="btn--edge-underline"
           >
-            {openingCutOS ? (
-              <Loader2 size={16} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
-            ) : (
-              <ExternalLink size={16} strokeWidth={1.5} aria-hidden="true" />
-            )}
-            {openingCutOS ? "Opening CutOS…" : "Open in CutOS"}
+            <ExternalLink size={16} strokeWidth={1.5} aria-hidden="true" />
+            Open in CutOS
           </Button>
         </motion.div>
       </motion.section>
@@ -268,6 +257,12 @@ export function FinalDeliveryRoute() {
           className="transition-transform duration-200 group-hover:translate-x-0.5"
         />
       </motion.button>
+
+      {cutOSOpen ? (
+        <Suspense fallback={null}>
+          <CutOSHandoffModal open={cutOSOpen} onOpenChange={setCutOSOpen} manifest={manifest} />
+        </Suspense>
+      ) : null}
     </main>
     </MotionConfig>
   );
