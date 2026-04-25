@@ -73,7 +73,6 @@ export function TextSplitter({
       className={className}
       style={style}
       aria-label={ariaLabel ?? text}
-      role={ariaLabel ? "text" : undefined}
     >
       {chars.map((char, i) => {
         const delay =

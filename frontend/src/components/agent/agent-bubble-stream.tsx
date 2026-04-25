@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, RotateCcw } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
 import { AgentBubble } from "./agent-bubble";
@@ -36,6 +36,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const [error, setError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Tracks the last user message that failed to receive a reply, so the
+  // Retry button can re-fire api.agent without the user re-typing it.
+  const [pendingRetryMessage, setPendingRetryMessage] = useState<string | null>(null);
 
   // Auto-scroll to bottom on new turn.
   useEffect(() => {
@@ -88,18 +91,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [beat.beatId]);
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = draft.trim();
-    if (!trimmed || inFlight || !manifest) return;
-
-    // Optimistic local append — UI updates before the network round-trip.
-    appendAgentTurn(beat.beatId, scene.sceneId, {
-      role: "user",
-      content: trimmed,
-      timestamp: nowISO(),
-    });
-    setDraft("");
+  // Single source for the user-message → agent-reply round-trip. Used by
+  // both the form submit (with optimistic local append) and the Retry
+  // button (which doesn't re-append since the user turn is already in state).
+  const callAgent = async (userMessage: string) => {
+    if (!manifest) return;
     setInFlight(true);
     setError(null);
 
@@ -107,7 +103,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       const res = await api.agent({
         manifest,
         beatId: beat.beatId,
-        userMessage: trimmed,
+        userMessage,
       });
       if (cancelledRef.current) return;
 
@@ -118,7 +114,6 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           timestamp: nowISO(),
         });
       } else {
-        // Sufficient — store refinedPrompt + flip status.
         updateScene(beat.beatId, scene.sceneId, {
           refinedPrompt: res.refinedPrompt,
           durationSeconds: res.suggestedDuration,
@@ -130,12 +125,34 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           timestamp: nowISO(),
         });
       }
+      setPendingRetryMessage(null);
     } catch (err) {
       if (cancelledRef.current) return;
       setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
+      setPendingRetryMessage(userMessage);
     } finally {
       if (!cancelledRef.current) setInFlight(false);
     }
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = draft.trim();
+    if (!trimmed || inFlight || !manifest) return;
+
+    // Optimistic append — UI updates before the network round-trip.
+    appendAgentTurn(beat.beatId, scene.sceneId, {
+      role: "user",
+      content: trimmed,
+      timestamp: nowISO(),
+    });
+    setDraft("");
+    await callAgent(trimmed);
+  };
+
+  const retry = async () => {
+    if (!pendingRetryMessage || inFlight) return;
+    await callAgent(pendingRetryMessage);
   };
 
   return (
@@ -150,14 +167,32 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           />
         ))}
         {inFlight && scene.conversation.length === 0 ? (
-          <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.24em] text-fg-tertiary">
-            <Loader2 size={12} className="animate-spin" strokeWidth={1.5} />
+          <div
+            role="status"
+            aria-live="polite"
+            className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.24em] text-fg-tertiary"
+          >
+            <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
             Director is thinking…
           </div>
         ) : null}
         {error ? (
-          <div className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error">
-            {error}
+          <div
+            role="alert"
+            className="flex items-center justify-between gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error"
+          >
+            <span>{error}</span>
+            {pendingRetryMessage ? (
+              <button
+                type="button"
+                onClick={retry}
+                disabled={inFlight}
+                className="inline-flex items-center gap-1 text-fg-secondary transition-colors hover:text-fg-primary disabled:opacity-50"
+              >
+                <RotateCcw size={11} strokeWidth={1.5} aria-hidden="true" />
+                Retry
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -170,11 +205,16 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           placeholder={inFlight ? "Director is replying…" : "Type your reply…"}
           className="flex-1 bg-transparent px-1 py-2 font-mono text-sm text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
         />
-        <Button type="submit" size="sm" disabled={!draft.trim() || inFlight}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!draft.trim() || inFlight}
+          aria-label={inFlight ? "Sending message" : "Send message"}
+        >
           {inFlight ? (
-            <Loader2 size={14} strokeWidth={1.5} className="animate-spin" />
+            <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
           ) : (
-            <Send size={14} strokeWidth={1.5} />
+            <Send size={14} strokeWidth={1.5} aria-hidden="true" />
           )}
           Send
         </Button>

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { motion } from "motion/react";
 import { TextSplitter } from "@/lib/text-splitter";
 import { cn } from "@/lib/utils";
@@ -23,8 +24,13 @@ interface AgentBubbleProps {
  *
  * Reveal cap: total reveal time ≤ 1.6s regardless of length. Long answers
  * scale per-char step down accordingly.
+ *
+ * Wrapped in React.memo so a parent re-render (e.g., a sibling in the stream
+ * appending a new turn) doesn't recompute character delays mid-animation —
+ * which would visually flicker as already-revealed chars get new delay
+ * values.
  */
-export function AgentBubble({ turn, reveal = true }: AgentBubbleProps) {
+function AgentBubbleImpl({ turn, reveal = true }: AgentBubbleProps) {
   const isAgent = turn.role === "agent";
   return (
     <motion.div
@@ -57,3 +63,12 @@ export function AgentBubble({ turn, reveal = true }: AgentBubbleProps) {
     </motion.div>
   );
 }
+
+export const AgentBubble = memo(
+  AgentBubbleImpl,
+  (prev, next) =>
+    prev.turn.content === next.turn.content &&
+    prev.turn.role === next.turn.role &&
+    prev.turn.timestamp === next.turn.timestamp &&
+    prev.reveal === next.reveal,
+);

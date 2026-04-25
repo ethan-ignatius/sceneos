@@ -197,20 +197,39 @@ Not in the original spec but required for the flow to *work* during demo, not ju
 
 ---
 
-## Phase 5 — Scene + clip preview
+## Phase 5 — Scene + clip preview ✅ COMPLETE (2026-04-25)
 
-### 5.1 🔴 Custom `<VideoPlayer>` with ember scrubber — 1h
-- **Surface:** new `components/ui/video-player.tsx`
-- **Spec:**
-  - Big play overlay (Lucide `Play`, 96px, ember).
-  - Custom progress bar — ember-tinted, click-to-seek.
-  - Time display in mono.
-  - Auto-pause on drawer close.
-  - Mood-graded URL via `buildClipUrl({ mood })`.
-- **Acceptance:** never shows native browser controls.
+The "proof the system delivered" moment. Both items shipped, plus the wiring to actually drive the state transitions. Lesson reflection lives in [`VIDEO_PLAYER.md`](VIDEO_PLAYER.md) — read that before touching the player or split CTA.
 
-### 5.2 🔴 Approve / Regenerate split CTA — 0.3h
-- **Spec:** Approve = primary ember, full-width. Regenerate = ghost, ¼ width on the right. Spring `bubble` on press.
+### 5.1 ✅ Custom `<VideoPlayer>` — `components/ui/video-player.tsx`
+- Zero browser chrome (`controls={false}`); we draw our own.
+- Big Play overlay: 96×96 ember disc with `Play` icon (96px would be the icon — we use a 36px icon inside a 96px disc for a softer feel + drop-shadow ember glow). AnimatePresence-fades between play and pause states.
+- Click-to-seek progress bar at bottom: 2px idle, 2.5px on hover, ember fill with a faint glow shadow. `role="slider"` + `aria-valuenow` for screen-reader scrubbing.
+- Top-right `mm:ss / mm:ss` mono time readout, tabular-nums, with backdrop-blur pill for legibility over varied frames. Top-left optional caption (passed by ClipPreview as `${beatName} · ${mood}`).
+- Spacebar / `k` toggles play/pause when the player has focus. `tabIndex={0}` + `focus-visible:ring-2`.
+- Auto-pause on unmount: the cleanup in the `src` effect calls `video.pause()`. Closing the drawer or switching beats (key remount) auto-pauses cleanly.
+- `data-cursor="hide"` so the landing's CursorSpotlight (if it ever leaks here) doesn't glow over the clip frame.
+
+### 5.2 ✅ Approve / Regenerate split CTA — `components/node/clip-preview.tsx`
+- `<Button variant="primary" className="flex-1">` — full-width Approve in ember.
+- `<Button variant="ghost" className="btn--edge-underline basis-1/4">` — ¼-width Regenerate ghost.
+- New `.btn--edge-underline` CSS pattern (Unseen Studio reference): two `::before` / `::after` 50%-width underlines slide in from the left + right edges to meet in the middle on hover. 280ms `outQuart` cubic-bezier. Reduced-motion override disables the transition.
+- Approve flow: `approveScene(beatId, sceneId)` → 220ms delay → `setActiveBeat(null)` so the user sees the approve happen before the drawer exit. The store's reducer flips beat status to `approved` if every scene is approved; the canvas's NodeMesh approved state takes over (Phase 3).
+- Regenerate flow: new `regenerateScene` action on the store clears `clipPublicId` + `clipUrl` + `jobId` + `approved=false` and flips beat status to `ready-to-generate`. Conversation is preserved — the user shouldn't lose the questionnaire just because they want a different take. The drawer body swaps from `<ClipPreview>` back to `<AgentBubbleStream>` automatically (state-driven, see Phase 4 §1).
+
+### 5.3 ✅ (audit fixes alongside)
+Phase 4 audit findings fixed in the same commit, since they were demo-blockers:
+- **Polling cancelRef now cleanup-safe**: `useEffect` returns `() => { cancelRef.current = true; }` so closing the drawer mid-generation no longer leaves an orphaned poll loop writing to a stale beat.
+- **Retry button** in `AgentBubbleStream`: when `api.agent` fails, the failing user message is captured in `pendingRetryMessage`; an inline Retry button next to the error re-fires `callAgent` with the same message.
+- **AgentBubble React.memo'd** with explicit comparator on turn fields — prevents the TextSplitter from recomputing animation-delays mid-reveal when the parent re-renders (which would visually flicker already-revealed chars).
+- **Dynamic provider in GenerationPanel**: `provider` prop driven from the `/api/generate` response, with a `PROVIDER_LABEL` map. Shows "Connecting…" before the response arrives.
+- **`aria-modal="true"` + `role="dialog"` + `aria-label` on the drawer**.
+- **`aria-label`s on Loader2 icons**, `role="status"` / `role="alert"` on the loading + error containers.
+- **Dropped pill ember-pulse** so only the CTA pulses (single attention signal, not split).
+- **Removed invalid `role="text"`** from TextSplitter (not a valid ARIA role).
+- **Combined double `cn` import** in node-detail-drawer.
+
+**Phase 5 lessons banked (see `VIDEO_PLAYER.md`):** HTMLVideoElement event lifecycle (timeupdate/loadedmetadata/play/pause/ended), guard `currentTime/duration` against NaN, manual spacebar handler when `controls={false}`, click-to-seek with `getBoundingClientRect`, AnimatePresence for the play overlay, regen-via-state-machine pattern (clear scene fields + flip status, conversation preserved).
 
 ---
 

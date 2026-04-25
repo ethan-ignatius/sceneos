@@ -1,14 +1,15 @@
 import { motion } from "motion/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Sparkles } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
+import { ClipPreview } from "./clip-preview";
 import { Button } from "@/components/ui/button";
 import { SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
-import { sleep } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { sleep, cn } from "@/lib/utils";
+import type { GenerationProvider } from "@/types/api";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 8 },
@@ -23,18 +24,28 @@ export function NodeDetailDrawer() {
   const updateScene = useBeatGraphStore((s) => s.updateScene);
 
   const [genError, setGenError] = useState<string | null>(null);
+  const [provider, setProvider] = useState<GenerationProvider | null>(null);
+  // Set to true on unmount; the polling loop checks each iteration so an
+  // orphaned poll can't write to a stale beat after the drawer closes.
   const cancelRef = useRef(false);
+
+  useEffect(() => {
+    cancelRef.current = false;
+    return () => {
+      cancelRef.current = true;
+    };
+  }, []);
 
   const handleGenerate = useCallback(async () => {
     if (!beat || !manifest) return;
     const scene = beat.scenes[0];
     if (!scene.refinedPrompt) return;
-    cancelRef.current = false;
     setGenError(null);
+    setProvider(null);
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
-      const { jobId, pollAfterMs } = await api.generate({
+      const gen = await api.generate({
         projectId: manifest.projectId,
         beatId: beat.beatId,
         sceneId: scene.sceneId,
@@ -42,19 +53,23 @@ export function NodeDetailDrawer() {
         durationSeconds: scene.durationSeconds ?? beat.archetype.suggestedDuration,
         beatTemplate: beat.template,
       });
+      if (cancelRef.current) return;
+      setProvider(gen.provider);
 
       // Poll until terminal. Hard timeout at 30s for demo safety.
       const startMs = Date.now();
-      let delay = pollAfterMs;
+      let delay = gen.pollAfterMs;
       while (!cancelRef.current) {
         if (Date.now() - startMs > 30_000) {
           throw new ApiError(0, "Generation timed out after 30s");
         }
         await sleep(delay);
-        const status = await api.status(jobId);
+        if (cancelRef.current) return;
+        const status = await api.status(gen.jobId);
+        if (cancelRef.current) return;
         if (status.status === "succeeded") {
           updateScene(beat.beatId, scene.sceneId, {
-            jobId,
+            jobId: gen.jobId,
             clipPublicId: status.clipPublicId,
             clipUrl: status.clipUrl,
           });
@@ -67,6 +82,7 @@ export function NodeDetailDrawer() {
         delay = status.pollAfterMs ?? 800;
       }
     } catch (err) {
+      if (cancelRef.current) return;
       setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
       updateBeat(beat.beatId, { status: "ready-to-generate" });
     }
@@ -84,6 +100,9 @@ export function NodeDetailDrawer() {
 
   return (
     <motion.aside
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Beat ${beatIndex + 1}: ${beat.beatName}`}
       initial={{ x: "100%" }}
       animate={{ x: 0 }}
       exit={{ x: "100%" }}
@@ -131,11 +150,12 @@ export function NodeDetailDrawer() {
           className="flex-1 overflow-hidden p-6"
         >
           {isGenerating ? (
-            <GenerationPanel suggestedDurationSeconds={beat.archetype.suggestedDuration} />
+            <GenerationPanel
+              suggestedDurationSeconds={beat.archetype.suggestedDuration}
+              provider={provider}
+            />
           ) : isPreview ? (
-            <div className="grid h-full place-items-center font-mono text-[11px] uppercase tracking-[0.24em] text-fg-tertiary">
-              Preview ready · Phase 5 surface coming
-            </div>
+            <ClipPreview beat={beat} />
           ) : (
             <AgentBubbleStream beat={beat} />
           )}
@@ -152,7 +172,7 @@ export function NodeDetailDrawer() {
               className={cn(
                 "rounded-lg border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.24em] transition-colors duration-300",
                 isReadyToGenerate
-                  ? "ember-pulse border-brand-ember/60 bg-brand-ember/10 text-brand-ember"
+                  ? "border-brand-ember/60 bg-brand-ember/10 text-brand-ember"
                   : "border-fg-tertiary/40 text-fg-tertiary",
               )}
             >

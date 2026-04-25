@@ -2,11 +2,21 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { GenerationProvider } from "@/types/api";
 
 interface GenerationPanelProps {
   /** Suggested duration in seconds — drives the `~est` part of the timer. */
   suggestedDurationSeconds: number;
+  /** Provider returned by /api/generate (cached/higgsfield/kling/replicate). */
+  provider?: GenerationProvider | null;
 }
+
+const PROVIDER_LABEL: Record<GenerationProvider, string> = {
+  higgsfield: "Higgsfield · live",
+  kling: "Kling · live",
+  replicate: "Replicate · live",
+  cached: "Cached · demo",
+};
 
 const STAGES = [
   { id: "storyboard", label: "Storyboard generated", end: 0.5 },
@@ -27,7 +37,7 @@ const STAGES = [
  * that. Real Higgsfield is much longer, so this panel will need real
  * progress signals from `/api/status` once the live provider is wired.
  */
-export function GenerationPanel({ suggestedDurationSeconds }: GenerationPanelProps) {
+export function GenerationPanel({ suggestedDurationSeconds, provider }: GenerationPanelProps) {
   const startMsRef = useRef<number>(Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -110,7 +120,9 @@ export function GenerationPanel({ suggestedDurationSeconds }: GenerationPanelPro
           <span className="mx-2 text-fg-tertiary/60">/</span>
           <span className="tabular-nums">~{formatTime(totalEst)}</span>
         </span>
-        <span className="uppercase tracking-[0.24em]">Higgsfield · live</span>
+        <span className="uppercase tracking-[0.24em]">
+          {provider ? PROVIDER_LABEL[provider] : "Connecting…"}
+        </span>
       </div>
     </div>
   );
