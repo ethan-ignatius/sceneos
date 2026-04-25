@@ -141,6 +141,67 @@ async def agent_stream(body: dict):
     )
 
 
+# ── /api/session/start — mode-aware boot (demo vs normal) ────────────────
+
+
+@app.post("/api/session/start")
+async def session_start(body: dict | None = None):
+    """
+    Start a new SceneOS session in either 'demo' or 'normal' mode.
+
+    Request:
+      {
+        mode: "demo" | "normal",                  // required
+        masterPromptOverride?: string,            // optional power-user override
+        promptId?: string,                        // optional pin to a specific curated prompt
+        aspectRatio?: "16:9" | "9:16" | "1:1"     // default "16:9"
+      }
+
+    Response (normal):
+      { projectId, mode: "normal", masterPrompt, videoType, manifest, normalPromptId }
+
+    Response (demo):
+      { projectId, mode: "demo", masterPrompt, videoType, manifest, demoPromptId,
+        speculativeJobs: { beatId: {jobId, provider, pollAfterMs, motionPreset, ...} } }
+
+    In demo mode the response is large because the backend has already
+    fanned out all 7 beat pipelines in parallel. The frontend can poll
+    /api/status/<jobId> for each immediately. When the agent eventually
+    calls markSufficient for a beat, /api/orchestrate/<beatId> returns
+    the pre-warmed job — no new work happens.
+    """
+    from . import session as session_service
+
+    body = body or {}
+    raw_mode = (body.get("mode") or "demo").strip().lower()
+    if raw_mode not in {"demo", "normal"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f'mode must be "demo" or "normal" (got {raw_mode!r})',
+        )
+    aspect_ratio = body.get("aspectRatio") or "16:9"
+
+    try:
+        return await session_service.start_session(
+            mode=raw_mode,  # type: ignore[arg-type]
+            master_prompt_override=body.get("masterPromptOverride"),
+            prompt_id=body.get("promptId"),
+            aspect_ratio=aspect_ratio,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[session/start] failed")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Session start failed",
+                "details": str(exc),
+                "hint": "Set MOCK_MODE=true to skip provider calls. In demo mode the speculative kickoff exercises Imagen + the active provider.",
+            },
+        ) from exc
+
+
 # ── /api/orchestrate/{beat_id} — deterministic per-beat pipeline ──────────
 
 
@@ -175,6 +236,20 @@ async def orchestrate(beat_id: str, body: dict):
     beat = next((b for b in manifest.get("beats", []) if b.get("beatId") == beat_id), None)
     if beat is None:
         raise HTTPException(status_code=404, detail=f"beatId {beat_id} not found in manifest")
+
+    # ── Speculative-job lookup (demo mode) ──────────────────────────────
+    # If this manifest came from /api/session/start with mode=demo, the
+    # beat was already kicked off at session-start. Return that job
+    # immediately and skip all new work — this is what makes demo mode
+    # hit the 3-4 minute budget.
+    from . import session as session_service
+    project_id = manifest.get("projectId")
+    if project_id:
+        existing = session_service.get_speculative_job(project_id, beat_id)
+        if existing and not existing.get("error"):
+            # Mark the response so the visualizer can show a "pre-warmed"
+            # badge instead of a fresh-render badge.
+            return {**existing, "speculativeReused": True}
 
     if mock_mode():
         # Mock branch: skip Imagen + provider, return deterministic stub mirroring the live shape.
@@ -211,13 +286,18 @@ async def orchestrate(beat_id: str, body: dict):
         }
 
     try:
-        return await orchestrator.run_beat_pipeline(
+        result = await orchestrator.run_beat_pipeline(
             manifest=manifest,
             beat_id=beat_id,
             beat_facts=beat_facts,
             previous_last_frame_url=previous_last_frame_url,
             aspect_ratio=aspect_ratio,
         )
+        # Cache it under the projectId so subsequent calls (e.g. retries)
+        # hit the same job without re-submitting.
+        if project_id:
+            session_service.set_speculative_job(project_id, beat_id, result)
+        return result
     except Exception as exc:
         logger.exception("[orchestrate] failed for beat %s", beat_id)
         raise HTTPException(

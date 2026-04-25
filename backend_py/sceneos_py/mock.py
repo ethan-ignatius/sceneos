@@ -456,6 +456,15 @@ def _user_turn_count(req: dict, beat: dict) -> int:
     return base + (1 if req.get("userMessage") else 0)
 
 
+def _is_demo_mode(req: dict) -> bool:
+    return (req.get("manifest", {}).get("mode") or "").lower() == "demo"
+
+
+# In demo mode the mock agent caps to 1 user answer per beat, mirroring
+# the live demo speed-mode constraint (DEMO_MAX_QUESTIONS in agent.py).
+DEMO_MOCK_MAX_USER_TURNS = 1
+
+
 def _build_refined_prompt(req: dict, beat: dict) -> str:
     archetype = beat["archetype"]
     scenes = beat.get("scenes") or []
@@ -598,8 +607,24 @@ def run_mock_agent_turn(req: dict) -> dict:
     else:
         ack = ""
 
-    # Continue asking until we have enough turns (MIN_USER_TURNS) and questions remain.
-    if turns < MIN_USER_TURNS or (turns < len(questions) and turns < MAX_QUESTIONS):
+    # Demo mode: ask exactly DEMO_MOCK_MAX_USER_TURNS questions then mark
+    # sufficient. Normal mode: continue until MIN_USER_TURNS, then ride the
+    # bank until we exhaust it or hit MAX_QUESTIONS.
+    if _is_demo_mode(req):
+        if turns < DEMO_MOCK_MAX_USER_TURNS:
+            idx = min(turns, len(questions) - 1)
+            entry = questions[idx]
+            tmpl = find_template(beat["template"])
+            notes = (tmpl or {}).get("directorNotes", "") if tmpl else ""
+            first_line = notes.split("\n", 1)[0] if notes else f"{beat['beatName']} beat archetype"
+            return {
+                "kind": "question",
+                "question": f"{ack}{entry['question']}",
+                "reasoning": f"[demo mode · {DEMO_MOCK_MAX_USER_TURNS}-question speed cap] " + first_line,
+                "suggestedAnswers": entry["suggestedAnswers"],
+                "estimatedRemaining": max(0, DEMO_MOCK_MAX_USER_TURNS - turns - 1),
+            }
+    elif turns < MIN_USER_TURNS or (turns < len(questions) and turns < MAX_QUESTIONS):
         idx = min(turns, len(questions) - 1)
         entry = questions[idx]
         tmpl = find_template(beat["template"])

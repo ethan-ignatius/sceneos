@@ -37,7 +37,12 @@ from .sufficiency import FACET_HINTS, MAX_QUESTIONS, MIN_USER_TURNS, REQUIRED_FA
 
 
 TARGET_CLIP_SECONDS = 5
-THINKING_BUDGET = 2048
+THINKING_BUDGET_NORMAL = 2048
+THINKING_BUDGET_DEMO = 512  # smaller budget = faster turn-around for the live demo
+
+# Hard ceiling per beat in demo mode. The system prompt encodes a 1-2 question
+# soft target, but this cap is what the model actually sees ("never exceed N").
+DEMO_MAX_QUESTIONS = 2
 
 # Tool schemas — dict form, accepted by google.genai SDK.
 _AGENT_TOOLS: list[dict[str, Any]] = [
@@ -184,6 +189,34 @@ def _earlier_beats_block(beat: dict, manifest: dict) -> str:
     return "What you have already established (use these details when reflecting the story back):\n" + "\n".join(lines) + "\n"
 
 
+def _mode_of(manifest: dict) -> str:
+    """Resolve the session mode from the manifest. Defaults to 'normal' for
+    back-compat with manifests that predate the demo/normal split."""
+    raw = (manifest.get("mode") or "normal").strip().lower()
+    return "demo" if raw == "demo" else "normal"
+
+
+def _demo_speed_block(beat: dict, manifest: dict) -> str:
+    """Speed-mode override appended to the system prompt in demo mode.
+    The visuals are pre-curated speculatively; the conversation is theatre.
+    Be CONCISE — every second of conversation eats the demo timer."""
+    return f"""
+
+# DEMO MODE — LIVE TIMED PRESENTATION
+You are inside a 3-4 minute live hackathon demo. Time matters more than texture here.
+
+Hard rules (override any earlier guidance):
+- Maximum {DEMO_MAX_QUESTIONS} user answers per beat. After {DEMO_MAX_QUESTIONS} answers, you MUST call markSufficient.
+- Prefer 1 question per beat when the user's first answer is at all usable. Mark sufficient.
+- Keep questions short — under 18 words. No multi-clause warm-ups.
+- Suggested answers stay 3, but make them short (under 12 words each).
+- Treat the master prompt "{manifest['masterPrompt']}" as already cinematic. Don't ask the user to invent the world. Build on what's there.
+- The downstream visuals are pre-rendering in parallel using a curated story bible. The user's answers shape the FEEL, not the literal visuals — so don't fixate on getting every detail extracted.
+
+When in doubt: mark sufficient and move on.
+"""
+
+
 def _system_prompt(beat: dict, manifest: dict) -> str:
     beat_idx = next(
         (i for i, b in enumerate(manifest["beats"]) if b["beatId"] == beat["beatId"]),
@@ -191,8 +224,9 @@ def _system_prompt(beat: dict, manifest: dict) -> str:
     )
     earlier = _earlier_beats_block(beat, manifest)
     archetype = beat["archetype"]
+    mode = _mode_of(manifest)
 
-    return f"""You are SceneOS. You work in film. You are talking to someone who is excited about an idea for a movie they want to make.
+    base = f"""You are SceneOS. You work in film. You are talking to someone who is excited about an idea for a movie they want to make.
 
 Your job: ask the most natural-sounding question you can about the most charged unresolved thing in their story. The user thinks they are just telling someone about their movie. They are right to think that.
 
@@ -278,6 +312,10 @@ Carry forward character + world descriptors verbatim from earlier beats so the p
 
 You must call exactly one tool every turn. Never reply in plain text. Never break voice.
 """
+
+    if mode == "demo":
+        return base + _demo_speed_block(beat, manifest)
+    return base
 
 
 def _has_facet_coverage(conversation: list[dict]) -> bool:
@@ -431,27 +469,40 @@ def _normalize_args(value: Any) -> Any:
     return value
 
 
-def _build_request_config(beat: dict, manifest: dict, with_thinking: bool):
-    """Build (system_prompt, contents, GenerateContentConfig)."""
+def _build_request_config(
+    beat: dict,
+    manifest: dict,
+    with_thinking: bool,
+    user_turn_count: int = 0,
+):
+    """Build (system_prompt, contents, GenerateContentConfig). Mode-aware:
+    demo uses a smaller thinking budget for faster turn-around. In demo mode,
+    once the user has answered DEMO_MAX_QUESTIONS times we restrict the tool
+    surface to markSufficient ONLY — a hard ceiling that protects the demo
+    timer even if the model wants to keep asking."""
     from google.genai import types
 
     system = _system_prompt(beat, manifest)
+    mode = _mode_of(manifest)
+    must_finalize = mode == "demo" and user_turn_count >= DEMO_MAX_QUESTIONS
+    allowed = ["markSufficient"] if must_finalize else ["askQuestion", "markSufficient"]
+
     config_kwargs: dict[str, Any] = dict(
         system_instruction=system,
         tools=[types.Tool(function_declarations=_AGENT_TOOLS)],
         tool_config=types.ToolConfig(
             function_calling_config=types.FunctionCallingConfig(
                 mode=types.FunctionCallingConfigMode.ANY,
-                allowed_function_names=["askQuestion", "markSufficient"],
+                allowed_function_names=allowed,
             )
         ),
         temperature=0.8,
-        max_output_tokens=4096,
+        max_output_tokens=2048 if mode == "demo" else 4096,
     )
     if with_thinking:
         config_kwargs["thinking_config"] = types.ThinkingConfig(
             include_thoughts=True,
-            thinking_budget=THINKING_BUDGET,
+            thinking_budget=THINKING_BUDGET_DEMO if mode == "demo" else THINKING_BUDGET_NORMAL,
         )
     return system, types.GenerateContentConfig(**config_kwargs)
 
@@ -503,7 +554,9 @@ async def run_agent_turn(req: dict) -> dict:
     if client is None:
         return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
 
-    _, config = _build_request_config(beat, manifest, with_thinking=False)
+    _, config = _build_request_config(
+        beat, manifest, with_thinking=False, user_turn_count=user_turn_count
+    )
     contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
 
     def _call_sync() -> Any:
@@ -568,7 +621,9 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         yield {"type": "result", **result}
         return
 
-    _, config = _build_request_config(beat, manifest, with_thinking=True)
+    _, config = _build_request_config(
+        beat, manifest, with_thinking=True, user_turn_count=user_turn_count
+    )
     contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
 
     loop = asyncio.get_running_loop()

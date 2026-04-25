@@ -7,15 +7,23 @@ and dispatches everything downstream WITHOUT an LLM in the loop:
   1. Motion preset lookup (mood → preset table)
   2. chainFromPrevious decision (from manifest)
   3. Reference images (Imagen 3) when not chained or first beat
+     — character + location are generated CONCURRENTLY via asyncio.gather
   4. clipPrompt composition (image prompt + motion prompt)
   5. Provider.generate() submission, with startImageUrl seeded from either
      the previous beat's lastFrameUrl OR the freshly generated character ref
 
 The point of the boundary: the agent decides the *story*, the orchestrator
 executes the *production*. Reliability lives here.
+
+Demo mode: when a session was started via /api/session/start with mode=demo,
+all 7 beats were already kicked off speculatively at T=0 using curated
+beatFacts (see session.py). The agent conversation runs in parallel as
+theatre. When the frontend hits /api/orchestrate after markSufficient, we
+return the existing speculative job — NO new work is done.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from . import vertex_imagen
@@ -129,23 +137,41 @@ async def run_beat_pipeline(
         seed_image_url = previous_last_frame_url
     else:
         # First beat or hard cut — generate fresh reference frames.
-        # Run sequentially (not parallel) for clarity; the bottleneck is Imagen, ~3-6s each.
+        # Run character + location concurrently. Imagen is ~3-6s per call;
+        # parallelizing halves the per-beat cost. In demo mode, all 7 beats
+        # also run in parallel (kickoff_speculative_pipelines), so total
+        # Imagen wallclock is ~5-8s for 14 calls instead of ~70-100s serial.
+        coros = []
+        kinds = []
         if beat_facts.get("characterDescription"):
-            character_ref = await vertex_imagen.generate_reference(
+            kinds.append("character")
+            coros.append(vertex_imagen.generate_reference(
                 kind="character",
                 description=beat_facts["characterDescription"],
                 project_id=manifest.get("projectId"),
                 beat_id=beat_id,
                 aspect_ratio=aspect_ratio,
-            )
+            ))
         if beat_facts.get("locationDescription"):
-            location_ref = await vertex_imagen.generate_reference(
+            kinds.append("location")
+            coros.append(vertex_imagen.generate_reference(
                 kind="location",
                 description=beat_facts["locationDescription"],
                 project_id=manifest.get("projectId"),
                 beat_id=beat_id,
                 aspect_ratio=aspect_ratio,
-            )
+            ))
+        if coros:
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for kind, ref in zip(kinds, results):
+                if isinstance(ref, Exception):
+                    # Don't tear down the whole pipeline if one ref fails —
+                    # the other ref or the chain seed can carry the I2V step.
+                    continue
+                if kind == "character":
+                    character_ref = ref
+                elif kind == "location":
+                    location_ref = ref
         # Prefer the character reference as the I2V seed for character continuity;
         # fall back to the location ref if no character was described.
         seed_image_url = (character_ref or {}).get("imageUrl") or (location_ref or {}).get("imageUrl")
