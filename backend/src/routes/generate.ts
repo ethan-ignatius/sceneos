@@ -1,29 +1,37 @@
 import { Hono } from "hono";
-import type { GenerateRequest, GenerateResponse } from "../types/api.js";
+import { z } from "zod";
+import { startGeneration } from "../services/higgsfield.js";
 
 /**
  * POST /api/generate
- * Kicks off a Higgsfield clip-generation job for one scene.
+ * Kicks off a clip-generation job for one scene via the active provider
+ * (mock by default, Higgsfield Cloud when keys are configured).
  *
  * Owner: Vishnu
- *
- * Implementation notes:
- *  - Call services/higgsfield.ts → generateClip(refinedPrompt, durationSeconds)
- *  - On Higgsfield 429 / outage, fall back to services/segmind.ts or services/replicate.ts.
- *  - Persist jobId in an in-memory Map (services/job-registry.ts).
- *  - Return { jobId, provider, pollAfterMs } so the frontend knows when to start polling.
  */
 export const generateRoute = new Hono();
 
-generateRoute.post("/", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as GenerateRequest | null;
-  if (!body) return c.json({ error: "Invalid JSON" }, 400);
+const GenerateBody = z.object({
+  projectId: z.string().min(1),
+  beatId: z.string().min(1),
+  sceneId: z.string().min(1),
+  refinedPrompt: z.string().min(1),
+  durationSeconds: z.number().positive().max(180),
+});
 
-  // TODO(vishnu): call services/higgsfield.ts. For now, return a deterministic stub job.
-  const response: GenerateResponse = {
-    jobId: `stub-${body.beatId}-${body.sceneId}`,
-    provider: "higgsfield",
-    pollAfterMs: 5000,
-  };
-  return c.json(response, 501);
+generateRoute.post("/", async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  const parsed = GenerateBody.safeParse(raw);
+  if (!parsed.success) {
+    return c.json({ error: "Invalid request body", details: parsed.error.flatten() }, 400);
+  }
+
+  try {
+    const response = await startGeneration(parsed.data);
+    return c.json(response, 200);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown generation error";
+    console.error("[/api/generate] failed", err);
+    return c.json({ error: "Generation failed", details: message }, 502);
+  }
 });

@@ -39,20 +39,38 @@ export function buildSpliceUrl(orderedPublicIds: string[]): string | null {
   return `https://res.cloudinary.com/${cloudName}/video/upload/${segment}${first}.mp4`;
 }
 
+export function isCloudinaryConfigured(): boolean {
+  return Boolean(cloudName && apiKey && apiSecret);
+}
+
 /**
- * Upload an MP4 from a remote URL (e.g., Higgsfield-hosted) into Cloudinary
- * with a deterministic public_id so we can address it from fl_splice URLs.
+ * Upload an MP4 from a remote URL (provider-hosted) into Cloudinary with a
+ * deterministic public_id so the same clip is addressable from fl_splice URLs.
  *
- * TODO(vishnu): wire this when /api/status starts succeeding.
+ * Cloudinary's `uploader.upload(url)` fetches the source server-side, so we
+ * never have to stream the video through this process.
  */
-export async function uploadVideoFromUrl(_remoteUrl: string, _publicId: string): Promise<{
-  publicId: string;
-  url: string;
-  durationSeconds: number;
-}> {
-  // const result = await cloudinary.uploader.upload(remoteUrl, { resource_type: "video", public_id: publicId });
-  // return { publicId: result.public_id, url: result.secure_url, durationSeconds: result.duration };
-  throw new Error("services/cloudinary.ts: uploadVideoFromUrl not implemented");
+export async function uploadVideoFromUrl(
+  remoteUrl: string,
+  publicId: string,
+): Promise<{ publicId: string; url: string; durationSeconds: number }> {
+  if (!isCloudinaryConfigured()) {
+    throw new Error(
+      "Cloudinary not configured — set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET in backend/.env",
+    );
+  }
+  const result = await cloudinary.uploader.upload(remoteUrl, {
+    resource_type: "video",
+    public_id: publicId,
+    overwrite: true,
+    unique_filename: false,
+    use_filename: false,
+  });
+  return {
+    publicId: result.public_id,
+    url: result.secure_url,
+    durationSeconds: typeof result.duration === "number" ? result.duration : 0,
+  };
 }
 
 /** Sum of approved scene durations across the manifest. */

@@ -157,7 +157,7 @@ export interface GenerateResponse {
   pollAfterMs: number;
 }
 
-export type GenerationProvider = "higgsfield" | "segmind" | "replicate";
+export type GenerationProvider = "higgsfield" | "segmind" | "replicate" | "mock";
 ```
 
 ### `GET /api/status/:jobId`

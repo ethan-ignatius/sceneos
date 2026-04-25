@@ -1,47 +1,74 @@
 /**
- * Higgsfield video-generation service.
+ * Video-generation facade. Filename preserved per docs/BACKEND_ARCHITECTURE.md;
+ * this module is now provider-agnostic and dispatches to whichever provider is
+ * active (mock when no keys, Higgsfield Cloud when HIGGSFIELD_API_KEY is set).
  *
- * Owner: Vishnu
+ * Adding a new provider:
+ *   1. Drop a file under services/providers/ implementing VideoProvider.
+ *   2. Register it in `pickProvider()` below.
  *
- * Implementation notes (see docs/BACKEND_ARCHITECTURE.md §6):
- *  - Auth via HIGGSFIELD_API_KEY.
- *  - Prefer Sora 2 / Veo 3.1 for quality if available; fall back to Kling 3.0.
- *  - Latency: 60–180s per clip. Frontend polls.
- *  - On API errors / quota issues, fall back to services/segmind.ts or services/replicate.ts
- *    via a provider-agnostic interface (kept narrow on purpose).
- *
- * Reference:
- *   https://cloud.higgsfield.ai/
- *   https://github.com/higgsfield-ai/higgsfield-client (official Python SDK)
- *   https://www.segmind.com/models/higgsfield-image2video/api (third-party gateway)
+ * No call site outside this file should import a concrete provider directly.
  */
+import type { GenerateRequest, GenerateResponse, JobStatus } from "../types/api.js";
+import { higgsfieldProvider } from "./providers/higgsfield-cloud.js";
+import { mockProvider } from "./providers/mock.js";
+import type { VideoProvider } from "./providers/types.js";
+import { registerJob, getJob, type JobRecord } from "./job-registry.js";
 
-import type { JobStatus, GenerationProvider } from "../types/api.js";
-
-export interface GenerateClipParams {
-  prompt: string;
-  durationSeconds: number;
-  resolution?: "1080p" | "720p";
-  model?: "sora-2" | "veo-3.1" | "kling-3.0";
+function pickProvider(): VideoProvider {
+  if (process.env.HIGGSFIELD_API_KEY) return higgsfieldProvider;
+  return mockProvider;
 }
 
-export interface GenerateClipResult {
-  jobId: string;
-  provider: GenerationProvider;
+const provider = pickProvider();
+
+export const activeProviderName = provider.name;
+
+console.log(`[generation] active provider: ${provider.name}`);
+
+/**
+ * Kick off generation, register the job under our internal id, and return
+ * the response shape expected by routes/generate.ts.
+ */
+export async function startGeneration(req: GenerateRequest): Promise<GenerateResponse> {
+  const { providerJobId, pollAfterMs } = await provider.generate({
+    prompt: req.refinedPrompt,
+    durationSeconds: req.durationSeconds,
+    startImageUrl: process.env.TEST_REFERENCE_IMAGE_URL,
+  });
+
+  const jobId = registerJob({
+    providerJobId,
+    providerName: provider.name,
+    projectId: req.projectId,
+    beatId: req.beatId,
+    sceneId: req.sceneId,
+    durationSeconds: req.durationSeconds,
+  });
+
+  return { jobId, provider: provider.name, pollAfterMs };
 }
 
-export interface JobStatusResult {
+export interface ProviderPollResult {
+  job: JobRecord;
   status: JobStatus;
-  clipUrl?: string;     // Higgsfield-hosted URL when succeeded
+  providerClipUrl?: string;
   error?: string;
 }
 
-export async function generateClip(_params: GenerateClipParams): Promise<GenerateClipResult> {
-  // TODO(vishnu): POST to Higgsfield, return jobId + provider.
-  throw new Error("services/higgsfield.ts: not implemented");
-}
-
-export async function getJobStatus(_jobId: string): Promise<JobStatusResult> {
-  // TODO(vishnu): GET Higgsfield job, map provider status to JobStatus union.
-  throw new Error("services/higgsfield.ts: not implemented");
+/**
+ * Poll the active provider for a previously registered job. Returns the raw
+ * provider state plus the registry record so the caller can decide what to do
+ * (e.g. trigger a Cloudinary upload on first success).
+ */
+export async function pollProvider(jobId: string): Promise<ProviderPollResult | null> {
+  const job = getJob(jobId);
+  if (!job) return null;
+  const status = await provider.getStatus(job.providerJobId);
+  return {
+    job,
+    status: status.status,
+    providerClipUrl: status.clipUrl,
+    error: status.error,
+  };
 }

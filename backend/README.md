@@ -35,11 +35,39 @@ src/
 └── types/               # mirror of frontend/src/types
 ```
 
-## Stub status
+## Status
 
-All routes return `501 Not Implemented` with a clear stub message. Implementation order recommended in `BACKEND_ARCHITECTURE.md` §10:
+| Endpoint | State | Notes |
+|---|---|---|
+| `POST /api/stitch/url` | ✅ wired | pure `fl_splice` URL builder |
+| `POST /api/generate` | ✅ wired | dispatches to active provider |
+| `GET /api/status/:jobId` | ✅ wired | polls + uploads to Cloudinary on success |
+| `POST /api/agent` | 🟡 stub | Ethan |
+| `POST /api/cutos/import` | 🟡 stub | stretch |
 
-1. `services/cloudinary.ts` + `POST /api/stitch/url` (easiest, pure)
-2. `services/higgsfield.ts` + `POST /api/generate` + `GET /api/status/:jobId`
-3. `services/agent.ts` + `POST /api/agent`
-4. `services/cutos.ts` + `POST /api/cutos/import` (stretch)
+### Generation provider
+
+`services/higgsfield.ts` is a provider-agnostic dispatcher. It picks one of:
+
+- `mock` — default. Returns one of a handful of public sample MP4s after a 12 s simulated latency. Lets you validate the pipeline without paid keys.
+- `higgsfield` — real Higgsfield Cloud. Auto-selected when `HIGGSFIELD_API_KEY` is set. Endpoint paths are sketched in `services/providers/higgsfield-cloud.ts`; **confirm against the Higgsfield Cloud docs before relying on it**.
+
+To add Segmind/Replicate/Fal: drop a `services/providers/<name>.ts` implementing `VideoProvider`, register it in `pickProvider()`.
+
+### End-to-end test
+
+```bash
+# 1. Free Cloudinary signup → cloudinary.com → grab cloud name + API key + secret.
+# 2. Fill backend/.env:
+#      CLOUDINARY_CLOUD_NAME=...
+#      CLOUDINARY_API_KEY=...
+#      CLOUDINARY_API_SECRET=...
+#    (Higgsfield key is optional; without it the mock provider runs.)
+npm run dev                    # listens on :8787
+./scripts/test-pipeline.sh     # default cinematic prompt
+./scripts/test-pipeline.sh "your prompt here"
+```
+
+`test-pipeline.sh` POSTs `/api/generate`, polls `/api/status/:jobId` until `succeeded`, and `open`s the resulting Cloudinary URL in your browser. Requires `jq` (`brew install jq`).
+
+Tunables (env at script invocation): `PORT`, `DURATION`, `PROJECT_ID`, `BEAT_ID`, `SCENE_ID`, `MAX_POLLS`, `MOCK_GENERATION_LATENCY_MS`.

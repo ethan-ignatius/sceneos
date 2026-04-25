@@ -32,7 +32,7 @@ export interface GenerateRequest {
   durationSeconds: number;
 }
 
-export type GenerationProvider = "higgsfield" | "segmind" | "replicate";
+export type GenerationProvider = "higgsfield" | "segmind" | "replicate" | "mock";
 
 export interface GenerateResponse {
   jobId: string;
