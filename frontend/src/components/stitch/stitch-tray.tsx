@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Copy, Clapperboard, Loader2, ArrowUpRight, Check } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -45,7 +46,10 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
   const setFinalCinematic = useBeatGraphStore((s) => s.setFinalCinematic);
-  const approvedIds = useBeatGraphStore(selectApprovedClipPublicIds);
+  // useShallow — same reasoning as PersistentUrlStrip: selector returns a
+  // fresh array each call; zustand v5's strict equality would otherwise
+  // re-render every store change and crash under React 19 StrictMode.
+  const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
   const totalCount = manifest?.beats.length ?? 0;
   const approvedCount = approvedIds.length;
   const allReady = approvedCount === totalCount && totalCount > 0;

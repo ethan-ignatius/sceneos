@@ -1,6 +1,8 @@
 import type {
   AgentRequest,
   AgentResponse,
+  DecomposeRequest,
+  DecomposeResponse,
   GenerateRequest,
   GenerateResponse,
   StatusResponse,
@@ -46,6 +48,9 @@ async function request<TBody, TResponse>(
 export const api = {
   agent: (body: AgentRequest) =>
     request<AgentRequest, AgentResponse>("/api/agent", { method: "POST", body }),
+
+  decompose: (body: DecomposeRequest) =>
+    request<DecomposeRequest, DecomposeResponse>("/api/decompose", { method: "POST", body }),
 
   generate: (body: GenerateRequest) =>
     request<GenerateRequest, GenerateResponse>("/api/generate", { method: "POST", body }),

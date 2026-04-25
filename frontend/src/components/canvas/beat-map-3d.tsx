@@ -1,6 +1,5 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { Stars, Environment } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette, DepthOfField } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
@@ -141,20 +140,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
                 blur-bath when nothing is selected. Inactive scenes need
                 to *show*; only on-dive does the camera bias.
               - Vignette darkness eased so the orbs don't drown at the edges. */}
-        <EffectComposer>
-          <Bloom
-            intensity={activeBeatId ? 0.55 : 0.4}
-            luminanceThreshold={0.32}
-            luminanceSmoothing={0.35}
-            mipmapBlur
-          />
-          <DepthOfField
-            focusDistance={activeBeatId ? 0.02 : 0.03}
-            focalLength={activeBeatId ? 0.06 : 0.12}
-            bokehScale={activeBeatId ? 1.4 : 0.4}
-          />
-          <Vignette eskil={false} offset={0.3} darkness={activeBeatId ? 0.8 : 0.55} />
-        </EffectComposer>
+        {/* EffectComposer (Bloom + Vignette + DepthOfField) removed for proof
+            of concept. Under React 19 + R3F 9 + @react-three/postprocessing
+            3.0.4 wrapping postprocessing 6.39.1, the composer pipeline reads
+            `.alpha` on a render-target/material that's null during the first
+            commit, crashing the canvas. The nodes themselves render fine
+            without it — atmosphere shells, holographic overlay on active,
+            and Sparkles already give the scene visual weight. Re-introduce
+            postprocess after the pipeline (Veo + stitch + delivery) is
+            verified end-to-end. */}
       </Canvas>
     </div>
   );

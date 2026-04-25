@@ -108,7 +108,12 @@ async def generate(params: GenerateClipParams) -> dict:
     clip_prompt = params.get("clipPrompt") or {}
     aspect_ratio = clip_prompt.get("aspectRatio") or "16:9"
     requested = clip_prompt.get("durationSeconds") or params["durationSeconds"]
-    duration_seconds = max(5, min(8, round(float(requested))))
+    # Veo 3.x text-to-video only accepts {4, 6, 8} seconds. Snap the caller's
+    # requested duration to the nearest allowed value; on ties, prefer the
+    # longer clip so a "5s" request produces 6s rather than 4s.
+    requested_int = round(float(requested))
+    allowed = (4, 6, 8)
+    duration_seconds = min(allowed, key=lambda d: (abs(d - requested_int), -d))
     prompt = clip_prompt.get("motionPrompt") or params["refinedPrompt"]
 
     instance: dict[str, Any] = {"prompt": prompt}

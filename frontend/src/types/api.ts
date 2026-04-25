@@ -3,7 +3,12 @@
  * (backend_py/sceneos_py) accepts/returns these same shapes via dict bodies.
  * Source of truth: docs/SHARED_TYPES.md
  */
-import type { Manifest } from "./manifest";
+import type {
+  BeatArchetype,
+  BeatTemplate,
+  Manifest,
+  VideoType,
+} from "./manifest";
 
 export interface AgentRequest {
   manifest: Manifest;
@@ -90,4 +95,39 @@ export interface CutOSImportRequest {
 export interface CutOSImportResponse {
   projectId: string;
   editUrl: string;
+}
+
+/**
+ * POST /api/decompose
+ *
+ * One-shot LLM call that turns the master prompt into a Higgsfield-ready
+ * clip prompt envelope per beat. The frontend posts the master prompt +
+ * the just-built beat skeleton; the backend returns one DecomposedClip
+ * per input beat (matching beatIds, in order).
+ */
+export interface DecomposeBeatInput {
+  beatId: string;
+  template: BeatTemplate;
+  beatName: string;
+  archetype: BeatArchetype;
+}
+
+export interface DecomposeRequest {
+  masterPrompt: string;
+  videoType: VideoType;
+  beats: DecomposeBeatInput[];
+}
+
+export interface DecomposedClip {
+  beatId: string;
+  /** Human-readable scene summary for the node UI. */
+  sceneSummary: string;
+  /** Single coherent paragraph for downstream agents/Veo generation. */
+  refinedPrompt: string;
+}
+
+export interface DecomposeResponse {
+  clips: DecomposedClip[];
+  /** Optional: short character/world bible carried across beats. */
+  continuityBible?: string;
 }

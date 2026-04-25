@@ -1,11 +1,13 @@
 import { Suspense, lazy, useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
 import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
+import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
+import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
 
@@ -19,6 +21,17 @@ export function CanvasRoute() {
   const { masterPrompt } = usePromptStore();
   const [stitchOpen, setStitchOpen] = useState(false);
 
+  // Mount diagnostic — logs the canvas state on every mount so a black
+  // screen has a paper trail in DevTools console.
+  useEffect(() => {
+    console.info("[CanvasRoute] mount", {
+      hasManifest: !!manifest,
+      beatCount: manifest?.beats?.length ?? 0,
+      videoType: manifest?.videoType,
+      masterPrompt: masterPrompt ? `${masterPrompt.slice(0, 60)}…` : "(empty)",
+    });
+  }, [manifest, masterPrompt]);
+
   // Ambient projector loop. Fades in over 0.8s, fades out over 0.6s.
   // Mute is checked at start time only — toggling mid-canvas doesn't
   // affect this loop (acceptable for demo).
@@ -27,7 +40,17 @@ export function CanvasRoute() {
     return stop;
   }, []);
 
-  if (!manifest) return <Navigate to="/" replace />;
+  // Visible fallback instead of a silent <Navigate>. The previous behaviour
+  // was: no manifest → redirect to "/" → page-crumple bg flashed dark, which
+  // read as "black canvas" rather than "you skipped the landing flow."
+  if (!manifest) return <CanvasMissingManifestFallback />;
+
+  // Stale-shape guard. A persisted manifest from a prior schema version may
+  // deserialize with `beats: undefined` or no entries. Surface that explicitly
+  // rather than letting BeatMap3D blow up inside R3F's render loop.
+  if (!Array.isArray(manifest.beats) || manifest.beats.length === 0) {
+    return <CanvasEmptyBeatsFallback />;
+  }
 
   const approvedCount = manifest.beats.filter((b) => b.status === "approved").length;
   const totalCount = manifest.beats.length;
@@ -40,9 +63,11 @@ export function CanvasRoute() {
     // separately inside their components via matchMedia.
     <MotionConfig reducedMotion="user">
     <main className="relative h-screen w-screen overflow-hidden bg-bg-base">
-      <Suspense fallback={<CanvasFallback />}>
-        <BeatMap3D beats={manifest.beats} />
-      </Suspense>
+      <CanvasErrorBoundary>
+        <Suspense fallback={<CanvasFallback />}>
+          <BeatMap3D beats={manifest.beats} />
+        </Suspense>
+      </CanvasErrorBoundary>
 
       {/* Chrome cards — stack vertically on <md (issue #153). On a 375px
           viewport the master-prompt card (max-w-md) + stitch button width
@@ -60,6 +85,7 @@ export function CanvasRoute() {
           <p className="mt-1.5 line-clamp-2 max-w-prose font-display text-base italic leading-snug text-fg-primary">
             {masterPrompt}
           </p>
+          <DecomposeIndicator />
         </div>
 
         <button
@@ -109,5 +135,58 @@ function CanvasFallback() {
         Loading the canvas…
       </div>
     </div>
+  );
+}
+
+function CanvasMissingManifestFallback() {
+  return (
+    <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
+      <div className="max-w-lg space-y-4 text-center">
+        <div className="caption-track text-[10px] text-fg-tertiary">No active project</div>
+        <p className="font-display text-2xl italic leading-snug text-fg-primary">
+          Start by writing a master prompt on the landing page.
+        </p>
+        <p className="font-mono text-[11px] leading-relaxed text-fg-tertiary">
+          /canvas reads from the beat-graph store. Nothing's there yet — that's
+          why this page is empty. Head back to landing, type one sentence about
+          the cinematic you're directing, and hit Start.
+        </p>
+        <Link
+          to="/"
+          className="inline-block rounded-md border border-fg-tertiary/40 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+        >
+          Back to landing
+        </Link>
+      </div>
+    </main>
+  );
+}
+
+function CanvasEmptyBeatsFallback() {
+  const reset = useBeatGraphStore((s) => s.reset);
+  return (
+    <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
+      <div className="max-w-lg space-y-4 text-center">
+        <div className="caption-track text-[10px] text-state-error">Stale project state</div>
+        <p className="font-display text-2xl italic leading-snug text-fg-primary">
+          The stored manifest has no beats.
+        </p>
+        <p className="font-mono text-[11px] leading-relaxed text-fg-tertiary">
+          This usually means a persisted project from an older schema is loaded.
+          Resetting clears localStorage and starts you fresh.
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            reset();
+            localStorage.removeItem("sceneos:prompt");
+            location.href = "/";
+          }}
+          className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+        >
+          Reset and restart
+        </button>
+      </div>
+    </main>
   );
 }

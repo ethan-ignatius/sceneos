@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
+import { useShallow } from "zustand/react/shallow";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -27,7 +28,11 @@ interface PersistentUrlStripProps {
 }
 
 export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
-  const approvedIds = useBeatGraphStore(selectApprovedClipPublicIds);
+  // useShallow: selectApprovedClipPublicIds constructs a fresh array on every
+  // call. Without shallow equality, zustand v5 considers each call a state
+  // change and re-renders on every store update — which under React 19 +
+  // StrictMode can cascade into a max-update-depth crash.
+  const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
   const segments = buildSpliceUrlSegments(approvedIds);
   const fullUrl = buildSpliceUrl(approvedIds);
 

@@ -4,6 +4,7 @@ import { MotionConfig, motion, useReducedMotion } from "motion/react";
 import { Volume2, VolumeX, HelpCircle, ArrowUpRight, Mic, MicOff } from "lucide-react";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
+import { api, ApiError } from "@/lib/api";
 import { CursorSpotlight } from "@/components/ui/cursor-spotlight";
 import { VoiceWaveform } from "@/components/ui/voice-waveform";
 import { TextSplitter } from "@/lib/text-splitter";
@@ -51,6 +52,8 @@ export function LandingRoute() {
   const navigate = useNavigate();
   const { masterPrompt, videoType, setMasterPrompt, setVideoType } = usePromptStore();
   const initialize = useBeatGraphStore((s) => s.initialize);
+  const applyDecomposition = useBeatGraphStore((s) => s.applyDecomposition);
+  const setDecomposeStatus = useBeatGraphStore((s) => s.setDecomposeStatus);
   const reducedMotion = useReducedMotion();
   const [muted, setMuted] = useState(() => isAudioMuted());
   const [draft, setDraft] = useState(masterPrompt);
@@ -102,6 +105,38 @@ export function LandingRoute() {
     if (!trimmed) return;
     setMasterPrompt(trimmed);
     initialize({ masterPrompt: trimmed, videoType });
+
+    // Fire-and-forget: enrich each beat's scenes[0] with an LLM-generated
+    // refinedPrompt while the crumple animation runs. By the time the canvas
+    // mounts, the questionnaire has real director-grade starter prompts to
+    // react to. If decompose 502s (e.g. Vertex quota), the canvas shows an
+    // unobtrusive "Decomposition unavailable" hint and the template beats
+    // still drive the questionnaire — nothing is blocked.
+    const fresh = useBeatGraphStore.getState().manifest;
+    if (fresh) {
+      setDecomposeStatus("pending");
+      api
+        .decompose({
+          masterPrompt: trimmed,
+          videoType,
+          beats: fresh.beats.map((b) => ({
+            beatId: b.beatId,
+            template: b.template,
+            beatName: b.beatName,
+            archetype: b.archetype,
+          })),
+        })
+        .then((res) => {
+          applyDecomposition(res.clips, res.continuityBible);
+          setDecomposeStatus("success");
+        })
+        .catch((err) => {
+          setDecomposeStatus("error");
+          const detail = err instanceof ApiError ? err.details : err;
+          console.warn("[landing] decompose failed; keeping template beats", detail);
+        });
+    }
+
     navigate("/transition");
   };
 
@@ -111,8 +146,34 @@ export function LandingRoute() {
     setMasterPrompt(DEMO_PROMPT);
     setVideoType("trailer");
     initialize({ masterPrompt: DEMO_PROMPT, videoType: "trailer" });
+
+    const fresh = useBeatGraphStore.getState().manifest;
+    if (fresh) {
+      setDecomposeStatus("pending");
+      api
+        .decompose({
+          masterPrompt: DEMO_PROMPT,
+          videoType: "trailer",
+          beats: fresh.beats.map((b) => ({
+            beatId: b.beatId,
+            template: b.template,
+            beatName: b.beatName,
+            archetype: b.archetype,
+          })),
+        })
+        .then((res) => {
+          applyDecomposition(res.clips, res.continuityBible);
+          setDecomposeStatus("success");
+        })
+        .catch((err) => {
+          setDecomposeStatus("error");
+          const detail = err instanceof ApiError ? err.details : err;
+          console.warn("[landing] demo decompose failed; keeping template beats", detail);
+        });
+    }
+
     navigate("/transition");
-  }, [setMasterPrompt, setVideoType, initialize, navigate]);
+  }, [setMasterPrompt, setVideoType, initialize, applyDecomposition, setDecomposeStatus, navigate]);
 
   const longPress = useLongPress({ delayMs: 1000, onLongPress: loadDemoProject });
 
