@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -6,6 +6,7 @@ import { usePromptStore } from "@/stores/prompt-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
+import { startAmbientProjector } from "@/lib/audio-cues";
 
 const BeatMap3D = lazy(() =>
   import("@/components/canvas/beat-map-3d").then((m) => ({ default: m.BeatMap3D })),
@@ -16,6 +17,14 @@ export function CanvasRoute() {
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
   const { masterPrompt } = usePromptStore();
   const [stitchOpen, setStitchOpen] = useState(false);
+
+  // Ambient projector loop. Fades in over 0.8s, fades out over 0.6s.
+  // Mute is checked at start time only — toggling mid-canvas doesn't
+  // affect this loop (acceptable for demo).
+  useEffect(() => {
+    const stop = startAmbientProjector();
+    return stop;
+  }, []);
 
   if (!manifest) return <Navigate to="/" replace />;
 

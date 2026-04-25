@@ -8,6 +8,7 @@ import { generateRoute } from "./routes/generate.js";
 import { statusRoute } from "./routes/status.js";
 import { stitchRoute } from "./routes/stitch.js";
 import { cutosRoute } from "./routes/cutos.js";
+import { isMockMode, logMockBanner } from "./lib/mock-mode.js";
 
 const app = new Hono();
 
@@ -26,6 +27,7 @@ app.get("/", (c) =>
   c.json({
     name: "sceneos-backend",
     status: "ok",
+    mock: isMockMode(),
     docs: "see docs/BACKEND_ARCHITECTURE.md",
   }),
 );
@@ -42,6 +44,8 @@ app.onError((err, c) => {
   console.error("[sceneos-backend] unhandled error", err);
   return c.json({ error: "Internal Server Error", details: err.message }, 500);
 });
+
+logMockBanner();
 
 const port = Number(process.env.PORT ?? 8787);
 serve({ fetch: app.fetch, port }, (info) => {

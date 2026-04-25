@@ -162,6 +162,8 @@ export interface GenerateRequest {
   sceneId: string;
   refinedPrompt: string;
   durationSeconds: number;
+  /** Helps the cached provider locate the right pre-rendered clip. */
+  beatTemplate?: string;
 }
 
 export interface GenerateResponse {
@@ -170,7 +172,14 @@ export interface GenerateResponse {
   pollAfterMs: number;
 }
 
-export type GenerationProvider = "higgsfield" | "segmind" | "replicate";
+/**
+ * Dispatch tiers, switched via backend GENERATION_PROVIDER env var.
+ *  - higgsfield: recorded-demo tier (best quality, slow)
+ *  - kling:      live-demo tier (faster, slightly lower quality)
+ *  - replicate:  multi-model fallback
+ *  - cached:     hard-coded demo project (instant, on-stage safety net)
+ */
+export type GenerationProvider = "higgsfield" | "kling" | "replicate" | "cached";
 ```
 
 ### `GET /api/status/:jobId`
@@ -183,6 +192,7 @@ export interface StatusResponse {
   clipPublicId?: string;
   error?: string;
   pollAfterMs?: number;          // present iff status is queued/running
+  provider?: GenerationProvider; // echoed for client display
 }
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";

@@ -14,14 +14,22 @@ SceneOS is a **LA Hacks 2026** project that turns a creative-but-non-expert user
 
 Read in this order:
 
-1. [`CONTEXT.md`](CONTEXT.md) — the master overview. Vision, market thesis, UX flow, stack.
-2. [`docs/HACKATHON_STRATEGY.md`](docs/HACKATHON_STRATEGY.md) — track choices, day-by-day plan, judging criteria map.
+1. [`CONTEXT.md`](CONTEXT.md) — master overview: vision, market thesis, UX flow, stack.
+2. [`docs/HACKATHON_STRATEGY.md`](docs/HACKATHON_STRATEGY.md) — track choices, day-by-day plan, judging-criteria map.
 3. [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md) — service design, API contract, integrations.
 4. [`docs/FRONTEND_PHILOSOPHY.md`](docs/FRONTEND_PHILOSOPHY.md) — design language, motion system, component patterns.
-5. [`docs/SHARED_TYPES.md`](docs/SHARED_TYPES.md) — TypeScript contracts shared between frontend and backend.
-6. [`docs/STITCH_PROMPTS.md`](docs/STITCH_PROMPTS.md) — Google Stitch prompts per screen for prototyping.
-7. [`docs/DEMO_PHILOSOPHY.md`](docs/DEMO_PHILOSOPHY.md) — how we shoot the 2-minute demo video.
-8. [`docs/DEVPOST_DRAFT.md`](docs/DEVPOST_DRAFT.md) — Devpost submission draft.
+5. [`docs/MASTER_FRONTEND_DEV.md`](docs/MASTER_FRONTEND_DEV.md) — **the synthesis bible.** Decoded site exemplars, tools-vs-tools decisions, full pattern library, component bestiary, snippet library. Read this before anything else frontend-related.
+6. [`docs/UI_FUNDAMENTALS.md`](docs/UI_FUNDAMENTALS.md) — **the static-design counterpart.** 60-30-10 audit, card rules, form rules, border-radius matching, title-case CTAs, practical typography, per-screen audit checklist.
+7. [`docs/MOTION_LANGUAGE.md`](docs/MOTION_LANGUAGE.md) — motion philosophy, timing/easing system, anti-patterns, cohesion checklist.
+8. [`docs/SHADERS_AUDIO.md`](docs/SHADERS_AUDIO.md) — Phase 2 lesson reflection: GSAP timelines, R3F screen-quad pattern, GLSL ember-burn shader, Web Audio synthesis. Read before touching the page-crumple surface.
+9. [`docs/CANVAS_3D.md`](docs/CANVAS_3D.md) — Phase 3 lesson reflection: custom camera rigs, Catmull-Rom splines, drei Sparkles + scroll-velocity bridge, ambient Web Audio loops. Read before touching the canvas surface.
+7. [`docs/FRONTEND_TODO.md`](docs/FRONTEND_TODO.md) — ranked, motion-rich execution list with acceptance criteria.
+8. [`docs/FRONTEND_BUILDOUT.md`](docs/FRONTEND_BUILDOUT.md) — surface-by-surface buildout guide.
+9. [`docs/MOCK_BACKEND.md`](docs/MOCK_BACKEND.md) — mock backend contract: how the FE always talks to a real backend, even with no keys.
+10. [`docs/SHARED_TYPES.md`](docs/SHARED_TYPES.md) — TypeScript contracts shared between frontend and backend.
+11. [`docs/STITCH_PROMPTS.md`](docs/STITCH_PROMPTS.md) — Google Stitch prompts per screen for prototyping.
+12. [`docs/DEMO_PHILOSOPHY.md`](docs/DEMO_PHILOSOPHY.md) — how we shoot the 2-minute demo video.
+13. [`docs/DEVPOST_DRAFT.md`](docs/DEVPOST_DRAFT.md) — Devpost submission draft.
 
 ---
 
@@ -37,19 +45,22 @@ sceneos/
 
 ## Quick start
 
+Two terminals, always.
+
 ```bash
-# Frontend
+# terminal 1 — backend (mock mode, no keys needed)
+cd backend
+npm install
+npm run dev:mock           # http://localhost:8787
+
+# terminal 2 — frontend
 cd frontend
-cp .env.example .env       # fill in Cloudinary cloud_name + preset
+cp .env.example .env
 npm install
 npm run dev                # http://localhost:5173
-
-# Backend (separate terminal)
-cd backend
-cp .env.example .env       # fill in Cloudinary, Higgsfield, OpenAI keys
-npm install
-npm run dev                # http://localhost:8787
 ```
+
+The frontend is **never** mocked itself — it always makes real HTTP calls to a real backend. In mock mode, the **backend** returns canned realistic data. Flip to real services later by populating `backend/.env` and running `npm run dev` (auto-detects keys).
 
 ---
 
