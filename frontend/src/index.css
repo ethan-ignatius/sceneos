@@ -136,4 +136,114 @@
       background: color-mix(in oklab, var(--color-brand-ember) 6%, transparent);
     }
   }
+
+  /* ──────────────────────────────────────────────────────────────────
+   * Flicker reveal — adopted from alexportfolio. Used for the landing
+   * headline character-by-character power-up.
+   *
+   *   <h1 className="flicker-on-mount">
+   *     <TextSplitter text="..." baseDelay={0.4} jitter={0.9} />
+   *   </h1>
+   *
+   * Each <span> within .flicker-on-mount inherits this animation; the
+   * randomised animation-delay set on the span (via TextSplitter) gives
+   * the staggered chaos that reads as "powering up."
+   * ────────────────────────────────────────────────────────────────── */
+  .flicker-on-mount > span > span {
+    opacity: 0;
+    animation-name: flicker-reveal;
+    animation-duration: 0.64s;
+    animation-timing-function: ease-out;
+    animation-fill-mode: forwards;
+  }
+
+  @keyframes flicker-reveal {
+    0%   { opacity: 0; }
+    10%  { opacity: 0.3; }
+    20%  { opacity: 0; }
+    35%  { opacity: 0.6; }
+    60%  { opacity: 0; }
+    80%  { opacity: 0.85; }
+    100% { opacity: 1; }
+  }
+
+  /* Standing-state ember pulse — applied to "ready" CTAs and node states. */
+  .ember-pulse {
+    animation: ember-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes ember-pulse {
+    0%, 100% {
+      box-shadow: 0 0 16px rgba(240, 168, 104, 0.35), 0 0 0 0 rgba(240, 168, 104, 0.18);
+    }
+    50% {
+      box-shadow: 0 0 32px rgba(240, 168, 104, 0.55), 0 0 0 6px rgba(240, 168, 104, 0.05);
+    }
+  }
+
+  /* ──────────────────────────────────────────────────────────────────
+   * Magnetic button corner-flicker telegraph (alexportfolio pattern).
+   * ────────────────────────────────────────────────────────────────── */
+  .magnetic-button {
+    position: relative;
+    isolation: isolate;
+  }
+  .magnetic-button-tick {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    border-color: currentColor;
+    border-style: solid;
+    border-width: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease-out;
+  }
+  .magnetic-button-tick-tl { top: 4px; left: 4px; border-top-width: 1.5px; border-left-width: 1.5px; }
+  .magnetic-button-tick-tr { top: 4px; right: 4px; border-top-width: 1.5px; border-right-width: 1.5px; }
+  .magnetic-button-tick-bl { bottom: 4px; left: 4px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+  .magnetic-button-tick-br { bottom: 4px; right: 4px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+
+  @media (hover: hover) and (pointer: fine) {
+    .magnetic-button:hover .magnetic-button-tick {
+      animation: tick-flicker 80ms infinite linear;
+    }
+  }
+
+  @keyframes tick-flicker {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  .magnetic-button[data-ready="true"] {
+    animation: ember-pulse 1.6s ease-in-out infinite;
+  }
+
+  /* Underline draw — used on the landing input on focus. */
+  .underline-draw {
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition: transform 280ms cubic-bezier(0.25, 1, 0.5, 1);
+  }
+  .underline-draw[data-active="true"] {
+    transform: scaleX(1);
+  }
+
+  /* Reduced-motion overrides — always last to win cascade. */
+  @media (prefers-reduced-motion: reduce) {
+    .flicker-on-mount > span > span,
+    .ember-pulse,
+    .magnetic-button[data-ready="true"],
+    .magnetic-button:hover .magnetic-button-tick,
+    .animate-blur-pulse,
+    .film-grain::before {
+      animation: none !important;
+    }
+    .flicker-on-mount > span > span {
+      opacity: 1 !important;
+    }
+    .underline-draw {
+      transition: opacity 200ms ease-out;
+    }
+  }
 }
