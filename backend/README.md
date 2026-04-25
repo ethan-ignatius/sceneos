@@ -52,29 +52,34 @@ src/
 | `POST /api/agent` | 🟡 stub | Ethan |
 | `POST /api/cutos/import` | 🟡 stub | stretch |
 
-### Generation provider
+### Generation provider tiers
 
-`services/higgsfield.ts` is a provider-agnostic dispatcher. It picks one of:
+`services/provider.ts` dispatches based on `GENERATION_PROVIDER`:
 
-- `mock` — default. Returns one of a handful of public sample MP4s after a 12 s simulated latency. Lets you validate the pipeline without paid keys.
-- `higgsfield` — real Higgsfield Cloud. Auto-selected when `HIGGSFIELD_API_KEY` is set. Endpoint paths are sketched in `services/providers/higgsfield-cloud.ts`; **confirm against the Higgsfield Cloud docs before relying on it**.
+| Tier | When | Notes |
+|---|---|---|
+| `higgsfield` | recorded-demo (default) | best quality (Sora 2 / Veo 3.1), 60–180 s/clip — currently a stub |
+| `kling` | live-demo | direct Kling 3.0, 15–30 s/clip — currently a stub |
+| `replicate` | fallback | multi-model gateway — currently a stub |
+| `cached` | on-stage safety net | reads pre-rendered Cloudinary public_ids from `services/cached-demo.ts` |
 
-To add Segmind/Replicate/Fal: drop a `services/providers/<name>.ts` implementing `VideoProvider`, register it in `pickProvider()`.
+`MOCK_MODE` (auto-default when keys are missing) bypasses all of these and returns canned data from `mock/`. See `../docs/MOCK_BACKEND.md`.
 
-### End-to-end test
+### End-to-end tests
+
+Mock mode works without any keys. The two scripts both require `jq` (`brew install jq`).
 
 ```bash
-# 1. Free Cloudinary signup → cloudinary.com → grab cloud name + API key + secret.
-# 2. Fill backend/.env:
-#      CLOUDINARY_CLOUD_NAME=...
-#      CLOUDINARY_API_KEY=...
-#      CLOUDINARY_API_SECRET=...
-#    (Higgsfield key is optional; without it the mock provider runs.)
-npm run dev                    # listens on :8787
-./scripts/test-pipeline.sh     # default cinematic prompt
-./scripts/test-pipeline.sh "your prompt here"
+npm run dev:mock                 # one terminal — http://localhost:8787
+
+# Generation pipeline: POST /api/generate → poll → open Cloudinary URL
+./scripts/test-pipeline.sh
+./scripts/test-pipeline.sh "your prompt"
+
+# Stitch URL: POST /api/stitch/url → open the spliced result
+./scripts/test-stitch.sh
+./scripts/test-stitch.sh --color-grade
+./scripts/test-stitch.sh --audio samples/audio/<your-public-id>
 ```
 
-`test-pipeline.sh` POSTs `/api/generate`, polls `/api/status/:jobId` until `succeeded`, and `open`s the resulting Cloudinary URL in your browser. Requires `jq` (`brew install jq`).
-
-Tunables (env at script invocation): `PORT`, `DURATION`, `PROJECT_ID`, `BEAT_ID`, `SCENE_ID`, `MAX_POLLS`, `MOCK_GENERATION_LATENCY_MS`.
+Both scripts use Cloudinary's public `demo` cloud, so they produce playable URLs regardless of whether you've configured your own Cloudinary creds. Tunable env: `PORT`.

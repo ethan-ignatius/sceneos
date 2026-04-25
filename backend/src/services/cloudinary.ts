@@ -31,35 +31,92 @@ const CLOUD = cloudName ?? "demo"; // demo cloud has public sample assets
 // Final cut: fl_splice concatenation
 // ────────────────────────────────────────────────────────────────────────
 
+/** A single clip in a splice chain. `colorGrade` is the raw transform string
+ *  (e.g. "e_brightness:-15,e_contrast:10,e_saturation:-12"); use `colorGradeFor(mood)`
+ *  to get one from a beat mood. */
+export interface SpliceClip {
+  publicId: string;
+  colorGrade?: string;
+}
+
 /**
- * Build the final fl_splice URL from an ordered list of public_ids.
+ * Build the final fl_splice URL from an ordered list of clips.
  *
- * Pattern:
- *   {base}/video/upload/<modifiers>/l_video:<id2>,fl_splice/.../<id1>.mp4
+ * Cloudinary processes URL transformations left-to-right, applied to the resource
+ * on the right. We exploit that to:
+ *   1. Apply the base clip's grade first (leftmost prefix transform).
+ *   2. For each overlay clip, open it as a layer, apply its grade, then
+ *      `fl_layer_apply,fl_splice` to commit it onto the running concat.
+ *   3. Append audio/watermark modifiers last so they apply to the final concat.
  *
- * Replaces "/" → ":" in overlay public_ids because Cloudinary uses ":" as
- * the separator inside l_video: references.
+ * Patterns:
+ *   No grades       → `l_video:<id2>,fl_splice/<id1>.mp4`
+ *   Per-clip grades → `<grade1>/l_video:<id2>/<grade2>/fl_layer_apply,fl_splice/<id1>.mp4`
+ *
+ * "/" inside an overlay public_id is replaced with ":" because Cloudinary uses
+ * ":" as the separator inside l_video: references.
  */
-export function buildSpliceUrl(orderedPublicIds: string[], options: BuildUrlOptions = {}): string | null {
-  if (orderedPublicIds.length === 0) return null;
-  const [first, ...rest] = orderedPublicIds;
-  const overlays = rest.map((id) => `l_video:${id.replace(/\//g, ":")},fl_splice`).join("/");
-  const overlaySegment = overlays ? `${overlays}/` : "";
+export function buildSpliceUrl(clips: SpliceClip[], options: BuildUrlOptions = {}): string | null {
+  if (clips.length === 0) return null;
+  const [base, ...overlays] = clips;
 
-  const modifiers: string[] = [];
-  if (options.colorGrade) modifiers.push(options.colorGrade);
-  if (options.audioOverlay) modifiers.push(`l_audio:${options.audioOverlay.replace(/\//g, ":")}`);
-  if (options.watermarkPublicId)
-    modifiers.push(`l_${options.watermarkPublicId.replace(/\//g, ":")},g_south_east,x_24,y_24`);
-  const modifierSegment = modifiers.length ? `${modifiers.join("/")}/` : "";
+  const segments: string[] = [];
 
-  return `https://res.cloudinary.com/${CLOUD}/video/upload/${modifierSegment}${overlaySegment}${first}.mp4`;
+  // Base clip's transforms (normalize + optional grade) apply before any layers.
+  segments.push(...clipSegments(base, options.normalize));
+
+  // Each overlay opens a layer, applies its transforms, then commits with splice.
+  for (const overlay of overlays) {
+    const id = overlay.publicId.replace(/\//g, ":");
+    const transforms = clipSegments(overlay, options.normalize);
+    if (transforms.length > 0) {
+      segments.push(`l_video:${id}`);
+      segments.push(...transforms);
+      segments.push("fl_layer_apply,fl_splice");
+    } else {
+      segments.push(`l_video:${id},fl_splice`);
+    }
+  }
+
+  if (options.audioOverlay) {
+    segments.push(`l_audio:${options.audioOverlay.replace(/\//g, ":")}`);
+  }
+  if (options.watermarkPublicId) {
+    segments.push(`l_${options.watermarkPublicId.replace(/\//g, ":")},g_south_east,x_24,y_24`);
+  }
+
+  const transformPath = segments.length ? `${segments.join("/")}/` : "";
+  return `https://res.cloudinary.com/${CLOUD}/video/upload/${transformPath}${base.publicId}.mp4`;
 }
 
 interface BuildUrlOptions {
-  colorGrade?: string;
+  /** Audio public_id to overlay across the final concat. */
   audioOverlay?: string;
+  /** Watermark image public_id (south-east corner). */
   watermarkPublicId?: string;
+  /**
+   * Normalize each clip's resolution before splicing. Cloudinary refuses to
+   * splice videos whose dimensions differ, so this defaults ON. Pass `false`
+   * to skip normalization (only safe when every input shares one resolution).
+   */
+  normalize?: { width: number; height: number; mode?: "fill" | "pad" } | false;
+}
+
+const DEFAULT_NORMALIZE = { width: 1920, height: 1080, mode: "fill" as const };
+
+/** Build the per-clip transform segments (resize + grade), ordered for Cloudinary. */
+function clipSegments(
+  clip: SpliceClip,
+  normalize: BuildUrlOptions["normalize"],
+): string[] {
+  const out: string[] = [];
+  if (normalize !== false) {
+    const n = normalize ?? DEFAULT_NORMALIZE;
+    const mode = n.mode ?? "fill";
+    out.push(`c_${mode},w_${n.width},h_${n.height}`);
+  }
+  if (clip.colorGrade) out.push(clip.colorGrade);
+  return out;
 }
 
 // ────────────────────────────────────────────────────────────────────────

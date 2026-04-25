@@ -62,6 +62,10 @@ export interface StatusResponse {
 
 export interface StitchRequest {
   manifest: Manifest;
+  /** Optional public_id of a Cloudinary audio asset to overlay across the final cut. */
+  audioPublicId?: string;
+  /** When true, applies per-beat mood color grading to each clip in the splice. */
+  colorGrade?: boolean;
 }
 
 export interface StitchResponse {
