@@ -128,9 +128,11 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       exit={{ x: "calc(100% + 2rem)", opacity: 0 }}
       transition={SPRING.drawer}
       className={cn(
-        "absolute right-6 top-20 bottom-6 z-40 flex w-[40rem] max-w-[calc(100vw-3rem)] flex-col",
-        "overflow-hidden rounded-md",
-        "border border-brand-ember-dim/30",
+        // Bottom-sheet on <md, floating panel on >=md (#155). Same visual
+        // weight, different geometry per viewport.
+        "fixed inset-x-0 bottom-0 z-40 flex max-h-[85svh] w-full flex-col rounded-t-md",
+        "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[40rem] md:max-w-[calc(100vw-3rem)] md:rounded-md",
+        "overflow-hidden border border-brand-ember-dim/30",
         "bg-bg-elev-1/85 backdrop-blur-2xl",
         "shadow-[0_40px_80px_-24px_rgba(0,0,0,0.7),_0_0_0_1px_rgba(240,168,104,0.06)]",
       )}
@@ -264,7 +266,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             <button
               onClick={copy}
               disabled={!fullUrl}
-              className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
               aria-label="Copy Cloudinary URL"
             >
               <Copy size={11} strokeWidth={1.5} aria-hidden="true" />

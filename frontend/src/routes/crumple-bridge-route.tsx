@@ -100,7 +100,7 @@ export function CrumpleBridgeRoute() {
       <div className="crumple-landing absolute inset-0 grid place-items-center">
         <div className="space-y-3 text-center">
           <h2 className="text-display-md italic text-fg-primary">Composing the canvas…</h2>
-          <p className="font-mono text-[10px] uppercase tracking-[0.32em] text-fg-tertiary">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
             Five beats. One cinematic.
           </p>
         </div>

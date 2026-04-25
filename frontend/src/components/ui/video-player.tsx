@@ -144,7 +144,7 @@ export function VideoPlayer({
       />
 
       {caption ? (
-        <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-bg-base/55 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.28em] text-fg-secondary backdrop-blur">
+        <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-bg-base/55 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-fg-secondary backdrop-blur">
           {caption}
         </div>
       ) : null}

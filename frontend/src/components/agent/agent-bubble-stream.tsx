@@ -216,7 +216,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           <div
             role="status"
             aria-live="polite"
-            className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.24em] text-fg-tertiary"
+            className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary"
           >
             <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
             Director is thinking…

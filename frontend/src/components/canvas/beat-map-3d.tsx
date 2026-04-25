@@ -1,7 +1,8 @@
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useThree } from "@react-three/fiber";
 import { Stars, Environment } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette, DepthOfField } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
@@ -13,6 +14,29 @@ import { AmbientParticles } from "./ambient-particles";
 
 interface BeatMap3DProps {
   beats: Beat[];
+}
+
+/**
+ * Recomputes camera FOV + z-distance when the viewport aspect changes
+ * so portrait phones don't slice off outer beats (issue #152).
+ *   horizontalFov = 2 * atan(tan(vfov/2) * aspect)
+ * On portrait (aspect ≈ 0.46) the default 42° vfov collapses horizontal to
+ * ~20° — outer beats vanish. We widen vfov + push camera back proportional
+ * to the inverse aspect.
+ */
+function ResponsiveCamera({ baseFov, baseZ }: { baseFov: number; baseZ: number }) {
+  const { camera, size } = useThree();
+  useEffect(() => {
+    const aspect = size.width / Math.max(size.height, 1);
+    const fov = aspect < 1 ? Math.min(72, baseFov / aspect) : baseFov;
+    const z = aspect < 1 ? baseZ + (1 - aspect) * 4 : baseZ;
+    if (camera instanceof THREE.PerspectiveCamera) {
+      camera.fov = fov;
+      camera.position.z = z;
+      camera.updateProjectionMatrix();
+    }
+  }, [camera, size.width, size.height, baseFov, baseZ]);
+  return null;
 }
 
 /**
@@ -44,18 +68,30 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
 
   const positions = useMemo(() => computeBeatPositions(beats), [beats]);
 
+  // Camera distance scales with beat count (#161): default 5.5 fits 5 beats;
+  // 7 needs ~6.7, 12 needs ~10.5. Pull back so outer beats stay in frustum.
+  // FOV widens on portrait viewports (#152) — see `<ResponsiveCamera>` below.
+  const cameraZ = 4 + Math.max(beats.length, 5) * 0.6;
+
   return (
     <div ref={containerRef} className="absolute inset-0">
       <Canvas
-        camera={{ position: [0, 0.4, 5.5], fov: 42 }}
+        camera={{ position: [0, 0.4, cameraZ], fov: 42 }}
         gl={{ antialias: true, powerPreference: "high-performance" }}
         dpr={[1, 1.75]}
+        // Force ACES tone mapping so postprocess Bloom uses correct luminance
+        // space — prevents ember from clamping toward white. Issues #046 + #166.
+        onCreated={({ gl }) => {
+          gl.toneMapping = THREE.ACESFilmicToneMapping;
+          gl.toneMappingExposure = 1.0;
+        }}
         // Click on empty canvas (the missed event) returns to overview.
         onPointerMissed={() => {
           if (activeBeatId) setActiveBeat(null);
         }}
       >
         <color attach="background" args={["#0a0908"]} />
+        <ResponsiveCamera baseFov={42} baseZ={cameraZ} />
 
         {/* Brighter ambient + warm key + cool fill so the PBR core sphere
             has something to bounce off. Higher intensity than the previous
@@ -96,17 +132,23 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
                 in NodeMesh). Subtle blur on the rest reads as a camera, not a viewport.
               - Vignette: soft edge fall-off; tightens the eye to the centre.
               See RESEARCH_PLANETARY.md §5 + 3D_PLAYBOOK.md §6. */}
+        {/* Bloom dropped to avoid clamping ember to white in the bloom buffer
+            (issue #166): threshold 0.18→0.6 catches only true highlights;
+            intensity 0.75/0.5 → 0.5/0.35.
+            DoF softened (issue #169): bokehScale 3.0/1.5 → 1.8/1.2,
+            focusDistance 0.012/0.02 → 0.018/0.022 so inactive nodes stay
+            readable as out-of-focus shapes, not invisible smears. */}
         <EffectComposer>
           <Bloom
-            intensity={activeBeatId ? 0.75 : 0.5}
-            luminanceThreshold={0.18}
-            luminanceSmoothing={0.3}
+            intensity={activeBeatId ? 0.5 : 0.35}
+            luminanceThreshold={0.6}
+            luminanceSmoothing={0.35}
             mipmapBlur
           />
           <DepthOfField
-            focusDistance={activeBeatId ? 0.012 : 0.02}
-            focalLength={activeBeatId ? 0.05 : 0.08}
-            bokehScale={activeBeatId ? 3.0 : 1.5}
+            focusDistance={activeBeatId ? 0.018 : 0.022}
+            focalLength={activeBeatId ? 0.07 : 0.09}
+            bokehScale={activeBeatId ? 1.8 : 1.2}
           />
           <Vignette eskil={false} offset={0.25} darkness={activeBeatId ? 0.85 : 0.7} />
         </EffectComposer>

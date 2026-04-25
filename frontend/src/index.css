@@ -1,7 +1,9 @@
-/* Instrument Serif (display, italic-friendly) + Geist (body, variable)
-   + Geist Mono (caption mono) — the 2025-26 awwwards-tier free pairing.
-   Replaces Italiana + Inter + JetBrains Mono. See docs/RESEARCH_DESIGN.md. */
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&family=Instrument+Serif:ital@0;1&display=swap");
+/* Premium typography — Fraunces (display, soft + wonk + italic axes) +
+   Manrope (body, semi-humanist geometric, variable, less ubiquitous than
+   Geist/Inter) + Geist Mono (caption / URL / tabular).
+   Per user feedback: Instrument Serif + Geist read "fine" but not premium;
+   Fraunces' wonk + Manrope's character give SOTD-tier register. */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Manrope:wght@200..800&family=Geist+Mono:wght@100..900&display=swap");
 
 @import "tailwindcss";
 
@@ -30,12 +32,28 @@
   --color-glow-ember: #ffb47080;
   --color-glow-cool: #7090a080;
 
-  /* Typography — Instrument Serif (display, ital-friendly), Geist (body,
-     variable), Geist Mono (caption / code). Family DNA shared between
-     Geist Sans + Mono so captions and body align without per-element tuning. */
-  --font-display: "Instrument Serif", "PP Editorial New", "Times New Roman", serif;
-  --font-body: "Geist", "Inter", system-ui, sans-serif;
+  /* Typography — Fraunces (display, italic-forward, soft + wonk axes) +
+     Manrope (body, variable, semi-humanist geometric) + Geist Mono (caption
+     / URL / tabular). Picked over Instrument Serif + Geist for premium
+     register — Fraunces has more character; Manrope is less ubiquitous. */
+  --font-display: "Fraunces", "PP Editorial New", "Times New Roman", serif;
+  --font-body: "Manrope", "Inter", system-ui, sans-serif;
   --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type scale (per issues/open/13-the-tiny-text-disease.md §P1).
+     The currently-missing register is the 14-17px body — almost everything
+     in the app sat at 10-12px caption mono. These tokens give every screen
+     a comfortable reading size to land on. */
+  --text-overline: 0.625rem;   /* 10px — chrome eyebrows ONLY */
+  --text-caption: 0.6875rem;   /* 11px — URL segments, frame counts */
+  --text-meta: 0.8125rem;      /* 13px — pill labels, button micro-text */
+  --text-body-sm: 0.875rem;    /* 14px — drawer body, secondary copy */
+  --text-body: 1rem;           /* 16px — DEFAULT body */
+  --text-body-lg: 1.0625rem;   /* 17px — primary paragraphs */
+  --text-lede: 1.25rem;        /* 20px — opening lines, master-prompt display */
+
+  /* Single uppercase tracking. Sweep all 0.2/0.24/0.28/0.32em to this. */
+  --tracking-caption: 0.18em;
 }
 
 @layer base {
@@ -44,12 +62,12 @@
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* Geist body tuning — single-storey `a` (cv11), contextual alts, kerning,
-       tabular nums for any UI showing numbers. */
-    font-feature-settings: "ss01", "cv11", "calt", "kern";
+    /* Manrope tuning — kerning + contextual alts. Slight negative tracking
+       because Manrope's metrics ship with semi-loose default. */
+    font-feature-settings: "kern", "calt";
     font-variant-numeric: tabular-nums;
     font-optical-sizing: auto;
-    letter-spacing: -0.011em;
+    letter-spacing: -0.012em;
   }
 
   body {
@@ -70,15 +88,24 @@
     cursor: text !important;
   }
 
-  /* Display block — italic-friendly, balanced wrap, optical-sized. The
-     `text-wrap: balance` is what fixes the headline orphan-word wrap bug
-     ("into" splitting across lines on Italiana). */
+  /* Display block — Fraunces with custom axis tuning: high opsz at large
+     sizes (auto), slight soft + wonk for editorial character. text-wrap:
+     balance kills orphan-word headline wraps. */
   .font-display,
   [class*="text-display-"] {
     font-family: var(--font-display);
-    font-feature-settings: "kern", "liga", "dlig";
+    font-feature-settings: "kern", "liga", "dlig", "ss01";
     font-optical-sizing: auto;
+    /* Fraunces axes: SOFT 50/100 = mildly softened terminals; WONK 0 = no
+       optical distortion. Italic gets a touch more soft for Christopher
+       Nolan editorial italic feel. */
+    font-variation-settings: "SOFT" 50, "WONK" 0;
     text-wrap: balance;
+    letter-spacing: -0.025em;
+  }
+  .font-display:where(.italic, [class*="italic"]),
+  [class*="text-display-"]:where(.italic, [class*="italic"]) {
+    font-variation-settings: "SOFT" 60, "WONK" 0;
   }
 
   /* Long-form paragraphs get pretty wrap to kill orphans on the last line. */
@@ -108,21 +135,24 @@
 }
 
 @layer utilities {
+  /* Floors lowered (issue #157): 4rem floor at 375px viewport wraps the
+     headline to 5+ lines. Mobile floor is 2.5rem (40px) — still poster-weight
+     but doesn't break layout. */
   .text-display-xl {
     font-family: var(--font-display);
-    font-size: clamp(4rem, 10vw, 9rem);
+    font-size: clamp(2.5rem, 9vw, 9rem);
     line-height: 0.95;
     letter-spacing: -0.04em;
   }
   .text-display-lg {
     font-family: var(--font-display);
-    font-size: clamp(3rem, 7vw, 6rem);
+    font-size: clamp(2rem, 6.5vw, 6rem);
     line-height: 1;
     letter-spacing: -0.03em;
   }
   .text-display-md {
     font-family: var(--font-display);
-    font-size: clamp(2rem, 4.5vw, 3.5rem);
+    font-size: clamp(1.75rem, 4.5vw, 3.5rem);
     line-height: 1.1;
     letter-spacing: -0.02em;
   }

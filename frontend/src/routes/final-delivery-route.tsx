@@ -150,7 +150,7 @@ export function FinalDeliveryRoute() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.1 }}
-              className="font-mono text-[11px] uppercase tracking-[0.32em] text-fg-tertiary"
+              className="font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary"
             >
               Delivered · {manifest.videoType} · {formatDuration(manifest.durationSeconds)}
             </motion.p>
@@ -219,16 +219,16 @@ export function FinalDeliveryRoute() {
           className="relative z-10 mx-auto mt-32 grid max-w-[64rem] gap-10 pb-16"
         >
           <div className="space-y-2">
-            <div className="font-mono text-[10px] uppercase tracking-[0.32em] text-fg-tertiary">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
               Master prompt
             </div>
-            <p className="max-w-prose font-mono text-sm leading-relaxed text-fg-secondary">
+            <p className="max-w-prose font-display italic text-[1.25rem] leading-[1.45] text-fg-secondary">
               {manifest.masterPrompt}
             </p>
           </div>
 
           <div className="space-y-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.32em] text-fg-tertiary">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
               Beat manifest
             </div>
             <ol className="divide-y divide-fg-tertiary/15 border-y border-fg-tertiary/15">

@@ -59,7 +59,7 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
 
   if (!src) {
     return (
-      <div className="grid h-full place-items-center font-mono text-[11px] uppercase tracking-[0.24em] text-fg-tertiary">
+      <div className="grid h-full place-items-center font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary">
         Clip not yet available
       </div>
     );
@@ -109,7 +109,7 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.28em]"
+        className="flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.18em]"
       >
         <span className="text-fg-tertiary">Refined prompt</span>
         <span className="text-fg-tertiary/70 tabular-nums">
@@ -120,7 +120,7 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       <motion.p
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="line-clamp-3 max-w-prose font-mono text-xs leading-relaxed text-fg-secondary"
+        className="line-clamp-3 max-w-prose font-body text-[0.875rem] leading-[1.55] text-fg-secondary"
       >
         {scene.refinedPrompt ?? beat.archetype.intent}
       </motion.p>

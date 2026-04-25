@@ -41,12 +41,14 @@ export function ConnectingPath({ positions }: ConnectingPathProps) {
   }, [positions]);
 
   const material = useMemo(() => {
-    return new THREE.ShaderMaterial({
+    const m = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uSize: { value: 4.0 },
-        uColorBase: { value: new THREE.Color("#9aa6ad") },
-        uColorAccent: { value: new THREE.Color("#f0a868") },
+        uSize: { value: 3.0 },
+        // Issue #168 — dim base + ember-dim accent so the line never clamps
+        // to white in the bloom pass. Tone-mapping disabled below.
+        uColorBase: { value: new THREE.Color("#5a504a") },
+        uColorAccent: { value: new THREE.Color("#a87447") },
       },
       vertexShader: /* glsl */ `
         attribute float aProgress;
@@ -82,7 +84,9 @@ export function ConnectingPath({ positions }: ConnectingPathProps) {
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      toneMapped: false,
     });
+    return m;
   }, []);
 
   useFrame((state, delta) => {

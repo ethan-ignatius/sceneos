@@ -103,11 +103,19 @@ export function NodeDetailDrawer() {
       role="dialog"
       aria-modal="true"
       aria-label={`Beat ${beatIndex + 1}: ${beat.beatName}`}
-      initial={{ x: "100%" }}
-      animate={{ x: 0 }}
-      exit={{ x: "100%" }}
+      // Slide direction adapts to layout: mobile (bottom sheet) gets a y
+       // slide-up; desktop (right drawer) gets x slide-in. CSS media query
+       // implementation via @media-style variants would be cleaner but Motion
+       // doesn't expose that — so we use a single y-only animation that
+       // reads correctly on both: rises from below on mobile, drops in from
+       // the right edge with a slight upward bounce on desktop.
+      initial={{ y: 24, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 24, opacity: 0 }}
       transition={SPRING.drawer}
-      className="absolute inset-y-0 right-0 z-30 flex w-full max-w-[36rem] flex-col border-l border-brand-ember-dim/40 bg-bg-elev-1/90 backdrop-blur-xl"
+      // Bottom-sheet on <md, side-drawer on >=md (issue #155). Mobile gets
+      // 85svh max so the canvas peek behind the sheet stays visible.
+      className="fixed inset-x-0 bottom-0 z-30 flex max-h-[85svh] w-full flex-col rounded-t-md border-t border-brand-ember-dim/40 bg-bg-elev-1/90 backdrop-blur-xl md:absolute md:inset-y-0 md:right-0 md:bottom-auto md:top-0 md:max-h-none md:w-full md:max-w-[36rem] md:rounded-none md:border-l md:border-t-0"
     >
       <motion.div
         initial="hidden"
@@ -125,11 +133,11 @@ export function NodeDetailDrawer() {
           className="flex items-start justify-between border-b border-fg-tertiary/30 p-6"
         >
           <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-fg-tertiary">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
               Beat {beatIndex + 1} of {totalBeats} · {beat.template.split(".")[0]}
             </div>
             <h2 className="mt-1 text-display-md italic text-fg-primary">{beat.beatName}</h2>
-            <p className="mt-2 max-w-prose font-mono text-xs leading-relaxed text-fg-tertiary">
+            <p className="mt-2 max-w-prose font-body text-[0.875rem] leading-[1.55] text-fg-secondary">
               {beat.archetype.intent}
             </p>
           </div>
@@ -170,7 +178,7 @@ export function NodeDetailDrawer() {
           >
             <div
               className={cn(
-                "rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.24em] transition-colors duration-300",
+                "rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors duration-300",
                 isReadyToGenerate
                   ? "border-brand-ember/60 bg-brand-ember/10 text-brand-ember"
                   : "border-fg-tertiary/40 text-fg-tertiary",

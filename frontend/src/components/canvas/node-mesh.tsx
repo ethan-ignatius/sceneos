@@ -77,6 +77,7 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
   const formRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
+  const atmosphereRef = useRef<THREE.Mesh>(null);
   const holoOverlayRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const [hover, setHover] = useState(false);
@@ -105,12 +106,15 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     return { core: "#a87447", emissive: "#c5895a", atmosphere: "#a87447", holo: "#c5895a" };
   }, [isActive, isApproved, isReady]);
 
+  // Atmosphere tuned to *tint*, not flood: falloff 0.1→0.5 softens the rim,
+  // peak opacity 1.0→0.65 (controlled per-frame below) prevents bloom-clamp
+  // to white. See issue #167.
   const atmosphereMat = useAtmosphereMaterial({
     glowColor: palette.atmosphere,
-    falloff: 0.1,
-    glowInternalRadius: 4.5,
-    glowSharpness: 0.5,
-    opacity: 1.0,
+    falloff: 0.5,
+    glowInternalRadius: 3.8,
+    glowSharpness: 0.4,
+    opacity: 0.65,
   });
 
   const holoMat = useHolographicMaterial({
@@ -143,7 +147,11 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     const approvedScale = isApproved ? 1.12 : 1;
     const target = breath * hoverBoost * activeBoost * approvedScale;
     if (meshRef.current) meshRef.current.scale.setScalar(target);
-    if (holoOverlayRef.current) holoOverlayRef.current.scale.setScalar(target * 1.04);
+    // Atmosphere shell sized 1.4× the form's current scale (issues #164 + #170).
+    // Was a static 1.2 — too coincident with the active form (1.18) and got
+    // swallowed. Now always reads as a halo wrapping the body.
+    if (atmosphereRef.current) atmosphereRef.current.scale.setScalar(target * 1.4);
+    if (holoOverlayRef.current) holoOverlayRef.current.scale.setScalar(target * 1.18);
 
     // ── Group z-offset: active steps forward toward camera ──
     if (groupRef.current) {
@@ -170,11 +178,12 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     }
 
     // ── Atmosphere uniforms ──
+    // Capped at 0.65 so additive bloom never blows the centre to white (#167).
     const auni = atmosphereMat.uniforms;
     if (auni) {
-      const baseOpacity = isActive ? 0.95 : isReady ? 0.8 : hover ? 0.7 : 0.5;
-      const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.15 + 0.15 : 0;
-      auni.opacity.value = baseOpacity + readyPulse;
+      const baseOpacity = isActive ? 0.65 : isReady ? 0.55 : hover ? 0.5 : 0.4;
+      const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.08 + 0.08 : 0;
+      auni.opacity.value = Math.min(baseOpacity + readyPulse, 0.7);
       (auni.glowColor.value as THREE.Color).set(palette.atmosphere);
     }
 
@@ -287,8 +296,9 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
 
   return (
     <group ref={groupRef} position={[slotX, slotY, slotZ]}>
-      {/* Atmosphere shell */}
-      <mesh scale={1.2}>
+      {/* Atmosphere shell — scale set in useFrame (target × 1.4) so it tracks
+          the form size and never gets swallowed when active. */}
+      <mesh ref={atmosphereRef}>
         <sphereGeometry args={[0.55, 48, 48]} />
         <primitive object={atmosphereMat} attach="material" />
       </mesh>

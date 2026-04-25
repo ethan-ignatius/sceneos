@@ -5,6 +5,7 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
+import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
 
@@ -43,13 +44,16 @@ export function CanvasRoute() {
         <BeatMap3D beats={manifest.beats} />
       </Suspense>
 
+      {/* Chrome cards — stack vertically on <md (issue #153). On a 375px
+          viewport the master-prompt card (max-w-md) + stitch button width
+          collide; stacking puts master-prompt full-width and stitch under it. */}
       <motion.div
         initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-6"
+        className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between md:p-6"
       >
-        <div className="pointer-events-auto max-w-md rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]">
+        <div className="pointer-events-auto w-full max-w-md rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)] md:w-auto">
           <div className="caption-track text-[10px] text-fg-tertiary">
             Master prompt · {manifest.videoType}
           </div>
@@ -60,7 +64,7 @@ export function CanvasRoute() {
 
         <button
           onClick={() => setStitchOpen((s) => !s)}
-          className="pointer-events-auto group rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl transition-colors hover:border-brand-ember/60 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]"
+          className="pointer-events-auto group min-h-11 w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl transition-colors hover:border-brand-ember/60 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)] md:w-auto"
         >
           <div className="caption-track text-[10px] text-fg-tertiary group-hover:text-brand-ember/80 transition-colors">
             Stitch tray
@@ -86,6 +90,10 @@ export function CanvasRoute() {
         ))}
       </div>
 
+      {/* Always-visible URL strip — Cloudinary track-hero feature is no
+          longer hidden behind the stitch tray (VIABILITY V2 / issue #072). */}
+      <PersistentUrlStrip onOpenTray={() => setStitchOpen(true)} />
+
       <AnimatePresence>{activeBeatId ? <NodeDetailDrawer key={activeBeatId} /> : null}</AnimatePresence>
 
       <AnimatePresence>{stitchOpen ? <StitchTray onClose={() => setStitchOpen(false)} /> : null}</AnimatePresence>
@@ -97,7 +105,7 @@ export function CanvasRoute() {
 function CanvasFallback() {
   return (
     <div className="grid h-full w-full place-items-center">
-      <div className="font-mono text-xs uppercase tracking-[0.32em] text-fg-tertiary">
+      <div className="font-mono text-xs uppercase tracking-[0.18em] text-fg-tertiary">
         Loading the canvas…
       </div>
     </div>

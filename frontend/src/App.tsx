@@ -5,6 +5,8 @@ import { CanvasRoute } from "@/routes/canvas-route";
 import { FinalDeliveryRoute } from "@/routes/final-delivery-route";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
+import { StageIndicator } from "@/components/ui/stage-indicator";
+import { MockModeChip } from "@/components/ui/mock-mode-chip";
 import { useLenis } from "@/lib/use-lenis";
 
 export default function App() {
@@ -25,6 +27,8 @@ export default function App() {
       {/* Mounted outside <Routes> so they survive route navigation. */}
       <CinematicCursor />
       <CommandMenuMount />
+      <StageIndicator />
+      <MockModeChip />
     </>
   );
 }

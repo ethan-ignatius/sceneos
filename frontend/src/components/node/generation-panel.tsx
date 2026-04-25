@@ -62,7 +62,7 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
       <div className="relative aspect-video overflow-hidden rounded-md border border-brand-ember/30 bg-bg-elev-2">
         <div className="animate-blur-pulse absolute inset-0" />
         <div className="absolute inset-0 grid place-items-center">
-          <div className="font-mono text-[10px] uppercase tracking-[0.32em] text-brand-ember/80">
+          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-brand-ember/80">
             Composing the frame
           </div>
         </div>
@@ -83,7 +83,7 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
             <li
               key={stage.id}
               className={cn(
-                "relative flex items-center gap-3 rounded-md px-3 py-2 font-mono text-[11px] uppercase tracking-[0.24em]",
+                "relative flex items-center gap-3 rounded-md px-3 py-2 font-mono text-[11px] uppercase tracking-[0.18em]",
                 done && "text-fg-secondary",
                 active && "text-brand-ember",
                 !done && !active && "text-fg-tertiary",
@@ -121,7 +121,7 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
           <span className="mx-2 text-fg-tertiary/60">/</span>
           <span className="tabular-nums">~{formatTime(totalEst)}</span>
         </span>
-        <span className="uppercase tracking-[0.24em]">
+        <span className="uppercase tracking-[0.18em]">
           {provider ? PROVIDER_LABEL[provider] : "Connecting…"}
         </span>
       </div>

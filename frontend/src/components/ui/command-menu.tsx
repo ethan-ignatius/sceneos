@@ -118,7 +118,7 @@ export function CommandMenu() {
                 />
               </div>
               <Command.List className="max-h-[24rem] overflow-y-auto p-2">
-                <Command.Empty className="px-3 py-6 text-center font-mono text-[11px] uppercase tracking-[0.24em] text-fg-tertiary">
+                <Command.Empty className="px-3 py-6 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary">
                   No matches.
                 </Command.Empty>
 

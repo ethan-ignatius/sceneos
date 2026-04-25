@@ -31,6 +31,16 @@ app.get("/", (c) =>
   }),
 );
 
+// Health endpoint under /api/* so the existing CORS middleware applies.
+// Used by the frontend MockModeChip to know whether the backend is in
+// mock mode without making a non-CORS-friendly request to /.
+app.get("/api/health", (c) =>
+  c.json({
+    status: "ok",
+    mockMode: isMockMode(),
+  }),
+);
+
 app.route("/api/agent", agentRoute);
 app.route("/api/generate", generateRoute);
 app.route("/api/status", statusRoute);

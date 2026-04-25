@@ -92,7 +92,7 @@ export function LandingRoute() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <main className="film-grain relative min-h-screen overflow-hidden bg-bg-base">
+      <main className="film-grain relative min-h-[100svh] overflow-hidden bg-bg-base">
         <CursorSpotlight intensity={0.18} radius={420} />
 
         {/* Slow ember radial-pulse from off-center bottom-left. CSS keyframe; reduced-motion safe. */}
@@ -120,7 +120,7 @@ export function LandingRoute() {
         </motion.div>
 
         {/* 12-col grid hero */}
-        <section className="relative z-10 mx-auto grid min-h-screen w-full max-w-[88rem] grid-cols-12 items-center gap-x-6 px-8 py-24 sm:gap-x-8 sm:px-12">
+        <section className="relative z-10 mx-auto grid min-h-[100svh] w-full max-w-[88rem] grid-cols-12 items-center gap-x-6 px-8 py-24 sm:gap-x-8 sm:px-12">
           {/* Headline + form — col 1–8 (off-axis left anchor). */}
           <div className="col-span-12 lg:col-span-8 lg:pr-8">
             {/* Kicker — small italic display, the "film slate label" */}
@@ -327,7 +327,8 @@ export function LandingRoute() {
               <button
                 onClick={toggleMute}
                 data-cursor="hover"
-                className="grid h-8 w-8 place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
+                // 44×44 touch target per Apple HIG / WCAG AAA (#154).
+                className="grid h-11 w-11 place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
                 aria-label={muted ? "Unmute" : "Mute"}
               >
                 {muted ? <VolumeX size={14} strokeWidth={1.5} /> : <Volume2 size={14} strokeWidth={1.5} />}
@@ -336,7 +337,7 @@ export function LandingRoute() {
               <button
                 onClick={() => setHelpOpen(true)}
                 data-cursor="hover"
-                className="grid h-8 w-8 place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
+                className="grid h-11 w-11 place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
                 aria-label="How it works"
                 title="How it works"
               >
