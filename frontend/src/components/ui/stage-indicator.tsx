@@ -30,6 +30,10 @@ export function StageIndicator() {
   const { pathname } = useLocation();
   const manifest = useBeatGraphStore((s) => s.manifest);
 
+  // Suppress on landing + bridge — the hook moment must be uncluttered.
+  // The pill earns its keep once we're inside the product (canvas / final).
+  if (pathname === "/" || pathname === "/transition") return null;
+
   let activeKey: StageKey = "direct";
   if (pathname === "/" || pathname === "/transition") {
     activeKey = "direct";

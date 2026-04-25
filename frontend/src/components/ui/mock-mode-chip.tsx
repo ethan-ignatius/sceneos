@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Database } from "lucide-react";
 
 /**
@@ -10,6 +11,7 @@ import { Database } from "lucide-react";
  * a sophistication signal at a hackathon, not a downgrade signal.
  */
 export function MockModeChip() {
+  const { pathname } = useLocation();
   const [isMock, setIsMock] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -33,6 +35,9 @@ export function MockModeChip() {
   }, []);
 
   if (!isMock) return null;
+  // Suppress on landing — the hook stays uncluttered. The chip earns its
+  // place once the user is inside the product.
+  if (pathname === "/" || pathname === "/transition") return null;
   return (
     <div
       className="pointer-events-auto fixed bottom-4 left-4 z-30 inline-flex items-center gap-1.5 rounded-full border border-fg-tertiary/30 bg-bg-elev-1/70 px-2.5 py-1 caption-track text-[9px] text-fg-tertiary backdrop-blur-xl"
