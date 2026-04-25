@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { agentRoute } from "./routes/agent.js";
+import { decomposeRoute } from "./routes/decompose.js";
 import { generateRoute } from "./routes/generate.js";
 import { statusRoute } from "./routes/status.js";
 import { stitchRoute } from "./routes/stitch.js";
@@ -30,6 +31,7 @@ app.get("/", (c) =>
 );
 
 app.route("/api/agent", agentRoute);
+app.route("/api/decompose", decomposeRoute);
 app.route("/api/generate", generateRoute);
 app.route("/api/status", statusRoute);
 app.route("/api/stitch", stitchRoute);

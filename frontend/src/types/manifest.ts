@@ -69,12 +69,30 @@ export interface Scene {
   sceneId: string;
   conversation: AgentTurn[];
   refinedPrompt?: string;
+  clipPrompt?: HiggsfieldClipPrompt;
   jobId?: string;
   clipPublicId?: string;
   clipUrl?: string;
   durationSeconds?: number;
   approved: boolean;
 }
+
+/**
+ * A self-contained Higgsfield prompt envelope for one clip.
+ * Produced by the backend LLM decomposition layer and used by the
+ * generate flow when calling Higgsfield.
+ */
+export interface HiggsfieldClipPrompt {
+  imagePrompt: string;
+  motionPrompt: string;
+  aspectRatio: HiggsfieldAspectRatio;
+  resolution: HiggsfieldResolution;
+  durationSeconds: number;
+  preferredModel: string;
+}
+
+export type HiggsfieldAspectRatio = "16:9" | "9:16" | "1:1";
+export type HiggsfieldResolution = "720p" | "1080p";
 
 export interface AgentTurn {
   role: "agent" | "user";

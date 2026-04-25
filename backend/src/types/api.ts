@@ -2,7 +2,13 @@
  * Mirror of frontend/src/types/api.ts.
  * Source of truth: docs/SHARED_TYPES.md
  */
-import type { Manifest } from "./manifest.js";
+import type {
+  BeatArchetype,
+  BeatTemplate,
+  HiggsfieldClipPrompt,
+  Manifest,
+  VideoType,
+} from "./manifest.js";
 
 export interface AgentRequest {
   manifest: Manifest;
@@ -68,4 +74,41 @@ export interface CutOSImportRequest {
 export interface CutOSImportResponse {
   projectId: string;
   editUrl: string;
+}
+
+/**
+ * POST /api/decompose
+ *
+ * One-shot LLM call that turns the master prompt into a Higgsfield-ready
+ * clip prompt for every beat in the graph. The frontend posts the master
+ * prompt + the (already-built) beat skeleton; the backend returns one
+ * HiggsfieldClipPrompt per beat, keyed by beatId.
+ */
+export interface DecomposeRequest {
+  masterPrompt: string;
+  videoType: VideoType;
+  beats: DecomposeBeatInput[];
+}
+
+export interface DecomposeBeatInput {
+  beatId: string;
+  template: BeatTemplate;
+  beatName: string;
+  archetype: BeatArchetype;
+}
+
+export interface DecomposeResponse {
+  clips: DecomposedClip[];
+  /** Optional: short character/world bible the agent can reuse for continuity. */
+  continuityBible?: string;
+}
+
+export interface DecomposedClip {
+  beatId: string;
+  /** Human-readable scene summary for the node UI. */
+  sceneSummary: string;
+  /** A single coherent paragraph suitable for downstream agents/editors. */
+  refinedPrompt: string;
+  /** The actual Higgsfield-shaped prompt envelope (text-to-image + image-to-video). */
+  clipPrompt: HiggsfieldClipPrompt;
 }

@@ -1,12 +1,19 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Manifest, Beat, Scene, AgentTurn, VideoType } from "@/types/manifest";
+import type { DecomposedClip } from "@/types/api";
 import { buildInitialBeats } from "@/lib/beat-templates";
 import { uuid, nowISO } from "@/lib/utils";
+
+export type DecompositionStatus = "idle" | "pending" | "ready" | "error";
 
 interface BeatGraphState {
   manifest: Manifest | null;
   activeBeatId: string | null;
+
+  decompositionStatus: DecompositionStatus;
+  decompositionError: string | null;
+  continuityBible: string | null;
 
   // mutations
   initialize: (params: { masterPrompt: string; videoType: VideoType }) => void;
@@ -15,6 +22,8 @@ interface BeatGraphState {
   updateScene: (beatId: string, sceneId: string, patch: Partial<Scene>) => void;
   appendAgentTurn: (beatId: string, sceneId: string, turn: AgentTurn) => void;
   approveScene: (beatId: string, sceneId: string) => void;
+  setDecompositionStatus: (status: DecompositionStatus, error?: string | null) => void;
+  applyDecomposition: (clips: DecomposedClip[], continuityBible?: string) => void;
   reset: () => void;
 }
 
@@ -23,6 +32,9 @@ export const useBeatGraphStore = create<BeatGraphState>()(
     (set, get) => ({
       manifest: null,
       activeBeatId: null,
+      decompositionStatus: "idle",
+      decompositionError: null,
+      continuityBible: null,
 
       initialize: ({ masterPrompt, videoType }) => {
         const beats = buildInitialBeats(videoType);
@@ -35,6 +47,9 @@ export const useBeatGraphStore = create<BeatGraphState>()(
             beats,
           },
           activeBeatId: null,
+          decompositionStatus: "idle",
+          decompositionError: null,
+          continuityBible: null,
         });
       },
 
@@ -109,7 +124,50 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         });
       },
 
-      reset: () => set({ manifest: null, activeBeatId: null }),
+      setDecompositionStatus: (status, error = null) =>
+        set({ decompositionStatus: status, decompositionError: error }),
+
+      applyDecomposition: (clips, continuityBible) => {
+        const m = get().manifest;
+        if (!m) return;
+        const byBeatId = new Map(clips.map((c) => [c.beatId, c]));
+        set({
+          manifest: {
+            ...m,
+            beats: m.beats.map((b) => {
+              const clip = byBeatId.get(b.beatId);
+              if (!clip) return b;
+              const firstScene = b.scenes[0];
+              if (!firstScene) return b;
+              return {
+                ...b,
+                status: b.status === "pending" ? "ready-to-generate" : b.status,
+                scenes: [
+                  {
+                    ...firstScene,
+                    refinedPrompt: clip.refinedPrompt,
+                    clipPrompt: clip.clipPrompt,
+                    durationSeconds: clip.clipPrompt.durationSeconds,
+                  },
+                  ...b.scenes.slice(1),
+                ],
+              };
+            }),
+          },
+          continuityBible: continuityBible ?? null,
+          decompositionStatus: "ready",
+          decompositionError: null,
+        });
+      },
+
+      reset: () =>
+        set({
+          manifest: null,
+          activeBeatId: null,
+          decompositionStatus: "idle",
+          decompositionError: null,
+          continuityBible: null,
+        }),
     }),
     { name: "sceneos:beat-graph" },
   ),

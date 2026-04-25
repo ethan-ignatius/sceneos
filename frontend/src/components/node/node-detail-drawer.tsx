@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import { X, Sparkles } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
+import { ClipPromptCard } from "@/components/node/clip-prompt-card";
 import { Button } from "@/components/ui/button";
 import { SPRING } from "@/lib/motion-presets";
 
@@ -43,8 +44,11 @@ export function NodeDetailDrawer() {
         </button>
       </header>
 
-      <div className="flex-1 overflow-hidden p-6">
-        <AgentBubbleStream beat={beat} />
+      <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
+        <ClipPromptCard beat={beat} />
+        <div className="flex-1">
+          <AgentBubbleStream beat={beat} />
+        </div>
       </div>
 
       <footer className="space-y-3 border-t border-fg-tertiary/30 p-6">

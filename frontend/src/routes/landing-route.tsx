@@ -7,7 +7,9 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
+import { api } from "@/lib/api";
 import type { VideoType } from "@/types/manifest";
+import type { DecomposeBeatInput } from "@/types/api";
 
 const VIDEO_TYPES: Array<{ value: VideoType; label: string }> = [
   { value: "trailer", label: "Trailer" },
@@ -19,6 +21,8 @@ export function LandingRoute() {
   const navigate = useNavigate();
   const { masterPrompt, videoType, setMasterPrompt, setVideoType } = usePromptStore();
   const initialize = useBeatGraphStore((s) => s.initialize);
+  const applyDecomposition = useBeatGraphStore((s) => s.applyDecomposition);
+  const setDecompositionStatus = useBeatGraphStore((s) => s.setDecompositionStatus);
   const [muted, setMuted] = useState(true);
   const [draft, setDraft] = useState(masterPrompt);
 
@@ -28,6 +32,27 @@ export function LandingRoute() {
     if (!trimmed) return;
     setMasterPrompt(trimmed);
     initialize({ masterPrompt: trimmed, videoType });
+
+    // The crumple bridge runs ~1.5s. Fire the decomposition in parallel so the
+    // canvas mounts with every beat already carrying a Higgsfield-ready prompt.
+    const seeded = useBeatGraphStore.getState().manifest;
+    if (seeded) {
+      const beats: DecomposeBeatInput[] = seeded.beats.map((b) => ({
+        beatId: b.beatId,
+        template: b.template,
+        beatName: b.beatName,
+        archetype: b.archetype,
+      }));
+      setDecompositionStatus("pending");
+      api
+        .decompose({ masterPrompt: trimmed, videoType, beats })
+        .then((res) => applyDecomposition(res.clips, res.continuityBible))
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : "Decomposition failed";
+          setDecompositionStatus("error", message);
+        });
+    }
+
     navigate("/transition");
   };
 

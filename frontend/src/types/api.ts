@@ -2,7 +2,13 @@
  * API request/response shapes. Mirror of backend/src/types/api.ts.
  * Source of truth: docs/SHARED_TYPES.md
  */
-import type { Manifest } from "./manifest";
+import type {
+  BeatArchetype,
+  BeatTemplate,
+  HiggsfieldClipPrompt,
+  Manifest,
+  VideoType,
+} from "./manifest";
 
 export interface AgentRequest {
   manifest: Manifest;
@@ -68,4 +74,29 @@ export interface CutOSImportRequest {
 export interface CutOSImportResponse {
   projectId: string;
   editUrl: string;
+}
+
+export interface DecomposeRequest {
+  masterPrompt: string;
+  videoType: VideoType;
+  beats: DecomposeBeatInput[];
+}
+
+export interface DecomposeBeatInput {
+  beatId: string;
+  template: BeatTemplate;
+  beatName: string;
+  archetype: BeatArchetype;
+}
+
+export interface DecomposeResponse {
+  clips: DecomposedClip[];
+  continuityBible?: string;
+}
+
+export interface DecomposedClip {
+  beatId: string;
+  sceneSummary: string;
+  refinedPrompt: string;
+  clipPrompt: HiggsfieldClipPrompt;
 }

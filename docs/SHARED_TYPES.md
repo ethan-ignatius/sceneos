@@ -98,12 +98,25 @@ export interface Scene {
   sceneId: string;
   conversation: AgentTurn[];
   refinedPrompt?: string;        // emitted by agent on sufficiency
+  clipPrompt?: HiggsfieldClipPrompt; // emitted by /api/decompose
   jobId?: string;                // Higgsfield job
   clipPublicId?: string;         // Cloudinary public_id for fl_splice
   clipUrl?: string;              // Cloudinary delivery URL for preview
   durationSeconds?: number;
   approved: boolean;
 }
+
+export interface HiggsfieldClipPrompt {
+  imagePrompt: string;           // → text-to-image (e.g. soul/standard)
+  motionPrompt: string;          // → image-to-video (e.g. dop/standard)
+  aspectRatio: HiggsfieldAspectRatio;
+  resolution: HiggsfieldResolution;
+  durationSeconds: number;
+  preferredModel: string;        // higgsfield model_id
+}
+
+export type HiggsfieldAspectRatio = "16:9" | "9:16" | "1:1";
+export type HiggsfieldResolution = "720p" | "1080p";
 
 export interface AgentTurn {
   role: "agent" | "user";
@@ -186,6 +199,39 @@ export interface StitchResponse {
   finalUrl: string;
   thumbnailUrl: string;
   durationSeconds: number;
+}
+```
+
+### `POST /api/decompose`
+
+One-shot LLM call that turns the master prompt into a Higgsfield-ready clip
+prompt for every beat. Called by the frontend immediately after the user
+submits the master prompt.
+
+```ts
+export interface DecomposeRequest {
+  masterPrompt: string;
+  videoType: VideoType;
+  beats: DecomposeBeatInput[];
+}
+
+export interface DecomposeBeatInput {
+  beatId: string;
+  template: BeatTemplate;
+  beatName: string;
+  archetype: BeatArchetype;
+}
+
+export interface DecomposeResponse {
+  clips: DecomposedClip[];
+  continuityBible?: string;
+}
+
+export interface DecomposedClip {
+  beatId: string;
+  sceneSummary: string;
+  refinedPrompt: string;
+  clipPrompt: HiggsfieldClipPrompt;
 }
 ```
 
