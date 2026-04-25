@@ -9,6 +9,7 @@
  */
 
 import type { GenerationProvider, JobStatus } from "../types/api.js";
+import type { HiggsfieldClipPrompt } from "../types/manifest.js";
 import * as higgsfield from "./higgsfield.js";
 import * as kling from "./kling.js";
 import * as replicate from "./replicate.js";
@@ -16,13 +17,19 @@ import * as cached from "./cached-demo.js";
 
 export interface ProviderModule {
   generate(params: GenerateClipParams): Promise<{ jobId: string }>;
-  getStatus(jobId: string): Promise<{ status: JobStatus; clipUrl?: string; error?: string }>;
+  getStatus(jobId: string): Promise<{
+    status: JobStatus;
+    clipUrl?: string;
+    clipPublicId?: string;
+    error?: string;
+  }>;
 }
 
 export interface GenerateClipParams {
   refinedPrompt: string;
   durationSeconds: number;
   beatTemplate?: string;
+  clipPrompt?: HiggsfieldClipPrompt;
   projectId: string;
   beatId: string;
   sceneId: string;

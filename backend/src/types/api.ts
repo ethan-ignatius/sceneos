@@ -36,7 +36,13 @@ export interface GenerateRequest {
   sceneId: string;
   refinedPrompt: string;
   durationSeconds: number;
-  beatTemplate?: string; // helps the cached provider locate the right clip
+  beatTemplate?: string;
+  /**
+   * The Higgsfield-shaped envelope produced by /api/decompose or the per-beat
+   * agent. When present, the backend uses it directly; otherwise it falls back
+   * to splitting refinedPrompt into a single image+motion prompt pair.
+   */
+  clipPrompt?: HiggsfieldClipPrompt;
 }
 
 /**

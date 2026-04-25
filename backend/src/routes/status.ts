@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { StatusResponse } from "../types/api.js";
+import type { GenerationProvider, JobStatus, StatusResponse } from "../types/api.js";
 import { decodeJobId } from "../services/provider.js";
 import * as higgsfield from "../services/higgsfield.js";
 import * as kling from "../services/kling.js";
@@ -11,14 +11,8 @@ import { getMockClip } from "../mock/index.js";
 /**
  * GET /api/status/:jobId
  *
- * In MOCK_MODE this resolves jobs deterministically: the first poll
- * returns "running", the second returns "succeeded" with a real,
- * playable Cloudinary demo clip URL. The lifecycle is realistic
- * enough that the frontend's optimistic UI / loading state can be
- * iterated against without ever calling Higgsfield.
- *
- * Real-mode dispatches via the provider encoded in the jobId prefix
- * (provider::providerJobId). Stateless across server restarts.
+ * In MOCK_MODE this resolves jobs deterministically. Real mode dispatches via
+ * the provider encoded in the jobId prefix (provider::providerJobId).
  */
 export const statusRoute = new Hono();
 
@@ -41,8 +35,6 @@ statusRoute.get("/:jobId", async (c) => {
       return c.json(response, 200);
     }
 
-    // Pick a clip — beat template is encoded in the jobId seed when generated
-    // by mock; if not, fall back to a default.
     const seed = jobId.split("::").pop() ?? "";
     const beatTemplate = seed.split("-")[0] ?? "trailer.establishing";
     const clip = getMockClip(beatTemplate);
@@ -74,6 +66,7 @@ statusRoute.get("/:jobId", async (c) => {
       provider: decoded.provider,
       status: status.status,
       clipUrl: status.clipUrl,
+      clipPublicId: status.clipPublicId,
       error: status.error,
       pollAfterMs:
         status.status === "queued" || status.status === "running"
@@ -84,17 +77,26 @@ statusRoute.get("/:jobId", async (c) => {
     };
     return c.json(response, 200);
   } catch (err) {
+    console.error("[status] failed", err);
     return c.json(
       {
-        error: `Provider "${decoded.provider}" not implemented`,
+        error: `Provider "${decoded.provider}" status failed`,
         details: err instanceof Error ? err.message : String(err),
       },
-      501,
+      502,
     );
   }
 });
 
-async function dispatchStatus(provider: string, providerJobId: string) {
+async function dispatchStatus(
+  provider: GenerationProvider,
+  providerJobId: string,
+): Promise<{
+  status: JobStatus;
+  clipUrl?: string;
+  clipPublicId?: string;
+  error?: string;
+}> {
   switch (provider) {
     case "higgsfield":
       return higgsfield.getStatus(providerJobId);
@@ -104,7 +106,5 @@ async function dispatchStatus(provider: string, providerJobId: string) {
       return replicate.getStatus(providerJobId);
     case "cached":
       return cached.getStatus(providerJobId);
-    default:
-      throw new Error(`Unknown provider: ${provider}`);
   }
 }

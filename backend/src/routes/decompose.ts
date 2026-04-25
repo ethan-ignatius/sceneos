@@ -48,6 +48,7 @@ const ArchetypeSchema = z.object({
     "punchy-sting",
   ]),
   suggestedDuration: z.number().positive(),
+  directorNotes: z.string().min(1),
 });
 
 const RequestSchema = z.object({

@@ -9,7 +9,8 @@
  *   1. Frontend submits the master prompt and the seeded beat skeleton.
  *   2. This service builds a director-style system prompt seeded with
  *      cinematography theory + each beat's archetype intent + mood.
- *   3. GPT-4o (json mode) returns one DecomposedClip per beat with both:
+ *   3. Claude (forced single tool call) returns one DecomposedClip per beat
+ *      with both:
  *        - imagePrompt   → goes to Higgsfield text-to-image (e.g. soul/standard)
  *        - motionPrompt  → goes to Higgsfield image-to-video (e.g. dop/standard)
  *   4. Optional `continuityBible` carries character/world descriptors so later
@@ -21,7 +22,7 @@
  *   https://docs.higgsfield.ai/guides/video.md
  */
 
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type {
   DecomposeBeatInput,
@@ -42,6 +43,7 @@ const ASPECT_BY_VIDEO_TYPE: Record<VideoType, HiggsfieldAspectRatio> = {
 };
 
 const DEFAULT_MODEL = "higgsfield-ai/dop/standard";
+const ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-7";
 
 const HiggsfieldClipPromptSchema = z.object({
   imagePrompt: z.string().min(20),
@@ -73,47 +75,85 @@ export interface DecomposeParams {
 export async function decomposeMasterPrompt(
   params: DecomposeParams,
 ): Promise<DecomposeResponse> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return stubDecomposition(params);
   }
 
-  const openai = new OpenAI({ apiKey });
+  const client = new Anthropic({ apiKey });
   const aspectRatio = ASPECT_BY_VIDEO_TYPE[params.videoType];
 
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    {
-      role: "system",
-      content: SYSTEM_PROMPT,
+  const tool: Anthropic.Tool = {
+    name: "emit_clips",
+    description:
+      "Emit one Higgsfield-ready clip per input beat, in the same order, with matching beatIds.",
+    input_schema: {
+      type: "object",
+      required: ["clips"],
+      properties: {
+        continuityBible: {
+          type: "string",
+          description:
+            "One short paragraph carrying recurring character/world descriptors that every beat should reuse verbatim.",
+        },
+        clips: {
+          type: "array",
+          minItems: params.beats.length,
+          maxItems: params.beats.length,
+          items: {
+            type: "object",
+            required: ["beatId", "sceneSummary", "refinedPrompt", "clipPrompt"],
+            properties: {
+              beatId: { type: "string" },
+              sceneSummary: { type: "string" },
+              refinedPrompt: { type: "string" },
+              clipPrompt: {
+                type: "object",
+                required: [
+                  "imagePrompt",
+                  "motionPrompt",
+                  "aspectRatio",
+                  "resolution",
+                  "durationSeconds",
+                  "preferredModel",
+                ],
+                properties: {
+                  imagePrompt: { type: "string" },
+                  motionPrompt: { type: "string" },
+                  aspectRatio: { type: "string", enum: ["16:9", "9:16", "1:1"] },
+                  resolution: { type: "string", enum: ["720p", "1080p"] },
+                  durationSeconds: { type: "number" },
+                  preferredModel: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
     },
-    {
-      role: "user",
-      content: buildUserPrompt({ ...params, aspectRatio }),
-    },
-  ];
+  };
 
-  const completion = await openai.chat.completions.create({
-    model: process.env.OPENAI_DECOMPOSE_MODEL ?? "gpt-4o-2024-08-06",
-    temperature: 0.7,
-    response_format: { type: "json_object" },
-    messages,
+  const response = await client.messages.create({
+    model: process.env.ANTHROPIC_DECOMPOSE_MODEL ?? ANTHROPIC_DEFAULT_MODEL,
+    max_tokens: 8192,
+    system: SYSTEM_PROMPT,
+    tools: [tool],
+    tool_choice: { type: "tool", name: "emit_clips" },
+    messages: [
+      { role: "user", content: buildUserPrompt({ ...params, aspectRatio }) },
+    ],
   });
 
-  const content = completion.choices[0]?.message?.content;
-  if (!content) {
-    throw new Error("decomposeMasterPrompt: empty completion");
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch (err) {
+  const toolUse = response.content.find(
+    (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+  );
+  if (!toolUse) {
     throw new Error(
-      `decomposeMasterPrompt: model returned non-JSON: ${(err as Error).message}`,
+      `decomposeMasterPrompt: model did not call emit_clips (stop_reason=${response.stop_reason})`,
     );
   }
 
-  const result = DecomposeResponseSchema.safeParse(parsed);
+  const result = DecomposeResponseSchema.safeParse(toolUse.input);
   if (!result.success) {
     throw new Error(
       `decomposeMasterPrompt: schema validation failed — ${result.error.message}`,
@@ -152,27 +192,8 @@ const SYSTEM_PROMPT = [
   "  • Each motionPrompt must specify a camera movement and a pace word",
   "    ('slowly', 'quickly', 'lingering', 'snap-zoom', etc.).",
   "  • refinedPrompt is a single readable paragraph for the UI; not the API payload.",
-  "  • Output JSON only. No markdown, no commentary.",
   "",
-  "Return shape:",
-  "{",
-  '  "continuityBible": "<one short paragraph>",',
-  '  "clips": [',
-  "    {",
-  '      "beatId": "<input beatId>",',
-  '      "sceneSummary": "<one sentence, human-readable>",',
-  '      "refinedPrompt": "<one paragraph>",',
-  '      "clipPrompt": {',
-  '        "imagePrompt": "<text-to-image prompt>",',
-  '        "motionPrompt": "<image-to-video motion prompt>",',
-  '        "aspectRatio": "16:9" | "9:16" | "1:1",',
-  '        "resolution": "720p" | "1080p",',
-  '        "durationSeconds": <number>,',
-  '        "preferredModel": "<higgsfield model_id>"',
-  "      }",
-  "    }",
-  "  ]",
-  "}",
+  "Always call the `emit_clips` tool exactly once. Do not respond in plain text.",
 ].join("\n");
 
 function buildUserPrompt(args: DecomposeParams & { aspectRatio: HiggsfieldAspectRatio }): string {
@@ -221,7 +242,7 @@ function ensureCoverage(
 }
 
 /**
- * Deterministic fallback when there's no OPENAI_API_KEY. Keeps the dev/demo
+ * Deterministic fallback when there's no ANTHROPIC_API_KEY. Keeps the dev/demo
  * loop runnable without burning API credits and gives Vishnu a real shape to
  * wire the Higgsfield service against.
  */
@@ -229,7 +250,7 @@ function stubDecomposition(params: DecomposeParams): DecomposeResponse {
   const aspectRatio = ASPECT_BY_VIDEO_TYPE[params.videoType];
   return {
     continuityBible:
-      "Stub bible (no OPENAI_API_KEY). Reuse master-prompt subject across beats for continuity.",
+      "Stub bible (no ANTHROPIC_API_KEY). Reuse master-prompt subject across beats for continuity.",
     clips: params.beats.map((beat) =>
       stubClipForBeat(params.masterPrompt, beat, aspectRatio),
     ),

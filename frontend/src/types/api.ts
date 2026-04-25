@@ -37,6 +37,7 @@ export interface GenerateRequest {
   refinedPrompt: string;
   durationSeconds: number;
   beatTemplate?: string;
+  clipPrompt?: HiggsfieldClipPrompt;
 }
 
 /**
