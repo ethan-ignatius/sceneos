@@ -233,25 +233,32 @@ Phase 4 audit findings fixed in the same commit, since they were demo-blockers:
 
 ---
 
-## Phase 6 — Stitch tray (the Cloudinary moment)
+## Phase 6 — Stitch tray (the Cloudinary moment) ✅ COMPLETE (2026-04-25)
 
-### 6.1 🔴 Live URL build typewriter — 1h
-- **Surface:** `components/stitch/stitch-tray.tsx` (exists; upgrade)
-- **Spec:**
-  - When a beat approves, the tray's URL text gets a new `l_video:<id>,fl_splice/` segment appended via typewriter (~30ms/char, stagger 100ms after approval).
-  - The URL is mono, fg-tertiary; the new segment glows ember briefly (300ms) then settles.
-- **Acceptance:** judges literally watch the post-production pipeline assemble.
+The third winning moment. Three items shipped + a new primitive (`usePointerDrag`). Lesson reflection lives in [`STITCH_TRAY.md`](STITCH_TRAY.md) — read that before touching the tray surface.
 
-### 6.2 🔴 Thumbnail row with mood tints — 0.5h
-- **Spec:**
-  - Each thumbnail = `<img src={buildThumbnailUrl(publicId, { mood })}>`.
-  - Mood tint at the bottom edge of each thumb.
-  - Approved thumbs glow ember-dim; unapproved are dimmed 50%.
+### 6.1 ✅ Live URL build typewriter — `components/stitch/stitch-tray.tsx`
+- New `buildSpliceUrlSegments(orderedIds)` in `lib/cloudinary-transforms.ts` returns `{ head, middle, tail, base }` so the tray can render the URL as four pieces, only animating `tail`.
+- Diff strategy: track `approvedIds.length` in a ref. Each render reads the current count; when it grows AND is ≥ 2 (so the first approval doesn't typewriter the whole URL — it just fades in), bump a `revealKey` and flip `shouldType=true`. After 1s, `shouldType` resets.
+- `<TextSplitter delayStrategy="sequential" perCharStep={0.03} maxTotalDelay={1.4}>` runs on the tail, keyed by `revealKey` so the same segment doesn't re-reveal on re-renders.
+- New CSS keyframe `.url-segment-glow` — ember color + 8px text-shadow at 0%, settles to fg-secondary by 100% over 1s. Reduced-motion override sets static fg-secondary.
+- First approval → fade-in (no typewriter). Second+ → typewriter on the new tail with ember afterglow. Edge case (regenerate) handled by the count comparison naturally — going from N to N-1 doesn't trigger the reveal.
 
-### 6.3 🟠 Render CTA pulse + horizontal drag inertia — 0.5h
-- **Spec:**
-  - When all beats approve, the Render button gains `ember-pulse`.
-  - The thumbnail row supports horizontal drag with inertial decay (use `lib/use-scroll-velocity.ts`).
+### 6.2 ✅ Mood-tinted thumbnail row — same file
+- Each thumb is an `<img src={buildThumbnailUrl(scene.clipPublicId, { mood })}>` — Cloudinary's `so_auto` picks the most representative frame and applies the same per-mood color grade.
+- New `moodAccentColor(mood)` helper maps each `BeatMood` → a brand-aligned hex (cool blue, ember, ember-warm, ember-dim, success-cool, error-warm). Lives in `cloudinary-transforms.ts` next to `colorGradeFor`.
+- Bottom-edge linear-gradient tint at 0x66 (40%) opacity — a *hint* of mood, not a re-grade.
+- Approved thumbs: `border-brand-ember/60` + `shadow-[0_0_18px_-4px_rgba(240,168,104,0.55)]` ember glow. Unapproved: `opacity-50`.
+- Beat name overlay uses `mix-blend-difference` so it reads against either the thumbnail or the bg-base placeholder.
+
+### 6.3 ✅ Render CTA pulse + horizontal drag with inertia
+- New `lib/use-pointer-drag.ts` primitive. Pointer-down → pointer-move (read/write `el.scrollLeft`) → pointer-up triggers RAF inertia loop with exponential decay (factor 0.92, min velocity 0.2 px/frame). Boundary clamps kill inertia rather than bouncing.
+- Only responds to `e.button === 0` (left mouse) — trackpad two-finger horizontal scroll uses wheel events, so it's untouched. Native overflow-x scroll (mousewheel, focus-arrow keys) stays intact.
+- `data-dragging="true"` attribute on the container drives the `cursor: grabbing` swap via Tailwind's `data-[dragging=true]:cursor-grabbing` selector.
+- Render CTA gets `.ember-pulse` class when `allReady`. Same single-source CSS keyframe; same reduced-motion override; no JS each frame.
+- "Open in CutOS" ghost button gets `.btn--edge-underline` from Phase 5 for tasteful hover.
+
+**Phase 6 lessons banked (see `STITCH_TRAY.md`):** Cloudinary `fl_splice` URL anatomy + segment diff strategy, ref-based length comparison for "what just changed" detection, keyed `<TextSplitter>` for one-shot reveals (vs flicker on re-render), pointer-drag with RAF inertia (separate from wheel-driven `useScrollVelocity`), `mix-blend-difference` for legible labels over arbitrary thumbnails, mood-as-tint instead of mood-as-regrade.
 
 ---
 

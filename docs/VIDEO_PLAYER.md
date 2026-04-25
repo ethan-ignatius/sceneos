@@ -89,13 +89,15 @@ Pattern (Motion AnimatePresence):
       className="absolute inset-0 grid place-items-center"
       aria-label="Play"
     >
-      <Play size={96} className="text-brand-ember drop-shadow-[0_0_24px_rgba(240,168,104,0.6)]" />
+      <span className="grid h-24 w-24 place-items-center rounded-full bg-bg-base/40 backdrop-blur-md ring-1 ring-brand-ember/40">
+        <Play size={36} className="ml-1 text-brand-ember drop-shadow-[0_0_18px_rgba(240,168,104,0.6)]" />
+      </span>
     </motion.button>
   ) : null}
 </AnimatePresence>
 ```
 
-The icon size (96px) is intentional — much larger than typical play-button size, because at this surface it's a **first-impression** element, not a chrome control.
+The disc size (96×96px) is intentional — much larger than typical play-button size, because at this surface it's a **first-impression** element, not a chrome control. The icon inside is 36px; the disc carries the visual weight, the icon just labels it.
 
 ---
 

@@ -1,4 +1,5 @@
 import { motion } from "motion/react";
+import { useEffect, useRef } from "react";
 import { Check, RotateCcw } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { VideoPlayer } from "@/components/ui/video-player";
@@ -33,6 +34,19 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   const approveScene = useBeatGraphStore((s) => s.approveScene);
   const regenerateScene = useBeatGraphStore((s) => s.regenerateScene);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
+  // Tracks the post-Approve close-drawer timer so unmount cancels it.
+  // Without this, force-closing the drawer mid-approve fires setActiveBeat
+  // on a stale state — and could close a *different* beat the user has
+  // since opened.
+  const approveTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (approveTimerRef.current !== null) {
+        window.clearTimeout(approveTimerRef.current);
+        approveTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const isApproved = beat.status === "approved" || scene.approved;
 
@@ -52,9 +66,13 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
 
   const handleApprove = () => {
     approveScene(beat.beatId, scene.sceneId);
-    // Brief pause so the user sees the approve happen before the drawer
-    // exit animation runs — feels more deliberate than an instant close.
-    setTimeout(() => setActiveBeat(null), 220);
+    // Brief pause (DURATIONS.quick) so the user sees the approve happen
+    // before the drawer exit animation runs — feels more deliberate.
+    if (approveTimerRef.current !== null) window.clearTimeout(approveTimerRef.current);
+    approveTimerRef.current = window.setTimeout(() => {
+      approveTimerRef.current = null;
+      setActiveBeat(null);
+    }, DURATIONS.quick * 1000);
   };
 
   const handleRegenerate = () => {
@@ -122,7 +140,6 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
           className="btn--edge-underline basis-1/4"
           onClick={handleRegenerate}
           disabled={isApproved}
-          aria-label="Regenerate scene"
           title="Regenerate"
         >
           <RotateCcw size={16} strokeWidth={1.5} aria-hidden="true" />

@@ -23,8 +23,10 @@ export const CLOUDINARY_UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_P
 // existing imports from "@/lib/cloudinary" keep working.
 export {
   buildSpliceUrl,
+  buildSpliceUrlSegments,
   buildClipUrl,
   buildThumbnailUrl,
   colorGradeFor,
+  moodAccentColor,
   withCaption,
 } from "./cloudinary-transforms";

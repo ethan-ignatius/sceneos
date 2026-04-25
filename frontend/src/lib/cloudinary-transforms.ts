@@ -86,6 +86,66 @@ export function buildSpliceUrl(
   return `https://res.cloudinary.com/${CLOUD}/video/upload/${modifierSegment}${overlaySegment}${first}.mp4`;
 }
 
+/**
+ * Splits a splice URL into the four logical pieces the Stitch Tray needs
+ * to render a typewriter on just the newest segment.
+ *
+ *   head:   "https://res.cloudinary.com/.../upload/[transforms]/"
+ *   middle: "l_video:a,fl_splice/l_video:b,fl_splice/" (all-but-newest overlays)
+ *   tail:   "l_video:c,fl_splice/" (the newest overlay — gets typewriter+glow)
+ *   base:   "id1.mp4"
+ *
+ * Returns null when there's nothing to splice yet (≤ 1 approved clip).
+ * For 1 clip, callers should render a single fade-in URL — there's no
+ * "tail" to type because no overlay segment exists yet.
+ */
+export function buildSpliceUrlSegments(
+  orderedPublicIds: string[],
+  options: BuildSpliceOptions = {},
+): { head: string; middle: string; tail: string; base: string } | null {
+  if (orderedPublicIds.length === 0) return null;
+  const [first, ...rest] = orderedPublicIds;
+  const base = `${first}.mp4`;
+
+  const modifiers: string[] = [];
+  if (options.colorGrade) modifiers.push(options.colorGrade);
+  if (options.audioOverlay) modifiers.push(`l_audio:${options.audioOverlay.replace(/\//g, ":")}`);
+  if (options.watermarkPublicId)
+    modifiers.push(`l_${options.watermarkPublicId.replace(/\//g, ":")},g_south_east,x_24,y_24`);
+  const modifierSegment = modifiers.length ? `${modifiers.join("/")}/` : "";
+  const head = `https://res.cloudinary.com/${CLOUD}/video/upload/${modifierSegment}`;
+
+  const overlays = rest.map((id) => `l_video:${id.replace(/\//g, ":")},fl_splice/`);
+  if (overlays.length === 0) {
+    return { head, middle: "", tail: "", base };
+  }
+  const tail = overlays[overlays.length - 1];
+  const middle = overlays.slice(0, -1).join("");
+  return { head, middle, tail, base };
+}
+
+/**
+ * Maps each beat mood to a brand-aligned hex tint, used for the bottom-edge
+ * gradient on stitch-tray thumbnails. Loose pairing — meant to *hint* at
+ * the mood, not re-grade.
+ */
+export function moodAccentColor(mood: BeatMood): string {
+  switch (mood) {
+    case "wide-establish":
+      return "#5e7080"; // brand-cool
+    case "intimate-hook":
+      return "#f0a868"; // brand-ember
+    case "kinetic-rising":
+      return "#d4a373"; // state-warning warm
+    case "tense-climax":
+      return "#a87447"; // brand-ember-dim
+    case "still-resolve":
+      return "#6f9c7d"; // state-success cool
+    case "punchy-sting":
+      return "#c4727b"; // state-error warm
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Caption overlay (l_text)
 // ────────────────────────────────────────────────────────────────────────

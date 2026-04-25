@@ -48,6 +48,13 @@ export function VideoPlayer({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    // Browsers cache metadata aggressively. After a src swap (regenerate
+    // produces a new clip), the same <video> element may keep the old
+    // frame and not re-fire `loadedmetadata`. An explicit load() forces
+    // a fresh fetch + metadata pass.
+    setProgress(0);
+    setCurrentTime(0);
+    v.load();
     const onTime = () => {
       setCurrentTime(v.currentTime);
       setProgress(v.duration ? v.currentTime / v.duration : 0);
