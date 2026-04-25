@@ -1,11 +1,13 @@
 import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { Volume2, VolumeX, HelpCircle, ArrowUpRight } from "lucide-react";
+import { Volume2, VolumeX, HelpCircle, ArrowUpRight, Mic, MicOff } from "lucide-react";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { CursorSpotlight } from "@/components/ui/cursor-spotlight";
+import { VoiceWaveform } from "@/components/ui/voice-waveform";
 import { TextSplitter } from "@/lib/text-splitter";
+import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { useLongPress } from "@/lib/use-long-press";
 import { DEMO_PROMPT } from "@/lib/demo-project";
 import { isAudioMuted, setAudioMuted } from "@/lib/audio-cues";
@@ -55,6 +57,30 @@ export function LandingRoute() {
   const [inputFocused, setInputFocused] = useState(false);
   const [keystrokeKey, setKeystrokeKey] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Voice input on the master prompt — same pattern as the in-drawer mic
+  // (live transcript replaces draft, click toggles, Esc cancels). The
+  // VoiceWaveform component handles AnalyserNode + RAF rendering.
+  const speech = useSpeechRecognition({ lang: "en-US" });
+  useEffect(() => {
+    if (speech.listening && speech.transcript) setDraft(speech.transcript);
+  }, [speech.listening, speech.transcript]);
+  useEffect(() => {
+    if (!speech.listening) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        speech.stop();
+        // Treat as cancel — drop whatever transcript captured.
+        setDraft(masterPrompt);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [speech, masterPrompt]);
+  const toggleVoice = () => {
+    if (speech.listening) speech.stop();
+    else speech.start();
+  };
 
   // Preload the page-crumple R3F+three chunk so that the bridge route
   // doesn't pay the network cost when the user submits.
@@ -160,7 +186,7 @@ export function LandingRoute() {
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.4 }}
               className="caption-track mt-7 text-[10px] text-fg-tertiary"
             >
-              One prompt. Five beats. One stitched cinematic — directed beat-by-beat.
+              You direct. We compose.
             </motion.p>
 
             {/* Form — input + Begin CTA. Left-aligned, not centered. */}
@@ -171,7 +197,7 @@ export function LandingRoute() {
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.7 }}
               className="mt-10 max-w-2xl"
             >
-              <div className="group relative">
+              <div className="group relative flex items-center gap-3">
                 <input
                   autoFocus
                   value={draft}
@@ -181,9 +207,40 @@ export function LandingRoute() {
                   }}
                   onFocus={() => setInputFocused(true)}
                   onBlur={() => setInputFocused(false)}
-                  placeholder="A lone astronaut crosses the rust-red dunes of Mars at golden hour…"
-                  className="w-full bg-transparent pb-3 pt-2 font-body text-lg text-fg-primary placeholder:text-fg-tertiary focus:outline-none"
+                  placeholder={
+                    speech.listening
+                      ? "Listening…"
+                      : "A lone astronaut crosses the rust-red dunes of Mars at golden hour…"
+                  }
+                  className="flex-1 bg-transparent pb-3 pt-2 font-body text-lg text-fg-primary placeholder:text-fg-tertiary focus:outline-none"
                 />
+                {/* Live waveform — only renders when actively listening; tears
+                    down its AudioContext on stop. */}
+                {speech.listening ? (
+                  <VoiceWaveform active className="text-brand-ember" />
+                ) : null}
+                {speech.supported ? (
+                  <button
+                    type="button"
+                    onClick={toggleVoice}
+                    aria-label={speech.listening ? "Stop dictation" : "Speak your prompt"}
+                    aria-pressed={speech.listening}
+                    title={speech.listening ? "Stop dictation" : "Speak your prompt"}
+                    className={cn(
+                      "grid h-11 w-11 flex-shrink-0 place-items-center rounded-full border",
+                      "transition-[border-color,background-color,color] duration-200 ease-out",
+                      speech.listening
+                        ? "border-brand-ember bg-brand-ember/15 text-brand-ember ember-pulse"
+                        : "border-fg-tertiary/40 text-fg-tertiary hover:border-fg-secondary hover:text-fg-primary",
+                    )}
+                  >
+                    {speech.listening ? (
+                      <MicOff size={16} strokeWidth={1.5} aria-hidden="true" />
+                    ) : (
+                      <Mic size={16} strokeWidth={1.5} aria-hidden="true" />
+                    )}
+                  </button>
+                ) : null}
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 block h-px overflow-visible bg-fg-tertiary/30">
                   <motion.span
                     className="absolute inset-y-0 left-0 origin-left bg-brand-ember"
@@ -219,7 +276,7 @@ export function LandingRoute() {
                     ready && "magnetic-button",
                   )}
                 >
-                  <span>Begin</span>
+                  <span>Start directing</span>
                   <ArrowUpRight
                     size={16}
                     strokeWidth={1.5}

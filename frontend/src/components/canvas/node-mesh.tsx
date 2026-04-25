@@ -164,12 +164,15 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     }
 
     // ── Core emissive intensity ──
+    // Idle baseline 0.55 → 0.95 — after the bloom-threshold + tone-mapping
+    // fixes, the previous baseline left orbs nearly invisible. The ceiling
+    // (active 1.3) is unchanged so the active state still reads as "lit up."
     let baseEmissive: number;
-    if (isApproved) baseEmissive = 1.0;
-    else if (isActive) baseEmissive = 1.3;
-    else if (isReady) baseEmissive = 0.85;
-    else if (hover) baseEmissive = 0.7;
-    else baseEmissive = 0.55;
+    if (isApproved) baseEmissive = 1.1;
+    else if (isActive) baseEmissive = 1.35;
+    else if (isReady) baseEmissive = 1.0;
+    else if (hover) baseEmissive = 1.0;
+    else baseEmissive = 0.95;
     const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.25 + 0.25 : 0;
     if (materialRef.current) {
       materialRef.current.emissiveIntensity = baseEmissive + pulse;

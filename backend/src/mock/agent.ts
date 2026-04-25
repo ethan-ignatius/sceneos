@@ -105,6 +105,15 @@ function buildRefinedPrompt(req: AgentRequest, template: BeatTemplate): string {
   ].join(". ");
 }
 
+/** Strips a `[refs:N]` prefix the frontend prepends when a user attaches
+ *  reference frames. Returns the parsed count + cleaned message. */
+function parseRefMarker(msg: string | undefined): { refCount: number; cleanMessage: string } {
+  if (!msg) return { refCount: 0, cleanMessage: "" };
+  const match = msg.match(/^\[refs:(\d+)\]\s*/);
+  if (!match) return { refCount: 0, cleanMessage: msg };
+  return { refCount: Number.parseInt(match[1], 10), cleanMessage: msg.slice(match[0].length) };
+}
+
 export function runMockAgentTurn(req: AgentRequest): AgentResponse {
   const beat = req.manifest.beats.find((b) => b.beatId === req.beatId);
   if (!beat) {
@@ -119,12 +128,24 @@ export function runMockAgentTurn(req: AgentRequest): AgentResponse {
     "Tell me one image you'd want as the very first frame of this beat.",
     "What's the dominant emotional color — warm or cool?",
   ];
+  const { refCount } = parseRefMarker(req.userMessage);
+  // Treat the ref-marker as not adding a user-turn for question pacing —
+  // the userTurnCount() reads the manifest's recorded turns. We just need
+  // to acknowledge the references in our response.
   const turns = userTurnCount(req);
+
+  // Acknowledgment string the frontend prepends to the next agent reply
+  // when references were attached. Cinematic register, not "I see N
+  // images" robot-talk.
+  const refAck =
+    refCount > 0
+      ? `Noted ${refCount === 1 ? "the reference frame" : `${refCount} reference frames`} — aiming for that mood. `
+      : "";
 
   if (turns < list.length) {
     return {
       kind: "question",
-      question: list[turns],
+      question: `${refAck}${list[turns]}`,
       reasoning: findTemplate(beat.template)?.directorNotes.split("\n")[0] ?? "Beat archetype",
       estimatedRemaining: list.length - turns,
     };
@@ -134,7 +155,7 @@ export function runMockAgentTurn(req: AgentRequest): AgentResponse {
   return {
     kind: "sufficient",
     refinedPrompt,
-    sceneSummary: `${beat.beatName}: ${beat.archetype.intent}`,
+    sceneSummary: `${refAck}${beat.beatName}: ${beat.archetype.intent}`,
     suggestedDuration: beat.archetype.suggestedDuration,
   };
 }

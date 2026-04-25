@@ -69,7 +69,7 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
   const handleCopy = async () => {
     if (!fullUrl) return;
     await navigator.clipboard.writeText(fullUrl);
-    toast.success("Cloudinary URL copied");
+    toast.success("Final URL copied.");
   };
 
   return (

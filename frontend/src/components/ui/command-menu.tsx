@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Film,
-  Sparkles,
+  Clapperboard,
   Volume2,
   VolumeX,
   Copy,
@@ -63,7 +63,7 @@ export function CommandMenu() {
 
   const toggleMute = () => {
     setAudioMuted(!isAudioMuted());
-    toast.success(isAudioMuted() ? "Sound on" : "Muted");
+    toast.success(isAudioMuted() ? "Sound on set." : "Quiet on set.");
     close();
   };
 
@@ -75,11 +75,11 @@ export function CommandMenu() {
   const copyUrl = async () => {
     const url = buildSpliceUrl(approvedIds);
     if (!url) {
-      toast.error("Approve at least one clip first");
+      toast.error("No takes approved yet.");
       return;
     }
     await navigator.clipboard.writeText(url);
-    toast.success("Cloudinary URL copied");
+    toast.success("Final URL copied.");
     close();
   };
 
@@ -155,7 +155,7 @@ export function CommandMenu() {
                     onSelect={toggleMute}
                   />
                   <CommandRow
-                    icon={<Sparkles size={14} strokeWidth={1.5} />}
+                    icon={<Clapperboard size={14} strokeWidth={1.5} aria-hidden="true" />}
                     label="Replay page-crumple bridge"
                     onSelect={replayBridge}
                   />
