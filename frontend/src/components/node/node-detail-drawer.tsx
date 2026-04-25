@@ -115,7 +115,7 @@ export function NodeDetailDrawer() {
       transition={SPRING.drawer}
       // Bottom-sheet on <md, side-drawer on >=md (issue #155). Mobile gets
       // 85svh max so the canvas peek behind the sheet stays visible.
-      className="fixed inset-x-0 bottom-0 z-30 flex max-h-[85svh] w-full flex-col rounded-t-md border-t border-brand-ember-dim/40 bg-bg-elev-1/90 backdrop-blur-xl md:absolute md:inset-y-0 md:right-0 md:bottom-auto md:top-0 md:max-h-none md:w-full md:max-w-[36rem] md:rounded-none md:border-l md:border-t-0"
+      className="fixed inset-x-0 bottom-0 z-40 flex max-h-[85svh] w-full flex-col rounded-t-md border-t border-brand-ember-dim/40 bg-bg-elev-1/90 backdrop-blur-xl md:absolute md:inset-y-0 md:right-0 md:bottom-auto md:top-0 md:max-h-none md:w-full md:max-w-[36rem] md:rounded-none md:border-l md:border-t-0"
     >
       <motion.div
         initial="hidden"
@@ -133,24 +133,29 @@ export function NodeDetailDrawer() {
           className="flex items-start justify-between border-b border-fg-tertiary/30 p-6"
         >
           <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
-              Beat {beatIndex + 1} of {totalBeats} · {beat.template.split(".")[0]}
+            <div className="caption-track text-[10px] tabular-nums text-fg-tertiary">
+              <span className="text-brand-ember">{(beatIndex + 1).toString().padStart(2, "0")}</span>
+              <span className="mx-2 text-fg-tertiary/50">/</span>
+              <span>{totalBeats.toString().padStart(2, "0")}</span>
+              <span className="mx-2 text-fg-tertiary/50">·</span>
+              <span>{beat.template.split(".")[0]}</span>
             </div>
-            <h2 className="mt-1 text-display-md italic text-fg-primary">{beat.beatName}</h2>
+            <h2 className="mt-2 text-display-md italic leading-[1.05] text-fg-primary">
+              {beat.beatName}
+            </h2>
             {/* Description lifted to Fraunces italic 18px so the drawer header
-                reads as title card + voiceover, not form label + helper text.
-                See FINAL_HANDOFF §2.B / §5 P0.2. */}
-            <p className="mt-3 max-w-prose font-display italic text-[1.125rem] leading-[1.4] text-fg-secondary">
+                reads as title card + voiceover, not form label + helper text. */}
+            <p className="mt-3 max-w-prose font-display italic text-lede leading-[1.4] text-fg-secondary">
               {beat.archetype.intent}
             </p>
           </div>
           <button
             onClick={() => setActiveBeat(null)}
-            className="text-fg-tertiary transition-colors hover:text-fg-primary"
+            className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-fg-tertiary transition-colors hover:bg-bg-elev-2 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
             aria-label="Close drawer"
             title="Close"
           >
-            <X size={20} strokeWidth={1.5} />
+            <X size={18} strokeWidth={1.5} />
           </button>
         </motion.header>
 
@@ -227,7 +232,10 @@ export function NodeDetailDrawer() {
             })()}
 
             {genError ? (
-              <div className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error">
+              <div
+                role="alert"
+                className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-body text-body-sm leading-snug text-state-error"
+              >
                 {genError}
               </div>
             ) : null}

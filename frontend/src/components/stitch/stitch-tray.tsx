@@ -134,7 +134,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       className={cn(
         // Bottom-sheet on <md, floating panel on >=md (#155). Same visual
         // weight, different geometry per viewport.
-        "fixed inset-x-0 bottom-0 z-40 flex max-h-[85svh] w-full flex-col rounded-t-md",
+        "fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] w-full flex-col rounded-t-md",
         "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[40rem] md:max-w-[calc(100vw-3rem)] md:rounded-md",
         "overflow-hidden border border-brand-ember-dim/30",
         "bg-bg-elev-1/85 backdrop-blur-2xl",

@@ -218,12 +218,16 @@ export function LandingRoute() {
               className="caption-track mb-6 text-[10px] text-fg-tertiary"
             >
               <span className="text-brand-ember">●</span>
-              <span className="ml-2">Cinematography, encoded</span>
+              <span className="ml-2">Cinematography, composed</span>
             </motion.p>
 
-            {/* Two-line display headline. Italic on the connective ('a'). */}
+            {/* Two-line display headline. Italic on the connective ('a'). The
+                first line is its own block so the indent on the second line
+                reads as poster typography, not as a wrap. Both halves use
+                white-space:nowrap to prevent a single-word orphan on narrow
+                viewports — the headline scale via clamp() handles fit. */}
             <h1 className="text-display-xl leading-[0.92] tracking-[-0.035em]">
-              <span className="flicker-on-mount block">
+              <span className="flicker-on-mount block whitespace-nowrap">
                 <TextSplitter
                   text="Direct an idea."
                   baseDelay={0.3}
@@ -231,7 +235,7 @@ export function LandingRoute() {
                   seed={3}
                 />
               </span>
-              <span className="flicker-on-mount mt-1 block pl-[0.6em]">
+              <span className="flicker-on-mount mt-1 block whitespace-nowrap pl-[0.6em]">
                 <TextSplitter text="Render " baseDelay={0.55} jitter={0.6} seed={5} />
                 <span className="italic text-fg-secondary">
                   <TextSplitter text="a" baseDelay={0.6} jitter={0.4} seed={7} />
@@ -386,10 +390,14 @@ export function LandingRoute() {
                       type="button"
                       onClick={() => setVideoType(t.value)}
                       data-cursor="hover"
+                      role="radio"
+                      aria-checked={isActive}
+                      aria-label={`${t.label}, ${t.hint}`}
                       className={cn(
                         "group relative flex items-baseline justify-between gap-3 py-3.5 text-left",
                         "border-t border-fg-tertiary/15 last:border-b",
                         "transition-colors duration-200",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base",
                         isActive
                           ? "text-fg-primary"
                           : "text-fg-tertiary hover:text-fg-secondary",
@@ -405,7 +413,7 @@ export function LandingRoute() {
                         />
                       ) : null}
                       <span className="font-display text-2xl italic leading-none">{t.label}</span>
-                      <span className="caption-track text-[9px]">{t.hint}</span>
+                      <span className="caption-track text-[10px] text-fg-tertiary">{t.hint}</span>
                     </button>
                   );
                 })}

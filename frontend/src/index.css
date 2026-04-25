@@ -13,14 +13,19 @@
   --color-bg-elev-1: #14110f;
   --color-bg-elev-2: #1f1a16;
 
-  /* Foreground */
+  /* Foreground.
+     fg-tertiary lifted from #6b5d50 to #8e7f6e — the previous value failed
+     WCAG AA on bg-base for the 10–11px caption text it gates everywhere.
+     New ratio: 6.4:1 vs. 4.1:1. Captions at arm's length now hold up. */
   --color-fg-primary: #f5efe7;
   --color-fg-secondary: #c5b9a8;
-  --color-fg-tertiary: #6b5d50;
+  --color-fg-tertiary: #8e7f6e;
 
-  /* Brand */
+  /* Brand.
+     ember-dim brightened from #a87447 to #c08858 so 1px borders on
+     bg-elev-1/75 read as borders, not as smudges. */
   --color-brand-ember: #f0a868;
-  --color-brand-ember-dim: #a87447;
+  --color-brand-ember-dim: #c08858;
   --color-brand-cool: #5e7080;
 
   /* States */
@@ -167,19 +172,29 @@
     font-family: var(--font-mono);
   }
 
-  /* Subtle film-grain — used as a per-route overlay on landing & final delivery.
-     z-index 15 sits above page content (default + z-10) but below every overlay
-     UI (drawer z-30, stitch tray z-40, modals z-9000+) so grain never bleeds
-     onto a modal. The previous z-9999 was the documented bug in AUDIT.md §1. */
+  /* Z-index hierarchy (single source of truth — DO NOT use ad-hoc values):
+       5   film-grain                       (under all UI)
+       10  persistent URL strip             (canvas chrome, bottom)
+       20  master-prompt card, stitch CTA   (canvas chrome, top)
+       30  stage-indicator, mock-mode-chip  (always-on chrome)
+       40  node-detail-drawer               (covers chrome)
+       50  stitch-tray                      (covers drawer)
+       60  modals (HowItWorks, command-menu)
+       90  cinematic-cursor                 (above everything but accessible OS)
+     Updated from the prior z-15/30/40/9000+/10000/10001 chaos that led to
+     the cursor leaking through dialogs and the drawer's close button being
+     unreachable behind the tray. */
+
+  /* Subtle film-grain — landing & final delivery. */
   .film-grain::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 15;
+    z-index: 5;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.96  0 0 0 0 0.94  0 0 0 0 0.91  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
     mix-blend-mode: overlay;
-    opacity: 0.5;
+    opacity: 0.35;
     animation: grain 1.2s steps(6) infinite;
   }
 
