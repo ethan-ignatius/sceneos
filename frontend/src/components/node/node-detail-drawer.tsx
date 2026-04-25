@@ -284,6 +284,50 @@ export function NodeDetailDrawer() {
               </div>
             ) : null}
 
+            {/* Two-CTA footer: the primary "Roll camera" demands the
+                questionnaire is sufficient; the secondary "Lock it in"
+                lets the user bail out of the conversation early when
+                they feel they've said enough. We synthesize a refined
+                prompt from their answers + the beat archetype and flip
+                the beat to ready-to-generate locally — no backend call
+                needed since the agent's job is just to extract structure
+                from what the user has already typed. */}
+            {!isReadyToGenerate ? (
+              (() => {
+                const userAnswers = beat.scenes[0]?.conversation
+                  .filter((t) => t.role === "user")
+                  .map((t) => t.content)
+                  .join(". ");
+                const canLock = !!userAnswers && userAnswers.length > 0;
+                if (!canLock) return null;
+                const lockIn = () => {
+                  const refined = [
+                    beat.archetype.intent,
+                    beat.archetype.directorNotes ?? "",
+                    `Director's notes: ${userAnswers}.`,
+                    `Mood ${beat.archetype.mood}; cinematic, ~${beat.archetype.suggestedDuration}s.`,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+                  updateScene(beat.beatId, beat.scenes[0].sceneId, {
+                    refinedPrompt: refined,
+                    durationSeconds: beat.archetype.suggestedDuration,
+                  });
+                  updateBeat(beat.beatId, { status: "ready-to-generate" });
+                };
+                return (
+                  <button
+                    type="button"
+                    onClick={lockIn}
+                    className="block w-full rounded-md border border-fg-tertiary/30 bg-bg-elev-2/30 px-4 py-2.5 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+                    aria-label="Lock in answers and prepare to generate"
+                  >
+                    I have enough — lock it in
+                  </button>
+                );
+              })()
+            ) : null}
+
             <Button
               size="lg"
               variant="primary"

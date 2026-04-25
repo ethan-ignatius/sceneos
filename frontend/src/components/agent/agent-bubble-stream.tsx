@@ -51,6 +51,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const cancelledRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pendingRetryMessage, setPendingRetryMessage] = useState<string | null>(null);
+  // Collapse old turns by default — only the last few are visible. The user
+  // can opt to expand via the button at the top of the scroller.
+  const [showAllTurns, setShowAllTurns] = useState(false);
 
   // Reference frames — drag-drop or file picker. Stored as dataUris in
   // local component state and prefixed onto the userMessage with a marker
@@ -318,15 +321,50 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         aria-label="Add reference images"
       />
 
-      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto pr-1">
-        {scene.conversation.map((turn, i) => (
-          <AgentBubble
-            key={`${turn.role}-${i}-${turn.timestamp}`}
-            turn={turn}
-            // Only the most recent agent turn reveals; history snaps in.
-            reveal={turn.role === "agent" && i === scene.conversation.length - 1}
-          />
-        ))}
+      {/* Conversation scroller — height-bounded so a long convo cannot
+          push the input form off-viewport. The drawer body already has
+          `overflow-hidden flex-1`, so `min-h-0` here is what actually
+          enables the inner overflow-y-auto to clip rather than grow. */}
+      <div ref={scrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1">
+        {(() => {
+          const turns = scene.conversation;
+          const VISIBLE = 4; // last ~2 questions + 2 answers
+          const collapsedCount = Math.max(0, turns.length - VISIBLE);
+          const visible = showAllTurns ? turns : turns.slice(-VISIBLE);
+          const startIdx = showAllTurns ? 0 : collapsedCount;
+          return (
+            <>
+              {!showAllTurns && collapsedCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAllTurns(true)}
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3 py-1 caption-track text-[10px] text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  aria-label={`Show ${collapsedCount} earlier turn${collapsedCount === 1 ? "" : "s"}`}
+                >
+                  ↑ {collapsedCount} earlier turn{collapsedCount === 1 ? "" : "s"}
+                </button>
+              ) : null}
+              {showAllTurns && collapsedCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAllTurns(false)}
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3 py-1 caption-track text-[10px] text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  aria-label="Collapse earlier turns"
+                >
+                  ↓ collapse
+                </button>
+              ) : null}
+              {visible.map((turn, i) => (
+                <AgentBubble
+                  key={`${turn.role}-${startIdx + i}-${turn.timestamp}`}
+                  turn={turn}
+                  // Only the most recent agent turn reveals; history snaps in.
+                  reveal={turn.role === "agent" && startIdx + i === turns.length - 1}
+                />
+              ))}
+            </>
+          );
+        })()}
         {inFlight && scene.conversation.length === 0 ? (
           <div
             role="status"

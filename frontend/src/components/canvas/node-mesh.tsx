@@ -50,11 +50,25 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
   const stitchTrayOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
   const isActive = activeBeatId === beat.beatId;
-  const isApproved = beat.status === "approved";
-  const isReady = beat.status === "ready-to-generate";
-  // "Untouched": the user hasn't started work on this beat — needs to read
-  // visually as 'to-do', not just as 'dim version of approved'.
-  const isUntouched = !isActive && !isApproved && !isReady;
+  // Map every BeatStatus to its own visual register. Source of truth is
+  // `beat.status` from the store — no derived flags pile up here.
+  //   pending      → "todo": no atmosphere glow, no emissive. Texture only.
+  //   questioning  → "in conversation": faint atmosphere, hint of emissive.
+  //   ready-to-gen → "ready to roll": ember pulse on atmosphere + emissive.
+  //   generating   → "rolling": steady ember atmosphere, breathing emissive.
+  //   preview      → "clip ready": ember atmosphere, no pulse.
+  //   approved     → "locked in": brightest atmosphere + emissive.
+  // Active overlays a holographic shader on top of whichever state is current.
+  const status = beat.status;
+  const isPending = status === "pending";
+  const isQuestioning = status === "questioning";
+  const isReady = status === "ready-to-generate";
+  const isGenerating = status === "generating";
+  const isPreviewState = status === "preview";
+  const isApproved = status === "approved";
+  // "Needs work" = pending or questioning. The user is still figuring this
+  // beat out; the planet should not glow.
+  const isTodo = isPending || isQuestioning;
   // Hide my floating label whenever an overlay is layered above the canvas.
   // The active beat keeps its label so the drawer's subject is still named.
   const labelsHidden = stitchTrayOpen || (activeBeatId !== null && !isActive);
@@ -131,64 +145,75 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     }
 
     // ── Core emissive intensity ──
-    // For the Sun (planet.isEmissive), the texture itself drives emission;
-    // the multiplier maps directly to "how bright is the corona right now."
-    // For everything else, emissive is an ember-warm tint that reflects the
-    // beat's status (idle / hover / active / ready / approved).
+    // The previous version multiplied material.color toward a 0.32 grey for
+    // todo planets, which lerped them toward invisible against bg-base over
+    // ~2-3 seconds — visible to the user as "the planets disappear shortly
+    // after entering". That tint is gone. The texture stays at full color so
+    // each planet keeps its identity (Mars red, Earth blue, etc.); the only
+    // status signal on the surface is emissiveIntensity.
+    //
+    // Per-status emissive ramp. The Sun (planet.isEmissive) carries the
+    // texture as its emissive map, so its "off" state still has presence;
+    // other planets ramp emissive from 0 (todo) up to 0.6 (approved).
     let baseEmissive: number;
     if (planet.isEmissive) {
-      // Sun: dramatic emissive ramp by beat status.
-      if (isActive) baseEmissive = 1.2;
+      // Sun-like body: never goes fully cold. Texture-as-emissive plus a
+      // multiplier that maps cleanly to "how bright is the corona."
+      if (isActive) baseEmissive = 1.15;
       else if (isApproved) baseEmissive = 1.0;
-      else if (isReady) baseEmissive = 0.95;
-      else if (hover) baseEmissive = 0.9;
-      else baseEmissive = 0.8;
+      else if (isPreviewState) baseEmissive = 0.9;
+      else if (isGenerating) baseEmissive = 0.85;
+      else if (isReady) baseEmissive = 0.8;
+      else if (hover) baseEmissive = 0.65;
+      else baseEmissive = 0.55; // todo Sun — visibly the Sun, not glowing
     } else {
-      // Other planets: subtle emissive boost on focus, none at idle.
-      if (isActive) baseEmissive = 0.45;
-      else if (isApproved) baseEmissive = 0.35;
-      else if (isReady) baseEmissive = 0.3;
-      else if (hover) baseEmissive = 0.25;
-      else baseEmissive = 0.0;
+      // Non-luminous body: emissive is the "ember haze" we layer onto a
+      // textured planet to communicate "this beat is in progress / done."
+      if (isActive) baseEmissive = 0.55;
+      else if (isApproved) baseEmissive = 0.5;
+      else if (isPreviewState) baseEmissive = 0.4;
+      else if (isGenerating) baseEmissive = 0.35;
+      else if (isReady) baseEmissive = 0.28;
+      else if (hover) baseEmissive = 0.18;
+      else baseEmissive = 0.0; // todo — no glow, the texture stands alone
     }
-    const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.2 + 0.2 : 0;
+    // Pulses layered on the active states. ready = anticipation pulse;
+    // generating = breathing pulse (faster, more present).
+    const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.18 + 0.18 : 0;
+    const genPulse = isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.12 + 0.12 : 0;
     if (materialRef.current) {
-      materialRef.current.emissiveIntensity = baseEmissive + pulse;
-      // Untouched beats: tint the texture down toward a cool grey via the
-      // material's color multiplier. This greys the planet's actual surface
-      // (so Mars stops reading as a vivid red while it's still "to do") and
-      // gives a strong visual distinction from the saturated active/ready
-      // states. Hover lifts the tint so users feel the orb acknowledge them.
-      const targetTint = isUntouched ? (hover ? 0.55 : 0.32) : 1.0;
-      const c = materialRef.current.color;
-      // Lerp toward target so status changes don't snap.
-      c.r = THREE.MathUtils.lerp(c.r, targetTint, 0.12);
-      c.g = THREE.MathUtils.lerp(c.g, targetTint, 0.12);
-      c.b = THREE.MathUtils.lerp(c.b, targetTint * 1.05, 0.12);
+      materialRef.current.emissiveIntensity = baseEmissive + readyPulse + genPulse;
     }
 
     // ── Atmosphere uniforms ──
-    // Incomplete planets get a notably dimmer halo (max 0.22) so the cool
-    // greyed core isn't smeared by an ember-tinted atmosphere fighting it.
+    // Atmosphere opacity carries the strongest "glow" signal. Pending /
+    // questioning planets have a near-invisible halo (0–0.16) — they read
+    // as "to do" without disappearing. Ready+ states light up.
     const auni = atmosphereMat.uniforms;
     if (auni) {
-      const baseOpacity = isApproved
-        ? 0.6
-        : isActive
-        ? 0.65
-        : isReady
-        ? 0.55
-        : hover
-        ? 0.32
-        : 0.18;
-      const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.08 + 0.08 : 0;
-      auni.opacity.value = Math.min(baseOpacity + readyPulse, 0.7);
+      let baseOpacity: number;
+      if (isActive) baseOpacity = 0.65;
+      else if (isApproved) baseOpacity = 0.62;
+      else if (isPreviewState) baseOpacity = 0.55;
+      else if (isGenerating) baseOpacity = 0.48;
+      else if (isReady) baseOpacity = 0.45;
+      else if (isQuestioning) baseOpacity = hover ? 0.28 : 0.16;
+      else baseOpacity = hover ? 0.22 : 0.1; // pending
+      const pulse =
+        (isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.06 + 0.06 : 0) +
+        (isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.05 + 0.05 : 0);
+      auni.opacity.value = Math.min(baseOpacity + pulse, 0.72);
     }
 
     // ── Holographic uniforms ──
     if (holoMat.uniforms.hologramOpacity) {
       holoMat.uniforms.hologramOpacity.value = isActive ? 0.85 : 0;
     }
+
+    // Reference these so TS doesn't flag them as unused — they're the
+    // explicit status booleans the per-status branches above pivot on.
+    void isPending;
+    void isTodo;
   });
 
   return (
@@ -268,10 +293,17 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
           <div
             className="whitespace-nowrap font-body text-[14px] font-medium tracking-[-0.005em]"
             style={{
+              // Label color reads the same status mapping as the planet:
+              // todo planets get a dim grey label so the to-do state is
+              // visible in 2D as well as 3D.
               color: isActive || isApproved
+                ? "#f0a868"
+                : isPreviewState || isGenerating
                 ? "#f0a868"
                 : isReady
                 ? "#e6dfd2"
+                : isQuestioning
+                ? "#a39885"
                 : "#7e7c84",
               textShadow: "0 1px 14px rgba(0,0,0,0.85), 0 0 24px rgba(240,168,104,0.10)",
               transition: "color 220ms ease",

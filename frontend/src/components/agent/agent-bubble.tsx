@@ -41,10 +41,12 @@ function AgentBubbleImpl({ turn, reveal = true }: AgentBubbleProps) {
     >
       <div
         className={cn(
-          "max-w-[80%] rounded-md px-4 py-3 text-sm leading-relaxed",
+          // Rounded "chat bubble" geometry — 2xl corners with one tail-style
+          // tight corner that signals which side the message came from.
+          "max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
           isAgent
-            ? "rounded-tl-none bg-brand-ember/12 text-fg-primary ring-1 ring-brand-ember/20"
-            : "rounded-tr-none bg-brand-cool/15 text-fg-primary ring-1 ring-brand-cool/30",
+            ? "rounded-bl-md bg-brand-ember/12 text-fg-primary ring-1 ring-brand-ember/20"
+            : "rounded-br-md bg-brand-cool/15 text-fg-primary ring-1 ring-brand-cool/30",
         )}
       >
         {isAgent && reveal ? (
