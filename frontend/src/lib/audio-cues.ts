@@ -101,6 +101,86 @@ export function playEmberPop({ volume = 0.07, force = false }: PlayOptions = {})
 }
 
 /**
+ * Soft ambient projector-whir loop for the canvas surface.
+ *
+ * Graph: looping noise buffer → bandpass (480Hz, Q=0.7) → tremolo gain
+ * (LFO at 24Hz modulating the .gain AudioParam) → master gain → dest.
+ *
+ * Reads as faint old-projector room ambience. -32dB target (volume 0.025).
+ * Returns a stop fn that fades out gracefully (0.6s) — abrupt stop clicks.
+ *
+ * Mute is checked at start time only; if the user toggles mute mid-canvas,
+ * the loop continues until unmount. Acceptable for demo day.
+ */
+export function startAmbientProjector({
+  volume = 0.025,
+  force = false,
+}: PlayOptions = {}): () => void {
+  if (!force && isAudioMuted()) return () => {};
+  const ctx = getCtx();
+  if (!ctx) return () => {};
+
+  const now = ctx.currentTime;
+
+  // Looping noise buffer — 2s of white noise. Buffer ≥ 1s of stochastic
+  // signal has no audible loop seam.
+  const bufferSize = ctx.sampleRate * 2;
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.3;
+  }
+  const noise = ctx.createBufferSource();
+  noise.buffer = buffer;
+  noise.loop = true;
+
+  // Bandpass shapes the noise around 480Hz, narrow Q.
+  const bp = ctx.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.value = 480;
+  bp.Q.value = 0.7;
+
+  // Tremolo: an oscillator can connect to a GainNode's .gain AudioParam,
+  // not just to audio inputs. The LFO output adds to the param's value.
+  // Baseline 0.5 + ±0.5 modulation = oscillates between 0 and 1.
+  const lfo = ctx.createOscillator();
+  lfo.type = "sine";
+  lfo.frequency.value = 24;
+  const lfoDepth = ctx.createGain();
+  lfoDepth.gain.value = 0.5;
+  lfo.connect(lfoDepth);
+  const tremGain = ctx.createGain();
+  tremGain.gain.value = 0.5;
+  lfoDepth.connect(tremGain.gain);
+
+  // Master gain ramps in over 0.8s — never starts at full volume.
+  const master = ctx.createGain();
+  master.gain.setValueAtTime(0, now);
+  master.gain.linearRampToValueAtTime(volume, now + 0.8);
+
+  noise.connect(bp);
+  bp.connect(tremGain);
+  tremGain.connect(master);
+  master.connect(ctx.destination);
+  noise.start(now);
+  lfo.start(now);
+
+  return () => {
+    if (!ctx) return;
+    const stopAt = ctx.currentTime + 0.6;
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.setValueAtTime(master.gain.value, ctx.currentTime);
+    master.gain.linearRampToValueAtTime(0, stopAt);
+    try {
+      noise.stop(stopAt);
+      lfo.stop(stopAt);
+    } catch {
+      // Already stopped — ignore.
+    }
+  };
+}
+
+/**
  * Cinematic riser — sub-bass glissando + bandpass-noise sweep.
  *
  * Graph (two parallel chains):

@@ -119,42 +119,43 @@ The showpiece. All three items shipped. Lesson reflection lives in [`SHADERS_AUD
 
 ---
 
-## Phase 3 — Canvas surface (the map)
+## Phase 3 — Canvas surface (the map) ✅ COMPLETE (2026-04-25)
 
-### 3.1 🔴 Camera rig — auto-glide between nodes — 1.5h
-- **Surface:** `components/canvas/beat-map-3d.tsx`, new `camera-rig.tsx`
-- **Spec:**
-  - Replace `OrbitControls` with a custom rig.
-  - On node click, GSAP-tween the camera position to (node.x + offset, node.y + 0.4, node.z + 1.2) over 720ms `inOutQuart`.
-  - On hover, the camera lerps very subtly toward the hovered node (≤0.05 units).
-  - Idle: camera breathes z by ±0.04 over 8s (sin), giving the scene "alive" feel without distraction.
-- **Acceptance:** clicking a node visually transports you; clicking the same node again transports back to overview.
+The second of the three winning moments. All six items shipped. Lesson reflection lives in [`CANVAS_3D.md`](CANVAS_3D.md) — read that before touching the canvas surface.
 
-### 3.2 🔴 Node mesh — three states + breathe + ember-pulse-on-ready — 1h
-- **Surface:** `components/canvas/node-mesh.tsx` (already there, upgrade)
-- **Spec:**
-  - Idle: subtle scale breath (already implemented).
-  - Hover: scale +6%, emissiveIntensity 0.08 → 0.25, halo grows (selective bloom contribution).
-  - Active: scale +15%, position.z +0.4, ember glow saturated.
-  - Approved: ember-saturated steady state. No breathing.
-  - Ready-to-generate: 1.6s ember-pulse on emissiveIntensity (matches `ember-pulse` CSS keyframe).
-- **Acceptance:** all five states render distinctly without a state explosion. State derives from `beat.status` only.
+### 3.1 ✅ Custom camera rig — `components/canvas/camera-rig.tsx`
+- Replaced `OrbitControls` with a custom `<CameraRig>` component that lerps each frame.
+- Each frame computes target from app state: active beat → glide to `(x+0.2, y+0.4, z+1.2)`; hovered beat → ≤0.05 unit pull on x/y; idle → ±0.04 z breath on an 8s sin.
+- Per-frame lerp (rate 0.06) handles user redirecting clicks mid-glide cleanly — no GSAP `tl.kill()` required.
+- Toggle UX: clicking the active node deselects (returns to overview). Clicking empty canvas via `onPointerMissed` does the same.
 
-### 3.3 🔴 Connecting path between nodes — 0.5h
-- **Spec:** sample 32 points along a Catmull-Rom spline between adjacent nodes. Render as `<points>` with `pointsMaterial` size 0.04, color `fg-tertiary` at 30% opacity. The path quietly teaches the trailer's beat order without arrows.
-- **Acceptance:** path visible on first paint; doesn't compete with nodes for attention.
+### 3.2 ✅ Node mesh — five states + halo + group-z animation — `components/canvas/node-mesh.tsx`
+- All five states derive purely from `beat.status` + local hover/active flags.
+- Idle: scale breath ±2%. Hover: +6% + halo grows. Active: +15% + group steps forward `+0.4z`. Approved: ember-saturated, scale 1.12, no breath. Ready-to-generate: 1.6s ember pulse on `emissiveIntensity` + halo opacity pulse.
+- Halo is its own additive-blended sphere (no depth-write) — composes with bloom.
+- Group-position-z animation (not mesh-position-z) so the `<Html>` label tracks the active offset.
+- `onHoverChange` reports up to BeatMap3D so the camera rig can pull subtly toward hovered nodes.
 
-### 3.4 🟠 Ambient particles + scroll-velocity reaction — 1h
-- **Spec:**
-  - 200 `<Sparkles>` (drei) at low density across the scene.
-  - Scroll-velocity drives a `--scroll-velocity` CSS var → particles' speed scales 1× → 2.5× when the user scrolls/spins. Calms back when idle.
-- **Acceptance:** scrolling / dragging on the canvas makes the world feel reactive without overwhelming.
+### 3.3 ✅ Connecting path — `components/canvas/connecting-path.tsx`
+- `THREE.CatmullRomCurve3` through node positions; `getPoints(8 × beats.length)` samples the spline.
+- Rendered as `<points>` with `pointsMaterial` size 0.04, `color="#9aa6ad"`, opacity 0.3, `sizeAttenuation`. Reads as a faint trail.
+- `depthWrite={false}` so it composites behind nodes without z-fighting.
 
-### 3.5 🟠 Postprocessing — bloom + vignette + film grain — 0.3h
-- **Already in `beat-map-3d.tsx`.** Verify it still runs at 60fps on a 1080p MBA M2. If not, drop bloom mipmapBlur first, vignette second.
+### 3.4 ✅ Ambient particles + scroll-velocity reaction — `components/canvas/ambient-particles.tsx`
+- 200 drei `<Sparkles>` at scale `[14, 8, 8]`, brand-ember color, opacity 0.5.
+- `useScrollVelocity()` registered on canvas container; `velocityRef` passed down. Each frame, `material.uniforms.speed.value = BASE_SPEED × (1 + min(|velocity| × 8, 1.5))` → 1× idle, up to ~2.5× when scrolling. Same ref-bridge pattern as Phase 2 shader.
+- Calms back via the hook's exponential decay.
 
-### 3.6 🟡 Soft ambient audio loop — 0.3h
-- **Spec:** faint film-projector whir loop, -30dB, mute toggle respects landing's mute state.
+### 3.5 ✅ Postprocessing verified — already in `beat-map-3d.tsx`
+- `<Bloom intensity={0.9} luminanceThreshold={0.25} mipmapBlur />` + `<Vignette offset={0.2} darkness={0.85} />`. Untouched. Degradation order if perf slips is documented in [`CANVAS_3D.md` §6](CANVAS_3D.md).
+
+### 3.6 ✅ Ambient projector audio loop — `lib/audio-cues.ts`
+- New `startAmbientProjector()` returning a stop fn. Looping noise buffer → bandpass at 480Hz → tremolo gain (LFO at 24Hz writing into the gain AudioParam) → master gain → dest.
+- 0.8s ramp-in, 0.6s ramp-out for clean fades. Volume default 0.025 (≈ -32dB).
+- Wired into `canvas-route.tsx` via `useEffect` mount/unmount. Mute checked at start time.
+- The looping `bufferSource` + AudioParam-modulated tremolo are the new Web Audio idioms banked.
+
+**Phase 3 lessons banked (see `CANVAS_3D.md`):** custom camera rigs vs OrbitControls (when each fits), per-frame lerp vs GSAP tween for continuous multi-source state, Catmull-Rom splines, drei `<Sparkles>` shader-instanced primitives, ref-bridge into Sparkles uniforms, looping Web Audio with LFO modulation on AudioParam, performance budgeting on MBA M2.
 
 ---
 

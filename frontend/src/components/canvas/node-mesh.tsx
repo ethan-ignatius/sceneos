@@ -9,65 +9,127 @@ interface NodeMeshProps {
   beat: Beat;
   position: [number, number, number];
   index: number;
+  /** Reports hover changes up to BeatMap3D so the camera rig can react. */
+  onHoverChange?: (beatId: string | null) => void;
 }
 
 /**
- * Single node in the beat map. Idle = breathing scale. Active = ember glow + pulse.
- * Approved = ember-saturated steady state. Hover = bloom contribution rises.
+ * One node in the beat map. Five visual states, all derived from beat.status:
+ *   - idle (pending)         → subtle scale breath, low emissive
+ *   - hover                  → +6% scale, halo grows, emissive 0.25
+ *   - active (selected)      → +15% scale, group +0.4z forward, ember saturated
+ *   - approved               → ember-saturated steady, no breath
+ *   - ready-to-generate      → ember-pulse on emissiveIntensity (1.6s loop)
  *
- * v0 uses standard meshStandardMaterial; later we'll move the glow to a shader pass
- * via @react-three/postprocessing's SelectiveBloom.
+ * Implementation notes (see docs/CANVAS_3D.md §3):
+ *   - We animate groupRef.position.z, not meshRef, so the <Html> label
+ *     tracks the active offset cleanly.
+ *   - Halo is its own additive-blended mesh slightly larger than the main
+ *     sphere — composes naturally with the bloom postprocess pass.
+ *   - Click toggles: clicking the active node deselects (returns to overview).
  */
-export function NodeMesh({ beat, position }: NodeMeshProps) {
+export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
+  const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const [hover, setHover] = useState(false);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
   const isActive = activeBeatId === beat.beatId;
+  const isApproved = beat.status === "approved";
+  const isReady = beat.status === "ready-to-generate";
+
+  const [slotX, slotY, slotZ] = position;
 
   useFrame((state) => {
-    if (!meshRef.current) return;
     const t = state.clock.elapsedTime;
 
-    const breath = 1 + Math.sin(t * 0.9) * 0.02;
+    // ── Scale on the inner mesh ──
+    const breath = isApproved ? 1 : 1 + Math.sin(t * 0.9) * 0.02;
     const hoverBoost = hover ? 1.06 : 1;
     const activeBoost = isActive ? 1.15 : 1;
-    const target = breath * hoverBoost * activeBoost;
-    meshRef.current.scale.setScalar(target);
+    const approvedScale = isApproved ? 1.12 : 1;
+    const target = breath * hoverBoost * activeBoost * approvedScale;
+    if (meshRef.current) meshRef.current.scale.setScalar(target);
 
-    if (materialRef.current) {
-      const baseEmissive = beat.status === "approved" ? 0.45 : isActive ? 0.6 : hover ? 0.25 : 0.08;
-      materialRef.current.emissiveIntensity = baseEmissive + Math.sin(t * 1.6) * 0.04;
+    // ── Group z-offset: active steps forward toward camera (+0.4 on top of slotZ) ──
+    if (groupRef.current) {
+      const desiredZ = slotZ + (isActive ? 0.4 : 0);
+      groupRef.current.position.z = THREE.MathUtils.lerp(
+        groupRef.current.position.z,
+        desiredZ,
+        0.12,
+      );
     }
+
+    // ── Emissive intensity ──
+    let baseEmissive: number;
+    if (isApproved) baseEmissive = 0.5;
+    else if (isActive) baseEmissive = 0.6;
+    else if (hover) baseEmissive = 0.25;
+    else baseEmissive = 0.08;
+
+    // ready-to-generate beats pulse — guidance cue ("the next click is hot").
+    const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.18 + 0.18 : 0;
+    if (materialRef.current) {
+      materialRef.current.emissiveIntensity = baseEmissive + pulse;
+    }
+
+    // ── Halo (additive, grows with hover/active, pulses on ready) ──
+    const haloScale = isActive ? 1.55 : hover ? 1.32 : 1.18;
+    const haloOpacity =
+      (isActive ? 0.22 : hover ? 0.14 : 0.05) +
+      (isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.06 + 0.06 : 0);
+    if (haloRef.current) haloRef.current.scale.setScalar(haloScale);
+    if (haloMatRef.current) haloMatRef.current.opacity = haloOpacity;
   });
 
-  const color = beat.status === "approved" ? "#f0a868" : isActive ? "#f0a868" : "#9aa6ad";
-  const emissive = beat.status === "approved" ? "#f0a868" : isActive ? "#ffb470" : "#5e7080";
+  const baseColor = isApproved || isActive ? "#f0a868" : "#9aa6ad";
+  const emissiveColor = isApproved ? "#f0a868" : isActive ? "#ffb470" : "#5e7080";
 
   return (
-    <group position={position}>
+    <group ref={groupRef} position={[slotX, slotY, slotZ]}>
+      {/* Halo — additive blending, larger than main sphere, no depth-write
+          so it composes cleanly with bloom. */}
+      <mesh ref={haloRef}>
+        <sphereGeometry args={[0.42, 24, 24]} />
+        <meshBasicMaterial
+          ref={haloMatRef}
+          color="#f0a868"
+          transparent
+          opacity={0.05}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </mesh>
+
+      {/* Main node sphere. */}
       <mesh
         ref={meshRef}
         onPointerOver={(e) => {
           e.stopPropagation();
           setHover(true);
+          onHoverChange?.(beat.beatId);
           document.body.style.cursor = "pointer";
         }}
         onPointerOut={() => {
           setHover(false);
+          onHoverChange?.(null);
           document.body.style.cursor = "";
         }}
         onClick={(e) => {
           e.stopPropagation();
-          setActiveBeat(beat.beatId);
+          // Toggle: clicking the active node returns to overview.
+          setActiveBeat(isActive ? null : beat.beatId);
         }}
       >
         <sphereGeometry args={[0.42, 48, 48]} />
         <meshStandardMaterial
           ref={materialRef}
-          color={color}
-          emissive={emissive}
+          color={baseColor}
+          emissive={emissiveColor}
           emissiveIntensity={0.15}
           roughness={0.3}
           metalness={0.1}
@@ -78,8 +140,9 @@ export function NodeMesh({ beat, position }: NodeMeshProps) {
         <div
           className="whitespace-nowrap font-display text-sm italic"
           style={{
-            color: isActive ? "#f0a868" : "#c5b9a8",
+            color: isActive || isApproved ? "#f0a868" : "#c5b9a8",
             textShadow: "0 1px 8px rgba(0,0,0,0.6)",
+            transition: "color 200ms ease",
           }}
         >
           {beat.beatName}
