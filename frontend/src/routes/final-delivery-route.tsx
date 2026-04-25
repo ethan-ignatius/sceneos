@@ -56,7 +56,14 @@ export function FinalDeliveryRoute() {
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      // Clear the inline transform so the player snaps back to its layout
+      // position. Without this, toggling prefers-reduced-motion mid-session
+      // leaves the parallax offset frozen — reads as a centering bug.
+      const el = playerWrapRef.current;
+      if (el) el.style.transform = "";
+    };
   }, [reducedMotion, progressRef]);
 
   const finalUrl = manifest?.finalCloudinaryUrl;

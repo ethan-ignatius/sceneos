@@ -30,10 +30,21 @@ _JOBS: dict[str, dict[str, Any]] = {}
 
 
 def _read_config() -> dict[str, str]:
-    project_id = env("GCP_PROJECT_ID")
+    # Accept either GOOGLE_PROJECT_ID (matches gcloud + Vertex docs) or the
+    # legacy GCP_PROJECT_ID alias used by the original TS backend. Same for
+    # location: GOOGLE_CLOUD_LOCATION is the canonical name; GCP_VEO_LOCATION
+    # is the legacy alias.
+    project_id = env("GOOGLE_PROJECT_ID") or env("GCP_PROJECT_ID")
     if not project_id:
-        raise RuntimeError("vertex-veo: GCP_PROJECT_ID is not set.")
-    location = env("GCP_VEO_LOCATION", "us-central1") or "us-central1"
+        raise RuntimeError(
+            "vertex-veo: GOOGLE_PROJECT_ID (or legacy GCP_PROJECT_ID) is not set."
+        )
+    location = (
+        env("GOOGLE_CLOUD_LOCATION")
+        or env("GCP_VEO_LOCATION")
+        or env("GCP_LOCATION")
+        or "us-central1"
+    )
     model_id = env("VEO_MODEL_ID", "veo-2.0-generate-001") or "veo-2.0-generate-001"
     return {"projectId": project_id, "location": location, "modelId": model_id}
 

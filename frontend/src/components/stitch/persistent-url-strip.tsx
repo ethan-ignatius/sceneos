@@ -33,10 +33,14 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
   // change and re-renders on every store update — which under React 19 +
   // StrictMode can cascade into a max-update-depth crash.
   const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
-  const segments = buildSpliceUrlSegments(approvedIds);
-  const fullUrl = buildSpliceUrl(approvedIds);
+  // Hide the strip while the stitch tray is open — the same content appears
+  // (in fuller form) inside the tray, and leaving it visible underneath
+  // creates the bottom-left bleed seen in the screenshot.
+  const stitchTrayOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
 
-  // Animate the new tail when approvedIds.length grows.
+  // ALL hooks must run on every render — early returns mid-component cause
+  // "Rendered fewer hooks than expected" under React 19. The visibility
+  // gate moves to the bottom (after hooks).
   const prevCountRef = useRef(0);
   const [revealKey, setRevealKey] = useState(0);
   const [shouldType, setShouldType] = useState(false);
@@ -51,8 +55,14 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
     prevCountRef.current = approvedIds.length;
   }, [approvedIds.length]);
 
+  // Visibility gate now AFTER hooks (was a bug — early-return crash).
+  if (stitchTrayOpen) return null;
+  const segments = buildSpliceUrlSegments(approvedIds);
+  const fullUrl = buildSpliceUrl(approvedIds);
+
   if (!segments) {
-    // Empty state — show a compact teaser that explains the mechanism.
+    // Empty state — keep it short. The user already knows what fl_splice is
+    // by the time they're on the canvas; the teaser only needs to invite.
     return (
       <motion.div
         initial={{ opacity: 0 }}
@@ -62,10 +72,10 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
       >
         <button
           onClick={onOpenTray}
-          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-fg-tertiary/25 bg-bg-elev-1/60 px-3 py-1.5 caption-track text-[10px] text-fg-tertiary backdrop-blur-xl transition-colors hover:border-brand-ember/50 hover:text-fg-secondary"
+          className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-fg-tertiary/25 bg-bg-elev-1/60 px-3 py-1.5 caption-track text-[10px] text-fg-tertiary backdrop-blur-xl transition-colors hover:border-brand-ember/50 hover:text-fg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
         >
           <span className="text-brand-ember">●</span>
-          <span>Cloudinary fl_splice — approve a beat to begin</span>
+          <span>fl_splice · approve a beat to begin</span>
         </button>
       </motion.div>
     );
@@ -85,13 +95,13 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
       className="pointer-events-none absolute inset-x-0 bottom-12 z-10 flex justify-center px-6"
     >
       <div className="pointer-events-auto flex max-w-[calc(100vw-3rem)] items-center gap-2 rounded-full border border-fg-tertiary/25 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl shadow-[0_8px_20px_-10px_rgba(0,0,0,0.5)]">
-        <span className="caption-track flex-shrink-0 text-[9px] text-fg-tertiary">
+        <span className="caption-track flex-shrink-0 text-[10px] text-fg-tertiary">
           fl_splice
         </span>
         <span className="h-3 w-px flex-shrink-0 bg-fg-tertiary/30" aria-hidden="true" />
         <button
           onClick={onOpenTray}
-          className="overflow-hidden whitespace-nowrap font-mono text-[10px] tabular-nums text-fg-secondary transition-colors hover:text-fg-primary"
+          className="overflow-hidden whitespace-nowrap font-mono text-[11px] tabular-nums text-fg-secondary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:rounded-sm focus-visible:ring-1 focus-visible:ring-brand-ember"
           aria-label="Open stitch tray to inspect URL"
           title="Open stitch tray"
         >

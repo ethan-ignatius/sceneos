@@ -7,9 +7,23 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
 import { computeBeatPositions } from "@/lib/beat-layout";
 import { NodeMesh } from "./node-mesh";
-import { CameraRig } from "./camera-rig";
+import { CameraRig, type PanState, type OrbitState } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
+
+/**
+ * Custom event the route chrome (Esc handler, Re-center button) dispatches
+ * to clear the camera's pan offset without lifting the ref into a store.
+ * Listened-for at the BeatMap3D level — see the useEffect below.
+ */
+export const RESET_CAMERA_EVENT = "sceneos:camera:reset";
+
+/**
+ * Minimap → camera bridge. Detail: { beatId } activates that beat (camera
+ * arcs into orbit). Same one-shot CustomEvent pattern as RESET; lives at
+ * the same level so the minimap stays decoupled from the WebGL tree.
+ */
+export const GOTO_CAMERA_EVENT = "sceneos:camera:goto";
 
 interface BeatMap3DProps {
   beats: Beat[];
@@ -54,6 +68,9 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
   const [hoveredBeatId, setHoveredBeatId] = useState<string | null>(null);
+  // Vignette overlay opacity tracks pan state; React-y way is fine here
+  // since the overlay is HTML, not WebGL.
+  const [panning, setPanning] = useState(false);
 
   // Bridge: scroll/wheel velocity → ambient particles' speed uniform.
   // The hook accumulates wheel/touch deltas, decays exponentially, and
@@ -65,12 +82,189 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     return registerElement(containerRef.current);
   }, [registerElement]);
 
-  const positions = useMemo(() => computeBeatPositions(beats), [beats]);
+  // Layout depends only on beat count, not per-beat data. Memoising on
+  // `beats` directly meant every applyDecomposition (which spreads m.beats
+  // into a new array reference) would rebuild positions, rebuild the
+  // ConnectingPath geometry, and re-flash every NodeMesh's `<group
+  // position=…>` prop — which read on screen as the orbs blinking out.
+  const positions = useMemo(() => computeBeatPositions(beats), [beats.length]);
 
   // Camera distance scales with beat count (#161): default 5.5 fits 5 beats;
   // 7 needs ~6.7, 12 needs ~10.5. Pull back so outer beats stay in frustum.
   // FOV widens on portrait viewports (#152) — see `<ResponsiveCamera>` below.
   const cameraZ = 4 + Math.max(beats.length, 5) * 0.6;
+
+  // ── Pan state ──────────────────────────────────────────────────────────
+  // The pan ref lives outside React so middle-drag never triggers a route
+  // re-render. CameraRig reads it each frame; this component writes to it
+  // from pointer events. RESET_CAMERA_EVENT (Esc / Re-center) zeros it.
+  const panRef = useRef<PanState>({ offset: [0, 0], active: false });
+  // Orbit state — left-click-and-hold on empty space. Sticky (Maya-convention).
+  const orbitRef = useRef<OrbitState>({ azimuth: 0, polar: 0, active: false, didDrag: false });
+  // Closure-free mirror of hoveredBeatId — pointer handlers read this to
+  // decide whether a left-down should start orbiting (only if NOT on a planet).
+  const hoveredBeatIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    hoveredBeatIdRef.current = hoveredBeatId;
+  }, [hoveredBeatId]);
+
+  // Middle-button drag → world-unit translation on the XY plane.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let anchorX = 0;
+    let anchorY = 0;
+    let startOffsetX = 0;
+    let startOffsetY = 0;
+    // Left-drag (orbit) anchor; tracked separately from middle-drag so the
+    // two can't get tangled if the user does both within the same gesture.
+    let leftAnchorX = 0;
+    let leftAnchorY = 0;
+    const ROTATE_THRESHOLD_PX = 4;
+
+    // World units per screen pixel at z=0, given current camera distance + fov.
+    // worldHeightAtZ0 = 2 * camDist * tan(vfov/2). Width = height * aspect.
+    // We approximate with the rendering viewport size (containerRef.current).
+    const worldPerPx = () => {
+      const rect = el.getBoundingClientRect();
+      const fovRad = (42 * Math.PI) / 180;
+      const dist = cameraZ;
+      const worldH = 2 * dist * Math.tan(fovRad / 2);
+      const worldW = worldH * (rect.width / Math.max(rect.height, 1));
+      return { x: worldW / Math.max(rect.width, 1), y: worldH / Math.max(rect.height, 1) };
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button === 1) {
+        // Middle button — pan.
+        e.preventDefault(); // suppress browser auto-scroll cursor
+        panRef.current.active = true;
+        setPanning(true);
+        anchorX = e.clientX;
+        anchorY = e.clientY;
+        startOffsetX = panRef.current.offset[0];
+        startOffsetY = panRef.current.offset[1];
+        el.setPointerCapture(e.pointerId);
+        document.body.style.cursor = "grabbing";
+      } else if (e.button === 0) {
+        // Left button — orbit (only when NOT on a planet; a planet's
+        // hover means its onClick will activate the beat). Click-vs-drag
+        // is decided by the threshold in onPointerMove.
+        if (hoveredBeatIdRef.current !== null) return;
+        leftAnchorX = e.clientX;
+        leftAnchorY = e.clientY;
+        orbitRef.current.active = true;
+        orbitRef.current.didDrag = false;
+        el.setPointerCapture(e.pointerId);
+        // No cursor change yet — wait until threshold is crossed so a
+        // genuine click-on-empty-space still feels like a click.
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (panRef.current.active) {
+        const { x: wpxX, y: wpxY } = worldPerPx();
+        const dx = (e.clientX - anchorX) * wpxX;
+        const dy = (e.clientY - anchorY) * wpxY;
+        panRef.current.offset[0] = startOffsetX - dx;
+        panRef.current.offset[1] = startOffsetY + dy; // screen-y flipped
+        return;
+      }
+      if (orbitRef.current.active) {
+        const dx = e.clientX - leftAnchorX;
+        const dy = e.clientY - leftAnchorY;
+        if (
+          !orbitRef.current.didDrag &&
+          (Math.abs(e.clientX - leftAnchorX + (orbitRef.current.azimuth || 0)) > ROTATE_THRESHOLD_PX ||
+            Math.abs(dx) > ROTATE_THRESHOLD_PX ||
+            Math.abs(dy) > ROTATE_THRESHOLD_PX)
+        ) {
+          orbitRef.current.didDrag = true;
+          document.body.style.cursor = "grabbing";
+        }
+        if (orbitRef.current.didDrag) {
+          // 0.005 rad/px feels right at typical viewport sizes —
+          // ~0.6 rad (≈35°) for a 120 px drag.
+          orbitRef.current.azimuth += dx * 0.005;
+          orbitRef.current.polar = THREE.MathUtils.clamp(
+            orbitRef.current.polar + dy * 0.005,
+            -0.6,
+            0.6,
+          );
+          leftAnchorX = e.clientX;
+          leftAnchorY = e.clientY;
+        }
+      }
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.button === 1 && panRef.current.active) {
+        panRef.current.active = false;
+        setPanning(false);
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* released already; no-op */
+        }
+        document.body.style.cursor = "";
+        return;
+      }
+      if (e.button === 0 && orbitRef.current.active) {
+        orbitRef.current.active = false;
+        // Leave didDrag set; onPointerMissed checks it to suppress the
+        // click→deactivate behavior. It'll be reset on next pointerdown.
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* noop */
+        }
+        document.body.style.cursor = "";
+      }
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerUp);
+
+    // External reset (Esc / Re-center button) — zero pan + orbit.
+    const onReset = () => {
+      panRef.current.offset[0] = 0;
+      panRef.current.offset[1] = 0;
+      panRef.current.active = false;
+      orbitRef.current.azimuth = 0;
+      orbitRef.current.polar = 0;
+      orbitRef.current.active = false;
+      orbitRef.current.didDrag = false;
+      setPanning(false);
+      document.body.style.cursor = "";
+    };
+    window.addEventListener(RESET_CAMERA_EVENT, onReset);
+
+    // Minimap → camera-rig bridge. The minimap dispatches a CustomEvent
+    // with { beatId } as detail; we activate that beat in the store, which
+    // CameraRig already reacts to (it arcs into orbit).
+    const onGoto = (e: Event) => {
+      const detail = (e as CustomEvent<{ beatId?: string }>).detail;
+      if (detail?.beatId) {
+        // Clear pan first so the orbit lands on the beat center.
+        panRef.current.offset[0] = 0;
+        panRef.current.offset[1] = 0;
+        useBeatGraphStore.getState().setActiveBeat(detail.beatId);
+      }
+    };
+    window.addEventListener(GOTO_CAMERA_EVENT, onGoto);
+
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener(RESET_CAMERA_EVENT, onReset);
+      window.removeEventListener(GOTO_CAMERA_EVENT, onGoto);
+    };
+  }, [cameraZ]);
 
   return (
     <div ref={containerRef} className="absolute inset-0">
@@ -84,19 +278,25 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           gl.toneMapping = THREE.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.0;
         }}
-        // Click on empty canvas (the missed event) returns to overview.
+        // Click on empty canvas (the missed event) returns to overview —
+        // BUT only if we didn't just rotate. orbitRef.didDrag stays true
+        // from the drag's pointerup until the next pointerdown, so this
+        // check correctly tells "click" from "drag-then-release."
         onPointerMissed={() => {
+          if (orbitRef.current.didDrag) return;
           if (activeBeatId) setActiveBeat(null);
         }}
       >
         <color attach="background" args={["#0a0908"]} />
         <ResponsiveCamera baseFov={42} baseZ={cameraZ} />
 
-        {/* Brighter ambient + warm key + cool fill so the PBR core sphere
-            has something to bounce off. Higher intensity than the previous
-            setup because emissive carries most of the visual; this just
-            adds form. */}
-        <ambientLight intensity={0.6} />
+        {/* Lighting — pending planets must read clearly even with no emissive
+            or atmosphere (per user: "initially none should be lit"). The
+            previous 0.35 ambient was leaving Mercury and Moon at ~0.10
+            brightness against bg-base 0.04 — borderline invisible. Bumped
+            to 0.55 so non-luminous planets stay readable from texture +
+            ambient alone, before they ever earn a glow. */}
+        <ambientLight intensity={0.55} />
         <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
         <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
@@ -124,6 +324,8 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           activeBeatId={activeBeatId}
           hoveredBeatId={hoveredBeatId}
           overviewZ={cameraZ}
+          panRef={panRef}
+          orbitRef={orbitRef}
         />
 
         {/* Postprocessing stack:
@@ -150,6 +352,19 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
             postprocess after the pipeline (Veo + stitch + delivery) is
             verified end-to-end. */}
       </Canvas>
+      {/* Edge-vignette feedback while panning. Gentle 5% darkening at the
+          frame edges signals "you're in motion" without obstructing the
+          scene. CSS-only; no per-frame React work. */}
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${
+          panning ? "opacity-100" : "opacity-0"
+        }`}
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%)",
+        }}
+      />
     </div>
   );
 }

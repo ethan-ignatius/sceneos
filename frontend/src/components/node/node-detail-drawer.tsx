@@ -36,6 +36,45 @@ export function NodeDetailDrawer() {
     };
   }, []);
 
+  // Extracted from handleGenerate so it can be re-attached on mount when
+  // the user reloads /canvas mid-generation: persisted manifest will have
+  // beat.status === "generating" with scene.jobId set, but we never called
+  // /api/generate again, so polling needs to restart from the existing jobId.
+  const pollUntilDone = useCallback(
+    async (jobId: string, beatId: string, sceneId: string, initialDelay: number) => {
+      const startMs = Date.now();
+      let delay = initialDelay;
+      while (!cancelRef.current) {
+        // 5-minute ceiling on a re-attached poll — long enough for Veo 3
+        // (~1–4 min real-world) but bounded so a stuck jobId doesn't spin
+        // forever. Fresh dispatches use 30s for demo safety; re-attaches
+        // get the wider window because we don't know how long the job has
+        // already been running.
+        if (Date.now() - startMs > 5 * 60_000) {
+          throw new ApiError(0, "Generation polling timed out");
+        }
+        await sleep(delay);
+        if (cancelRef.current) return;
+        const status = await api.status(jobId);
+        if (cancelRef.current) return;
+        if (status.status === "succeeded") {
+          updateScene(beatId, sceneId, {
+            jobId,
+            clipPublicId: status.clipPublicId,
+            clipUrl: status.clipUrl,
+          });
+          updateBeat(beatId, { status: "preview" });
+          return;
+        }
+        if (status.status === "failed") {
+          throw new ApiError(0, status.error ?? "Generation failed");
+        }
+        delay = status.pollAfterMs ?? 800;
+      }
+    },
+    [updateBeat, updateScene],
+  );
+
   const handleGenerate = useCallback(async () => {
     if (!beat || !manifest) return;
     const scene = beat.scenes[0];
@@ -55,38 +94,43 @@ export function NodeDetailDrawer() {
       });
       if (cancelRef.current) return;
       setProvider(gen.provider);
-
-      // Poll until terminal. Hard timeout at 30s for demo safety.
-      const startMs = Date.now();
-      let delay = gen.pollAfterMs;
-      while (!cancelRef.current) {
-        if (Date.now() - startMs > 30_000) {
-          throw new ApiError(0, "Generation timed out after 30s");
-        }
-        await sleep(delay);
-        if (cancelRef.current) return;
-        const status = await api.status(gen.jobId);
-        if (cancelRef.current) return;
-        if (status.status === "succeeded") {
-          updateScene(beat.beatId, scene.sceneId, {
-            jobId: gen.jobId,
-            clipPublicId: status.clipPublicId,
-            clipUrl: status.clipUrl,
-          });
-          updateBeat(beat.beatId, { status: "preview" });
-          return;
-        }
-        if (status.status === "failed") {
-          throw new ApiError(0, status.error ?? "Generation failed");
-        }
-        delay = status.pollAfterMs ?? 800;
-      }
+      await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
       setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
       updateBeat(beat.beatId, { status: "ready-to-generate" });
     }
-  }, [beat, manifest, updateBeat, updateScene]);
+  }, [beat, manifest, updateBeat, pollUntilDone]);
+
+  // Re-attach an in-flight Veo / Higgsfield poll when the drawer mounts
+  // and the persisted manifest reports beat.status === "generating" with a
+  // jobId set on the scene. Without this, refreshing /canvas mid-generation
+  // leaves the drawer stuck on the spinner forever.
+  //
+  // We try to decode the provider from the jobId's `provider::id` prefix
+  // for the badge ("Vertex AI · Veo"); falls back to null if the format
+  // changes.
+  const beatId = beat?.beatId;
+  const sceneId = beat?.scenes[0]?.sceneId;
+  const persistedJobId = beat?.scenes[0]?.jobId;
+  const isGeneratingStatus = beat?.status === "generating";
+  useEffect(() => {
+    if (!beatId || !sceneId || !persistedJobId || !isGeneratingStatus) return;
+    setGenError(null);
+    const decoded = persistedJobId.split("::")[0];
+    if (decoded && decoded !== "mock") {
+      setProvider(decoded as GenerationProvider);
+    }
+    pollUntilDone(persistedJobId, beatId, sceneId, 1500).catch((err) => {
+      if (cancelRef.current) return;
+      setGenError(err instanceof ApiError ? err.message : "Lost connection to the running job.");
+      updateBeat(beatId, { status: "ready-to-generate" });
+    });
+    // We intentionally do not depend on pollUntilDone — its identity churns
+    // on every render via updateBeat/updateScene closure refs, and we only
+    // ever want this effect to re-attach once per (beatId, jobId) pair.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beatId, sceneId, persistedJobId, isGeneratingStatus]);
 
   if (!beat) return null;
 
@@ -113,9 +157,12 @@ export function NodeDetailDrawer() {
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 24, opacity: 0 }}
       transition={SPRING.drawer}
-      // Bottom-sheet on <md, side-drawer on >=md (issue #155). Mobile gets
-      // 85svh max so the canvas peek behind the sheet stays visible.
-      className="fixed inset-x-0 bottom-0 z-30 flex max-h-[85svh] w-full flex-col rounded-t-md border-t border-brand-ember-dim/40 bg-bg-elev-1/90 backdrop-blur-xl md:absolute md:inset-y-0 md:right-0 md:bottom-auto md:top-0 md:max-h-none md:w-full md:max-w-[36rem] md:rounded-none md:border-l md:border-t-0"
+      // Floating panel — credit-card / Phantom / Wealthsimple geometry.
+      // Mobile: bottom sheet that floats above the URL strip (still has
+      // its own rounded corners). Desktop: a free-floating right panel
+      // with margin from every viewport edge, rounded-2xl, soft shadow.
+      // No more edge-to-edge "stuck" feel.
+      className="fixed inset-x-3 bottom-3 z-40 flex max-h-[85svh] w-auto flex-col rounded-2xl border border-fg-tertiary/15 bg-[#14110f]/[0.92] backdrop-blur-2xl shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)] md:absolute md:inset-x-auto md:bottom-4 md:right-4 md:top-20 md:max-h-none md:w-[34rem] md:max-w-[calc(100vw-2rem)]"
     >
       <motion.div
         initial="hidden"
@@ -133,24 +180,29 @@ export function NodeDetailDrawer() {
           className="flex items-start justify-between border-b border-fg-tertiary/30 p-6"
         >
           <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
-              Beat {beatIndex + 1} of {totalBeats} · {beat.template.split(".")[0]}
+            <div className="caption-track text-[10px] tabular-nums text-fg-tertiary">
+              <span className="text-brand-ember">{(beatIndex + 1).toString().padStart(2, "0")}</span>
+              <span className="mx-2 text-fg-tertiary/50">/</span>
+              <span>{totalBeats.toString().padStart(2, "0")}</span>
+              <span className="mx-2 text-fg-tertiary/50">·</span>
+              <span>{beat.template.split(".")[0]}</span>
             </div>
-            <h2 className="mt-1 text-display-md italic text-fg-primary">{beat.beatName}</h2>
+            <h2 className="mt-2 text-display-md italic leading-[1.05] text-fg-primary">
+              {beat.beatName}
+            </h2>
             {/* Description lifted to Fraunces italic 18px so the drawer header
-                reads as title card + voiceover, not form label + helper text.
-                See FINAL_HANDOFF §2.B / §5 P0.2. */}
-            <p className="mt-3 max-w-prose font-display italic text-[1.125rem] leading-[1.4] text-fg-secondary">
+                reads as title card + voiceover, not form label + helper text. */}
+            <p className="mt-3 max-w-prose font-display italic text-lede leading-[1.4] text-fg-secondary">
               {beat.archetype.intent}
             </p>
           </div>
           <button
             onClick={() => setActiveBeat(null)}
-            className="text-fg-tertiary transition-colors hover:text-fg-primary"
+            className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-fg-tertiary transition-colors hover:bg-bg-elev-2 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
             aria-label="Close drawer"
             title="Close"
           >
-            <X size={20} strokeWidth={1.5} />
+            <X size={18} strokeWidth={1.5} />
           </button>
         </motion.header>
 
@@ -227,9 +279,56 @@ export function NodeDetailDrawer() {
             })()}
 
             {genError ? (
-              <div className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error">
+              <div
+                role="alert"
+                className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-body text-body-sm leading-snug text-state-error"
+              >
                 {genError}
               </div>
+            ) : null}
+
+            {/* Two-CTA footer: the primary "Roll camera" demands the
+                questionnaire is sufficient; the secondary "Lock it in"
+                lets the user bail out of the conversation early when
+                they feel they've said enough. We synthesize a refined
+                prompt from their answers + the beat archetype and flip
+                the beat to ready-to-generate locally — no backend call
+                needed since the agent's job is just to extract structure
+                from what the user has already typed. */}
+            {!isReadyToGenerate ? (
+              (() => {
+                const userAnswers = beat.scenes[0]?.conversation
+                  .filter((t) => t.role === "user")
+                  .map((t) => t.content)
+                  .join(". ");
+                const canLock = !!userAnswers && userAnswers.length > 0;
+                if (!canLock) return null;
+                const lockIn = () => {
+                  const refined = [
+                    beat.archetype.intent,
+                    beat.archetype.directorNotes ?? "",
+                    `Director's notes: ${userAnswers}.`,
+                    `Mood ${beat.archetype.mood}; cinematic, ~${beat.archetype.suggestedDuration}s.`,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
+                  updateScene(beat.beatId, beat.scenes[0].sceneId, {
+                    refinedPrompt: refined,
+                    durationSeconds: beat.archetype.suggestedDuration,
+                  });
+                  updateBeat(beat.beatId, { status: "ready-to-generate" });
+                };
+                return (
+                  <button
+                    type="button"
+                    onClick={lockIn}
+                    className="block w-full rounded-md border border-fg-tertiary/30 bg-bg-elev-2/30 px-4 py-2.5 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+                    aria-label="Lock in answers and prepare to generate"
+                  >
+                    I have enough — lock it in
+                  </button>
+                );
+              })()
             ) : null}
 
             <Button

@@ -206,8 +206,10 @@
       <h1 class="text-lg font-light tracking-tight">SceneOS</h1>
       <span class="text-zinc-700">·</span>
       <span class="label label-accent">agent loop visualizer</span>
+      <span id="modeBadge" class="hidden ml-2 text-[10px] uppercase tracking-widest font-medium px-2 py-0.5 rounded border"></span>
     </div>
     <div class="flex items-center gap-3 text-[11px] text-zinc-500">
+      <span id="demoTimer" class="hidden mono text-amber-400 text-[12px] font-medium tabular-nums"></span>
       <span>backend</span>
       <input id="apiBase" class="bg-white/[.02] border border-white/[.08] rounded px-2 py-1 text-[11px] w-56 text-zinc-300 mono" />
       <span id="connDot" class="w-2 h-2 rounded-full bg-zinc-700 transition-colors"></span>
@@ -215,34 +217,83 @@
     </div>
   </header>
 
-  <!-- BOOT — master prompt input ──────────────────────────────────────── -->
-  <section id="boot" class="relative z-10 px-6 py-20 max-w-3xl mx-auto">
-    <p class="label label-accent mb-4">step 0 of 7 · the master idea</p>
-    <label class="block text-3xl font-extralight text-zinc-100 mb-4 leading-tight">
-      Tell me about your movie.<br/>
-      <span class="text-zinc-500">One line is fine.</span>
-    </label>
-    <textarea
-      id="masterPrompt"
-      rows="3"
-      class="hero-input w-full rounded-xl px-5 py-4 text-lg text-zinc-100 placeholder-zinc-700 font-light"
-      placeholder="A monkey steals a banana from the zoo"
-    ></textarea>
-    <div class="flex items-center gap-3 mt-5">
+  <!-- BOOT — pick a mode ───────────────────────────────────────────────── -->
+  <section id="boot" class="relative z-10 px-6 py-16 max-w-4xl mx-auto">
+    <p class="label label-accent mb-4">step 0 · pick a mode</p>
+    <h2 class="text-3xl font-extralight text-zinc-100 mb-2 leading-tight">
+      Tell me about your movie.
+    </h2>
+    <p class="text-zinc-500 mb-8 text-sm font-light">The system picks the master prompt. You shape the feel.</p>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
       <button
-        id="beginBtn"
-        class="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-medium px-7 py-2.5 rounded-lg text-sm transition-all hover:shadow-[0_8px_24px_-8px_rgba(251,191,36,0.5)]"
-      >Begin</button>
-      <select id="videoType" class="bg-white/[.02] border border-white/[.08] rounded-lg px-3 py-2 text-sm text-zinc-300">
-        <option value="story" selected>story · 7 beats (canonical)</option>
-        <option value="trailer">trailer · 5 beats</option>
-        <option value="short">short · 3 beats</option>
-      </select>
-      <span class="ml-auto text-[11px] text-zinc-700 mono">cmd+enter</span>
+        id="demoBtn"
+        class="text-left panel p-6 hover:border-amber-500/40 transition-all group relative overflow-hidden"
+      >
+        <div class="flex items-center justify-between mb-3">
+          <span class="label label-accent">demo mode</span>
+          <span class="text-[11px] text-amber-500/80 mono">3-4 min</span>
+        </div>
+        <h3 class="text-xl font-light text-zinc-100 mb-2 group-hover:text-amber-300 transition-colors">Live hackathon demo</h3>
+        <p class="text-[12px] text-zinc-500 leading-relaxed mb-3">
+          All 7 beats kick off in parallel the moment you click. The agent asks 1-2 quick questions
+          for theatre while Imagen + video gen burn in the background.
+        </p>
+        <ul class="text-[11px] text-zinc-600 space-y-1 mono">
+          <li>· auto-picks a punchy curated prompt</li>
+          <li>· pre-warms 7 video jobs at session start</li>
+          <li>· agent caps at 1-2 questions per beat</li>
+        </ul>
+      </button>
+
+      <button
+        id="normalBtn"
+        class="text-left panel p-6 hover:border-cyan-400/40 transition-all group relative overflow-hidden"
+      >
+        <div class="flex items-center justify-between mb-3">
+          <span class="label" style="color: rgb(103 232 249); border-color: rgba(103,232,249,.25);">normal mode</span>
+          <span class="text-[11px] text-cyan-400/80 mono">quality first</span>
+        </div>
+        <h3 class="text-xl font-light text-zinc-100 mb-2 group-hover:text-cyan-300 transition-colors">Take your time</h3>
+        <p class="text-[12px] text-zinc-500 leading-relaxed mb-3">
+          Full agent loop. Asks as many questions as it needs. Imagen runs in parallel,
+          video gen runs after each beat is finalized.
+        </p>
+        <ul class="text-[11px] text-zinc-600 space-y-1 mono">
+          <li>· auto-picks a curated master prompt</li>
+          <li>· no question cap, no clock</li>
+          <li>· chains lastFrame → next clip for continuity</li>
+        </ul>
+      </button>
     </div>
+
+    <details class="mt-6 group">
+      <summary class="cursor-pointer text-[12px] text-zinc-600 hover:text-zinc-400 transition-colors select-none">
+        <span class="group-open:hidden">▸ override (use your own idea)</span>
+        <span class="hidden group-open:inline">▾ override</span>
+      </summary>
+      <div class="mt-4 pl-4 border-l border-white/[.06]">
+        <textarea
+          id="masterPromptOverride"
+          rows="2"
+          class="hero-input w-full rounded-lg px-4 py-3 text-[13px] text-zinc-100 placeholder-zinc-700 font-light"
+          placeholder="A monkey steals a banana from the zoo"
+        ></textarea>
+        <select id="videoType" class="hidden">
+          <option value="story" selected>story</option>
+        </select>
+        <p class="mt-2 text-[11px] text-zinc-700">
+          Used for whichever mode button you click next. Leave empty to let the system pick.
+        </p>
+      </div>
+    </details>
+
     <p class="mt-8 text-[12px] text-zinc-600 leading-relaxed">
-      Hits <code class="text-amber-500/80 mono">/api/agent/stream</code>. With Vertex creds, you'll see Gemini 2.5 Flash's thinking
-      tokens stream live alongside the question. With <code class="mono">MOCK_MODE=true</code>, synthetic thoughts demo the same flow.
+      Hits <code class="text-amber-500/80 mono">/api/session/start</code> →
+      <code class="text-amber-500/80 mono">/api/agent/stream</code>. Demo mode pre-warms
+      <code class="text-amber-500/80 mono">/api/orchestrate</code> for all 7 beats in parallel at boot;
+      when the agent finishes a beat, the orchestrate call hits a cached job (<code class="mono">speculativeReused: true</code>)
+      instead of doing fresh work.
     </p>
   </section>
 
@@ -307,6 +358,36 @@
         </div>
       </div>
     </div>
+
+    <!-- ── Project refs & final cut ───────────────────────────────────── -->
+    <div id="projectRefsRow" class="hidden mt-5 grid grid-cols-12 gap-5">
+      <div class="col-span-12 panel p-5">
+        <div class="flex items-center justify-between mb-3">
+          <span class="label label-accent">project refs · shared across all 7 beats</span>
+          <span class="text-[10px] text-zinc-600 mono">visual-continuity anchor</span>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <div class="label text-[9px] mb-2">character</div>
+            <img id="projectCharImg" class="w-full rounded-md aspect-video object-cover bg-zinc-900/40 border border-white/[.06]" alt="character ref" />
+          </div>
+          <div>
+            <div class="label text-[9px] mb-2">location</div>
+            <img id="projectLocImg" class="w-full rounded-md aspect-video object-cover bg-zinc-900/40 border border-white/[.06]" alt="location ref" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="finalCutRow" class="hidden mt-5 panel p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="label label-accent">final cut · stitched + scored</span>
+        <span id="finalCutStatus" class="text-[10px] text-zinc-600 mono">waiting on beats…</span>
+      </div>
+      <div id="finalCutBody" class="space-y-3">
+        <p class="text-zinc-700 italic text-sm">stitching kicks off automatically when all 7 clips are ready.</p>
+      </div>
+    </div>
   </section>
 
   <script>
@@ -340,6 +421,12 @@
     let currentBeatIndex = 0;
     let inFlight = false;
     let previousLastFrameUrl = null;  // chain primitive — fed to next beat's orchestrate call
+    let sessionMode = null;           // 'demo' | 'normal'
+    let speculativeJobs = {};         // { beatId: orchestrateResult } from /api/session/start
+    let projectRefs = null;           // { character, location } shared across all beats
+    let demoStartedAt = null;
+    let demoTimerHandle = null;
+    let finalCutKicked = false;       // guard — stitch fires once per session
 
     const $ = (id) => document.getElementById(id);
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -428,10 +515,20 @@
       $('beatStrip').innerHTML = manifest.beats.map((beat, i) => {
         const status = i < currentBeatIndex ? 'done' : i === currentBeatIndex ? 'active' : 'pending';
         const tick = status === 'done' ? '✓ ' : '';
+        const scene = beat.scenes && beat.scenes[0];
+        let badge = '';
+        if (sessionMode === 'demo' && scene) {
+          if (scene.prewarmReady) {
+            badge = `<div class="text-[9px] mt-1 mono text-emerald-400/80 tracking-wide">▰ pre-warmed</div>`;
+          } else if (scene.jobId) {
+            badge = `<div class="text-[9px] mt-1 mono text-amber-400/70 tracking-wide">▱ rendering…</div>`;
+          }
+        }
         return `
           <div class="beat-pill ${status} rounded-lg px-3 py-2 text-center">
             <div class="text-[9px] tracking-widest text-zinc-600 uppercase">${i + 1}</div>
             <div class="text-[12px] font-medium mt-0.5">${tick}${escapeHtml(beat.beatName)}</div>
+            ${badge}
           </div>
         `;
       }).join('');
@@ -703,16 +800,46 @@
     }
 
     /* ── Logic ────────────────────────────────────────────────────────── */
-    async function begin() {
-      const masterPrompt = $('masterPrompt').value.trim();
-      if (!masterPrompt) { $('masterPrompt').focus(); return; }
-      const videoType = $('videoType').value;
-      manifest = buildManifest(masterPrompt, videoType);
+    async function begin(mode) {
+      const overrideEl = $('masterPromptOverride');
+      const override = (overrideEl && overrideEl.value.trim()) || null;
+
+      // Lock the mode buttons while the session boots so a double-click
+      // can't fire a second /api/session/start.
+      $('demoBtn').setAttribute('disabled', 'true');
+      $('normalBtn').setAttribute('disabled', 'true');
+
+      let session;
+      try {
+        session = await postJson('/api/session/start', {
+          mode,
+          masterPromptOverride: override,
+          aspectRatio: '16:9',
+        });
+      } catch (err) {
+        $('demoBtn').removeAttribute('disabled');
+        $('normalBtn').removeAttribute('disabled');
+        alert(`Couldn't start session: ${err.message}`);
+        return;
+      }
+
+      manifest = session.manifest;
+      sessionMode = session.mode;
+      speculativeJobs = session.speculativeJobs || {};
+      projectRefs = session.projectRefs || null;
       currentBeatIndex = 0;
+      previousLastFrameUrl = null;
 
       $('boot').classList.add('hidden');
       $('loop').classList.remove('hidden');
       $('resetBtn').classList.remove('hidden');
+
+      paintModeBadge(sessionMode);
+      if (sessionMode === 'demo') {
+        startDemoTimer();
+        primeSpeculativeStrip();
+        renderProjectRefs();
+      }
 
       renderBeatStrip();
       renderActiveBeat();
@@ -722,6 +849,184 @@
       clearPipeline();
 
       await advance(undefined);
+    }
+
+    function paintModeBadge(mode) {
+      const el = $('modeBadge');
+      if (!el) return;
+      el.classList.remove('hidden');
+      if (mode === 'demo') {
+        el.textContent = 'demo · 3-4 min';
+        el.style.color = 'rgb(251 191 36)';
+        el.style.borderColor = 'rgba(251,191,36,.35)';
+        el.style.background = 'rgba(251,191,36,.05)';
+      } else {
+        el.textContent = 'normal · quality first';
+        el.style.color = 'rgb(103 232 249)';
+        el.style.borderColor = 'rgba(103,232,249,.35)';
+        el.style.background = 'rgba(103,232,249,.05)';
+      }
+    }
+
+    function startDemoTimer() {
+      demoStartedAt = Date.now();
+      const el = $('demoTimer');
+      el.classList.remove('hidden');
+      const tick = () => {
+        const ms = Date.now() - demoStartedAt;
+        const total = Math.floor(ms / 1000);
+        const m = String(Math.floor(total / 60)).padStart(2, '0');
+        const s = String(total % 60).padStart(2, '0');
+        el.textContent = `${m}:${s} / 04:00`;
+        if (total >= 240) el.style.color = 'rgb(248 113 113)';
+        else if (total >= 180) el.style.color = 'rgb(251 191 36)';
+      };
+      tick();
+      demoTimerHandle = setInterval(tick, 1000);
+    }
+
+    function stopDemoTimer() {
+      if (demoTimerHandle) clearInterval(demoTimerHandle);
+      demoTimerHandle = null;
+      $('demoTimer').classList.add('hidden');
+      $('demoTimer').style.color = '';
+    }
+
+    /* ── Speculative-job ribbon (demo mode) ──────────────────────────────
+     * Shows all 7 pre-warmed jobs as soon as the session boots. We poll
+     * each /api/status/<jobId> in parallel so the user can SEE the
+     * pipeline working while the agent is asking questions. */
+    function primeSpeculativeStrip() {
+      if (!manifest) return;
+      for (const beat of manifest.beats) {
+        const spec = speculativeJobs[beat.beatId];
+        if (!spec) continue;
+        beat.scenes[0].jobId = spec.jobId;
+        beat.scenes[0].seedImageUrl = spec.seedImageUrl || null;
+        beat.scenes[0].clipPrompt = spec.clipPrompt || null;
+        beat.chainFromPrevious = spec.chainFromPrevious;
+        beat.scenes[0].speculative = true;
+        // Don't mark status='preview' — the agent still needs to "approve"
+        // each beat before we surface it as the active output. But the
+        // strip badge will show the pre-warm.
+        pollSpeculativeJob(beat.beatId, spec.jobId).catch(() => {});
+      }
+    }
+
+    async function pollSpeculativeJob(beatId, jobId) {
+      try {
+        const body = await pollStatus(jobId, 30, 1500);
+        if (!body) return;
+        const beat = manifest.beats.find((b) => b.beatId === beatId);
+        if (!beat) return;
+        beat.scenes[0].clipUrl = body.clipUrl;
+        beat.scenes[0].clipPublicId = body.clipPublicId;
+        beat.scenes[0].lastFrameUrl = body.lastFrameUrl;
+        beat.scenes[0].prewarmReady = true;
+        renderBeatStrip();
+        maybeKickFinalCut();
+      } catch (_err) {
+        // Silent — the orchestrate path will surface the error if the
+        // agent ever lands on this beat.
+      }
+    }
+
+    /* ── Project refs ──────────────────────────────────────────────────── */
+    function renderProjectRefs() {
+      if (!projectRefs) return;
+      const row = $('projectRefsRow');
+      const charImg = $('projectCharImg');
+      const locImg  = $('projectLocImg');
+      const charUrl = (projectRefs.character || {}).imageUrl;
+      const locUrl  = (projectRefs.location  || {}).imageUrl;
+      if (!charUrl && !locUrl) return;
+      if (charUrl) charImg.src = charUrl; else charImg.style.opacity = 0.3;
+      if (locUrl)  locImg.src  = locUrl;  else locImg.style.opacity  = 0.3;
+      row.classList.remove('hidden');
+    }
+
+    /* ── Final cut (auto-stitch) ───────────────────────────────────────── */
+    function showFinalCutPanel() {
+      const row = $('finalCutRow');
+      row.classList.remove('hidden');
+      row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function setFinalCutStatus(text, tone) {
+      const el = $('finalCutStatus');
+      el.textContent = text;
+      el.style.color = tone === 'done' ? 'rgb(52 211 153)'
+        : tone === 'error' ? 'rgb(248 113 113)'
+        : 'rgb(251 191 36)';
+    }
+
+    async function maybeKickFinalCut() {
+      if (finalCutKicked || !manifest) return;
+      // All 7 beats must have a clipPublicId (either via the speculative
+      // poller or the agent → orchestrate → status path).
+      const allReady = manifest.beats.every((b) => b.scenes && b.scenes[0] && b.scenes[0].clipPublicId);
+      if (!allReady) return;
+      finalCutKicked = true;
+      showFinalCutPanel();
+      setFinalCutStatus('stitching all 7 clips…', 'working');
+
+      // Build a stitch-shaped manifest from what we have: every beat
+      // gets status='approved' (the contract /api/stitch/url uses) and
+      // its clipPublicId + duration. We send a copy so we don't mutate
+      // the live manifest.
+      const stitchManifest = {
+        ...manifest,
+        beats: manifest.beats.map((b) => ({
+          ...b,
+          status: 'approved',
+          archetype: b.archetype,
+          scenes: b.scenes.map((s) => ({
+            ...s,
+            clipPublicId: s.clipPublicId,
+            durationSeconds: s.durationSeconds || (b.archetype && b.archetype.suggestedDuration) || 5,
+          })),
+        })),
+      };
+
+      try {
+        const res = await postJson('/api/stitch/url', {
+          manifest: stitchManifest,
+          colorGrade: true,
+        });
+        renderFinalCut(res);
+        setFinalCutStatus(`done · ${res.durationSeconds}s`, 'done');
+      } catch (err) {
+        $('finalCutBody').innerHTML = `
+          <div class="text-rose-400 text-[12px] mono">stitch failed: ${escapeHtml(err.message || 'unknown')}</div>
+          <div class="text-zinc-600 text-[11px] mt-2">All 7 clips rendered — but the final splice URL build failed. Check Cloudinary creds.</div>
+        `;
+        setFinalCutStatus('error', 'error');
+      }
+    }
+
+    function renderFinalCut(res) {
+      const url = res.finalUrl || res.finalVideoUrl;
+      const audio = res.audioPublicId;
+      $('finalCutBody').innerHTML = `
+        <video class="w-full rounded-md bg-black border border-white/[.06]" controls preload="metadata" poster="${escapeHtml(res.thumbnailUrl || '')}">
+          <source src="${escapeHtml(url)}" type="video/mp4" />
+          your browser cannot play the splice URL directly. <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" class="text-amber-400">open in a new tab</a>
+        </video>
+        <div class="grid grid-cols-3 gap-3 text-[11px] mt-3">
+          <div>
+            <div class="label text-[9px] mb-1">duration</div>
+            <div class="text-zinc-300 mono">${res.durationSeconds || '?'}s</div>
+          </div>
+          <div>
+            <div class="label text-[9px] mb-1">audio</div>
+            <div class="text-zinc-300 mono break-all">${audio ? escapeHtml(audio) : '<span class="text-zinc-600">none</span>'}</div>
+          </div>
+          <div>
+            <div class="label text-[9px] mb-1">cloudinary url</div>
+            <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" class="text-amber-400 mono break-all hover:underline">open ↗</a>
+          </div>
+        </div>
+      `;
     }
 
     async function sendAnswer(text) {
@@ -814,8 +1119,26 @@
           beat.scenes[0].seedImageUrl = orchestrateResult.seedImageUrl || null;
           beat.scenes[0].clipPrompt = orchestrateResult.clipPrompt || null;
           beat.chainFromPrevious = orchestrateResult.chainFromPrevious;
+          // Lazy normal-mode population: the orchestrator returns the
+          // shared character + location refs when sharedRefs=true. The
+          // first beat's markSufficient triggers their generation; we
+          // mirror them into the projectRefs panel so the user can see
+          // the visual-continuity anchors as soon as they exist.
+          if (!projectRefs && orchestrateResult.sharedRefs) {
+            projectRefs = {
+              character: orchestrateResult.characterRef || null,
+              location:  orchestrateResult.locationRef  || null,
+            };
+            renderProjectRefs();
+          }
           renderPipeline(orchestrateResult);
-          setPipelineStatus('rendering', 'working');
+          if (orchestrateResult.speculativeReused) {
+            // Demo mode: this beat's job was kicked off at session-start,
+            // so we have nothing fresh to wait on (often it's already done).
+            setPipelineStatus('pre-warmed · cached', 'done');
+          } else {
+            setPipelineStatus('rendering', 'working');
+          }
         } catch (err) {
           setPipelineStatus(`error: ${err.message.slice(0, 80)}`, 'error');
         }
@@ -829,7 +1152,9 @@
               beat.scenes[0].clipUrl = statusBody.clipUrl;
               beat.scenes[0].clipPublicId = statusBody.clipPublicId;
               beat.scenes[0].lastFrameUrl = statusBody.lastFrameUrl;
+              beat.scenes[0].durationSeconds = statusBody.durationSeconds || beat.scenes[0].durationSeconds || (beat.archetype && beat.archetype.suggestedDuration) || 5;
               setPipelineStatus('clip ready', 'done');
+              maybeKickFinalCut();
             } else {
               // Timeout — real-mode video still rendering. Don't chain;
               // next beat will get fresh refs.
@@ -858,6 +1183,7 @@
           clearPipeline();
           await advance(undefined);
         } else {
+          stopDemoTimer();
           renderAnswerArea([], { done: true });
         }
       } else {
@@ -870,12 +1196,22 @@
       currentBeatIndex = 0;
       inFlight = false;
       previousLastFrameUrl = null;
+      sessionMode = null;
+      speculativeJobs = {};
+      projectRefs = null;
+      finalCutKicked = false;
+      stopDemoTimer();
       setThinkingActive(false);
       clearPipeline();
+      $('modeBadge').classList.add('hidden');
+      $('projectRefsRow').classList.add('hidden');
+      $('finalCutRow').classList.add('hidden');
+      $('finalCutBody').innerHTML = `<p class="text-zinc-700 italic text-sm">stitching kicks off automatically when all 7 clips are ready.</p>`;
       $('loop').classList.add('hidden');
       $('boot').classList.remove('hidden');
       $('resetBtn').classList.add('hidden');
-      $('masterPrompt').focus();
+      $('demoBtn').removeAttribute('disabled');
+      $('normalBtn').removeAttribute('disabled');
     }
 
     /* ── Boot wiring ──────────────────────────────────────────────────── */
@@ -883,10 +1219,8 @@
     pingHealth();
     setInterval(pingHealth, 6000);
 
-    $('beginBtn').addEventListener('click', begin);
-    $('masterPrompt').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) begin();
-    });
+    $('demoBtn').addEventListener('click', () => begin('demo'));
+    $('normalBtn').addEventListener('click', () => begin('normal'));
     $('resetBtn').addEventListener('click', reset);
     $('clearThinkingBtn').addEventListener('click', clearThinking);
     $('dumpBtn').addEventListener('click', () => {

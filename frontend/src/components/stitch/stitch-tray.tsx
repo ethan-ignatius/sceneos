@@ -46,6 +46,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
   const setFinalCinematic = useBeatGraphStore((s) => s.setFinalCinematic);
+  const setStitchTrayOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
   // useShallow — same reasoning as PersistentUrlStrip: selector returns a
   // fresh array each call; zustand v5's strict equality would otherwise
   // re-render every store change and crash under React 19 StrictMode.
@@ -59,9 +60,13 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
+    setStitchTrayOpen(true);
     return () => {
       mountedRef.current = false;
+      setStitchTrayOpen(false);
     };
+    // setStitchTrayOpen is a stable Zustand action ref; lint doesn't see it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const segments = buildSpliceUrlSegments(approvedIds);
@@ -138,28 +143,35 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       className={cn(
         // Bottom-sheet on <md, floating panel on >=md (#155). Same visual
         // weight, different geometry per viewport.
-        "fixed inset-x-0 bottom-0 z-40 flex max-h-[85svh] w-full flex-col rounded-t-md",
-        "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[40rem] md:max-w-[calc(100vw-3rem)] md:rounded-md",
-        "overflow-hidden border border-brand-ember-dim/30",
-        "bg-bg-elev-1/85 backdrop-blur-2xl",
-        "shadow-[0_40px_80px_-24px_rgba(0,0,0,0.7),_0_0_0_1px_rgba(240,168,104,0.06)]",
+        "fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] w-full flex-col rounded-t-md",
+        "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[40rem] md:max-w-[calc(100vw-3rem)] md:rounded-lg",
+        "overflow-hidden border border-fg-tertiary/15",
+        // Bumped from /85 to /96 + an explicit solid background-image so the
+        // R3F <Html> planet labels can never bleed through. backdrop-blur
+        // alone wasn't covering them when the tray sat over the canvas.
+        "bg-[#14110f]/[0.97] backdrop-blur-2xl",
+        "shadow-[0_40px_80px_-24px_rgba(0,0,0,0.65),_0_0_0_1px_rgba(255,255,255,0.03)]",
       )}
     >
       {/* Header — caption + display headline + close */}
       <header className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-7 pb-5 pt-6">
-        <div className="space-y-2">
-          <div className="caption-track text-[10px] text-fg-tertiary">
-            Stitch · Cloudinary · fl_splice
+        <div className="space-y-2.5">
+          <div className="font-body text-[11px] font-medium tracking-[0.04em] text-fg-tertiary">
+            Stitch
+            <span className="mx-2 text-fg-tertiary/50">·</span>
+            Cloudinary
+            <span className="mx-2 text-fg-tertiary/50">·</span>
+            <span className="font-mono text-[10px] text-fg-tertiary/80">fl_splice</span>
           </div>
-          <h2 className="font-display text-3xl italic leading-tight text-fg-primary">
+          <h2 className="font-display text-[2rem] italic leading-[1.05] tracking-[-0.025em] text-fg-primary">
             {headline}
           </h2>
         </div>
         <button
           onClick={onClose}
-          className="mt-1 grid h-8 w-8 flex-shrink-0 place-items-center rounded-full border border-fg-tertiary/30 text-fg-tertiary transition-colors hover:border-fg-secondary hover:text-fg-primary"
+          className="mt-1 grid h-8 w-8 flex-shrink-0 place-items-center rounded-full border border-fg-tertiary/25 text-fg-tertiary transition-colors hover:border-fg-secondary hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
           aria-label="Close stitch tray"
-          title="Close"
+          title="Close (Esc)"
         >
           <X size={14} strokeWidth={1.5} />
         </button>
@@ -170,9 +182,13 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         {/* Thumbnail strip — numbered film slates */}
         <section className="space-y-3">
           <div className="flex items-baseline justify-between">
-            <span className="caption-track text-[10px]">Beat strip</span>
-            <span className="font-mono text-[10px] tabular-nums text-fg-tertiary">
-              {approvedCount.toString().padStart(2, "0")}/{totalCount.toString().padStart(2, "0")}
+            <span className="font-body text-[11px] font-medium tracking-[0.04em] text-fg-secondary">
+              Beat strip
+            </span>
+            <span className="font-body text-[11px] font-medium tabular-nums text-fg-tertiary">
+              <span className="text-fg-secondary">{approvedCount.toString().padStart(2, "0")}</span>
+              <span className="mx-1.5 text-fg-tertiary/50">/</span>
+              {totalCount.toString().padStart(2, "0")}
             </span>
           </div>
           <div
@@ -192,16 +208,18 @@ export function StitchTray({ onClose }: StitchTrayProps) {
               const isApproved = b.status === "approved" || scene.approved;
               const tint = moodAccentColor(b.archetype.mood);
               const beatNumber = (i + 1).toString().padStart(2, "0");
+              const moodLabel = b.archetype.mood.replace(/-/g, " ");
               return (
                 <div
                   key={b.beatId}
-                  title={`${b.beatName} · ${b.archetype.mood}`}
+                  title={`${b.beatName} · ${moodLabel}`}
                   className={cn(
-                    "relative aspect-[4/5] w-[7.5rem] flex-shrink-0 overflow-hidden rounded-md border",
-                    "transition-[border-color,opacity,box-shadow] duration-300 ease-out",
+                    "group relative aspect-[4/5] w-[7.5rem] flex-shrink-0 overflow-hidden rounded-lg border",
+                    "transition-all duration-[280ms] ease-[cubic-bezier(0.25,1,0.5,1)] will-change-transform",
+                    "hover:-translate-y-0.5",
                     isApproved
-                      ? "border-brand-ember/60 shadow-[0_0_24px_-6px_rgba(240,168,104,0.6)]"
-                      : "border-fg-tertiary/25 opacity-70 hover:opacity-100",
+                      ? "border-brand-ember/55 shadow-[0_18px_40px_-18px_rgba(240,168,104,0.55),0_0_0_1px_rgba(240,168,104,0.08)]"
+                      : "border-fg-tertiary/20 hover:border-fg-tertiary/40 hover:shadow-[0_18px_36px_-20px_rgba(0,0,0,0.65)]",
                   )}
                 >
                   {/* Backdrop image (when approved) or mood-gradient placeholder */}
@@ -216,28 +234,30 @@ export function StitchTray({ onClose }: StitchTrayProps) {
                     <div
                       className="absolute inset-0"
                       style={{
-                        background: `linear-gradient(140deg, ${tint}30 0%, #14110f 60%)`,
+                        background: `linear-gradient(155deg, ${tint}26 0%, #14110f 65%)`,
                       }}
                     />
                   )}
 
-                  {/* Bottom mood-tint gradient for legibility of the caption */}
+                  {/* Bottom-up scrim for caption legibility — softer than the
+                      old hard 92% black so the mood color reads through. */}
                   <div
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5"
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-2/3"
                     style={{
-                      background: `linear-gradient(to top, rgba(10,9,8,0.92), transparent)`,
+                      background:
+                        "linear-gradient(to top, rgba(10,9,8,0.95) 0%, rgba(10,9,8,0.55) 50%, transparent 100%)",
                     }}
                   />
 
-                  {/* Beat number — top-left, mono, slate-style */}
-                  <div className="absolute left-2 top-2 flex items-center gap-1.5">
+                  {/* Top row — index + (when approved) check pill */}
+                  <div className="absolute inset-x-2.5 top-2.5 flex items-center justify-between">
                     <span
                       className={cn(
-                        "rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
+                        "rounded-md px-1.5 py-0.5 font-body text-[10px] font-semibold tabular-nums",
                         isApproved
                           ? "bg-brand-ember/20 text-brand-ember"
-                          : "bg-bg-base/70 text-fg-secondary",
+                          : "bg-bg-base/65 text-fg-secondary",
                       )}
                     >
                       {beatNumber}
@@ -249,16 +269,18 @@ export function StitchTray({ onClose }: StitchTrayProps) {
                     ) : null}
                   </div>
 
-                  {/* Beat name — bottom, display italic */}
-                  <div className="absolute inset-x-2.5 bottom-2.5 space-y-0.5">
-                    <div className="font-display text-base italic leading-tight text-fg-primary">
-                      {b.beatName}
-                    </div>
+                  {/* Bottom column — mood eyebrow ABOVE the title (the previous
+                      order put the mood under the name, which read as a stray
+                      caption rather than a category). */}
+                  <div className="absolute inset-x-3 bottom-3 space-y-1">
                     <div
-                      className="font-mono text-[9px] uppercase tracking-[0.18em]"
+                      className="font-body text-[9.5px] font-medium uppercase tracking-[0.08em]"
                       style={{ color: tint }}
                     >
-                      {b.archetype.mood.replace(/-/g, " ")}
+                      {moodLabel}
+                    </div>
+                    <div className="font-body text-[15px] font-semibold leading-tight tracking-[-0.012em] text-fg-primary">
+                      {b.beatName}
                     </div>
                   </div>
                 </div>
@@ -270,11 +292,15 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         {/* Live URL — the punchline, treated like a code editor card */}
         <section className="space-y-3">
           <div className="flex items-baseline justify-between">
-            <span className="caption-track text-[10px]">Live cut · {approvedCount} clip{approvedCount === 1 ? "" : "s"}</span>
+            <span className="font-body text-[11px] font-medium tracking-[0.04em] text-fg-secondary">
+              Live cut
+              <span className="mx-1.5 text-fg-tertiary/50">·</span>
+              <span className="text-fg-tertiary">{approvedCount} clip{approvedCount === 1 ? "" : "s"}</span>
+            </span>
             <button
               onClick={copy}
               disabled={!fullUrl}
-              className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 font-body text-[11px] font-medium tracking-[0.04em] text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
               aria-label="Copy Cloudinary URL"
             >
               <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
@@ -327,7 +353,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         {renderError ? (
           <div
             role="alert"
-            className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error"
+            className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-body text-[12px] leading-snug text-state-error"
           >
             {renderError}
           </div>

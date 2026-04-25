@@ -88,7 +88,7 @@ export function CinematicCursor() {
       <div
         ref={ringRef}
         aria-hidden="true"
-        className="cinematic-cursor-ring pointer-events-none fixed left-0 top-0 z-[10000] h-6 w-6 rounded-full"
+        className="cinematic-cursor-ring pointer-events-none fixed left-0 top-0 z-[90] h-6 w-6 rounded-full"
         style={{
           // The fill swap on hover state — inner bg fades to ember.
           background:
@@ -102,7 +102,7 @@ export function CinematicCursor() {
       <div
         ref={dotRef}
         aria-hidden="true"
-        className="cinematic-cursor-dot pointer-events-none fixed left-0 top-0 z-[10001] h-1.5 w-1.5 rounded-full bg-brand-ember"
+        className="cinematic-cursor-dot pointer-events-none fixed left-0 top-0 z-[91] h-1.5 w-1.5 rounded-full bg-brand-ember"
         style={{
           boxShadow: "0 0 8px rgba(240, 168, 104, 0.6)",
           willChange: "transform, opacity",

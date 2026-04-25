@@ -142,6 +142,110 @@ async def agent_stream(body: dict):
     )
 
 
+# ── /api/session/start — mode-aware boot (demo vs normal) ────────────────
+
+
+@app.post("/api/session/start")
+async def session_start(body: dict | None = None):
+    """
+    Start a new SceneOS session in either 'demo' or 'normal' mode.
+
+    Request:
+      {
+        mode: "demo" | "normal",                  // required
+        masterPromptOverride?: string,            // optional power-user override
+        promptId?: string,                        // optional pin to a specific curated prompt
+        aspectRatio?: "16:9" | "9:16" | "1:1"     // default "16:9"
+      }
+
+    Response (normal):
+      { projectId, mode: "normal", masterPrompt, videoType, manifest, normalPromptId }
+
+    Response (demo):
+      { projectId, mode: "demo", masterPrompt, videoType, manifest, demoPromptId,
+        speculativeJobs: { beatId: {jobId, provider, pollAfterMs, motionPreset, ...} } }
+
+    In demo mode the response is large because the backend has already
+    fanned out all 7 beat pipelines in parallel. The frontend can poll
+    /api/status/<jobId> for each immediately. When the agent eventually
+    calls markSufficient for a beat, /api/orchestrate/<beatId> returns
+    the pre-warmed job — no new work happens.
+    """
+    from . import session as session_service
+
+    body = body or {}
+    raw_mode = (body.get("mode") or "demo").strip().lower()
+    if raw_mode not in {"demo", "normal"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f'mode must be "demo" or "normal" (got {raw_mode!r})',
+        )
+    aspect_ratio = body.get("aspectRatio") or "16:9"
+
+    try:
+        return await session_service.start_session(
+            mode=raw_mode,  # type: ignore[arg-type]
+            master_prompt_override=body.get("masterPromptOverride"),
+            prompt_id=body.get("promptId"),
+            aspect_ratio=aspect_ratio,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[session/start] failed")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Session start failed",
+                "details": str(exc),
+                "hint": "Set MOCK_MODE=true to skip provider calls. In demo mode the speculative kickoff exercises Imagen + the active provider.",
+            },
+        ) from exc
+
+
+# ── /api/session/{project_id} — reconcile state on refresh ─────────────────
+
+
+@app.get("/api/session/{project_id}")
+async def session_get(project_id: str):
+    """
+    Reconcile a frontend's in-memory state with the backend's session cache.
+
+    Returns the cached manifest, projectRefs, and speculative jobs for a
+    known projectId. The frontend uses this on refresh / late-join so it
+    can pick up the agent loop without re-priming /api/session/start
+    (which would burn another Imagen call + 7 video submissions in demo
+    mode).
+
+    Status codes:
+      200: { projectId, mode, masterPrompt, videoType, manifest,
+             projectRefs?, speculativeJobs? }
+      404: { error: "Unknown projectId" }
+    """
+    from . import session as session_service
+    sess = session_service.get_session(project_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail={"error": "Unknown projectId"})
+    response = {
+        "projectId": project_id,
+        "mode": sess.get("mode"),
+        "masterPrompt": sess.get("masterPrompt"),
+        "videoType": sess.get("videoType"),
+        "createdAt": sess.get("createdAt"),
+        "manifest": sess.get("manifest"),
+    }
+    if sess.get("demoPromptId"):
+        response["demoPromptId"] = sess["demoPromptId"]
+    if sess.get("normalPromptId"):
+        response["normalPromptId"] = sess["normalPromptId"]
+    if sess.get("projectRefs") is not None:
+        response["projectRefs"] = sess["projectRefs"]
+    spec = session_service.all_speculative_jobs(project_id)
+    if spec:
+        response["speculativeJobs"] = spec
+    return response
+
+
 # ── /api/orchestrate/{beat_id} — deterministic per-beat pipeline ──────────
 
 
@@ -177,8 +281,32 @@ async def orchestrate(beat_id: str, body: dict):
     if beat is None:
         raise HTTPException(status_code=404, detail=f"beatId {beat_id} not found in manifest")
 
+    # ── Speculative-job lookup (demo mode) ──────────────────────────────
+    # If this manifest came from /api/session/start with mode=demo, the
+    # beat was already kicked off at session-start. Return that job
+    # immediately and skip all new work — this is what makes demo mode
+    # hit the 3-4 minute budget.
+    from . import session as session_service
+    project_id = manifest.get("projectId")
+    if project_id:
+        existing = session_service.get_speculative_job(project_id, beat_id)
+        if existing and not existing.get("error"):
+            # Mark the response so the visualizer can show a "pre-warmed"
+            # badge instead of a fresh-render badge.
+            return {**existing, "speculativeReused": True}
+
     if mock_mode():
         # Mock branch: skip Imagen + provider, return deterministic stub mirroring the live shape.
+        # We honor the same project-refs contract as the live branch so
+        # tests + the visualizer see identical shapes between mock and
+        # real mode. Project refs come from ensure_project_refs() —
+        # which itself uses the mock-refs synth when MOCK_MODE=true.
+        project_refs = await session_service.ensure_project_refs(
+            project_id=project_id,
+            character_description=beat_facts.get("characterDescription"),
+            location_description=beat_facts.get("locationDescription"),
+            aspect_ratio=aspect_ratio,
+        )
         chain = orchestrator.decide_chain(manifest, beat, previous_last_frame_url)
         motion_preset = pick_motion_preset(beat_facts.get("mood") or beat.get("archetype", {}).get("mood", "cinematic"))
         clip_prompt = orchestrator.compose_clip_prompt(beat, beat_facts, motion_preset, aspect_ratio)
@@ -186,7 +314,31 @@ async def orchestrate(beat_id: str, body: dict):
         scenes = beat.get("scenes") or []
         scene_id = (scenes[0] or {}).get("sceneId") if scenes else f"{beat_id}-scene-1"
         cloud = env("CLOUDINARY_CLOUD_NAME") or "demo"
-        seed = previous_last_frame_url if chain else f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg"
+
+        if project_refs and (project_refs.get("character") or project_refs.get("location")):
+            # Project refs win over chaining (same priority as the live
+            # orchestrator). The framing-based pick keeps wide framings
+            # routed to the location ref.
+            character_ref, location_ref, seed = orchestrator._pick_seed_for_framing(
+                beat_facts.get("framing") or motion_preset.get("composition"),
+                project_refs,
+            )
+            shared_refs = True
+        else:
+            shared_refs = False
+            seed = previous_last_frame_url if chain else f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg"
+            character_ref = None if chain else {
+                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg",
+                "publicId": f"mock::character-{beat_id}",
+                "kind": "character",
+                "prompt": "[mock] cinematic character reference",
+            }
+            location_ref = None if chain else {
+                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/couple.jpg",
+                "publicId": f"mock::location-{beat_id}",
+                "kind": "location",
+                "prompt": "[mock] cinematic location reference",
+            }
         return {
             "sceneId": scene_id,
             "jobId": mock_service.deterministic_job_id("mock", f"{beat['template']}-{scene_id}"),
@@ -194,31 +346,39 @@ async def orchestrate(beat_id: str, body: dict):
             "pollAfterMs": 800,
             "chainFromPrevious": chain,
             "seedImageUrl": seed,
-            "characterRef": None if chain else {
-                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg",
-                "publicId": f"mock::character-{beat_id}",
-                "kind": "character",
-                "prompt": "[mock] cinematic character reference",
-            },
-            "locationRef": None if chain else {
-                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/couple.jpg",
-                "publicId": f"mock::location-{beat_id}",
-                "kind": "location",
-                "prompt": "[mock] cinematic location reference",
-            },
+            "characterRef": character_ref,
+            "locationRef": location_ref,
+            "sharedRefs": shared_refs,
             "motionPreset": motion_preset,
             "clipPrompt": clip_prompt,
             "refinedPrompt": refined_prompt,
         }
 
     try:
-        return await orchestrator.run_beat_pipeline(
+        # Look up (or generate-and-cache) the project-level character +
+        # location refs. In demo mode this was already populated at
+        # /api/session/start. In normal mode this is the lazy first-time
+        # generation triggered by the first markSufficient that ships
+        # characterDescription / locationDescription.
+        project_refs = await session_service.ensure_project_refs(
+            project_id=project_id,
+            character_description=beat_facts.get("characterDescription"),
+            location_description=beat_facts.get("locationDescription"),
+            aspect_ratio=aspect_ratio,
+        )
+        result = await orchestrator.run_beat_pipeline(
             manifest=manifest,
             beat_id=beat_id,
             beat_facts=beat_facts,
             previous_last_frame_url=previous_last_frame_url,
             aspect_ratio=aspect_ratio,
+            project_refs=project_refs,
         )
+        # Cache it under the projectId so subsequent calls (e.g. retries)
+        # hit the same job without re-submitting.
+        if project_id:
+            session_service.set_speculative_job(project_id, beat_id, result)
+        return result
     except Exception as exc:
         logger.exception("[orchestrate] failed for beat %s", beat_id)
         raise HTTPException(
@@ -327,23 +487,27 @@ async def generate(body: dict):
             "pollAfterMs": 800,
         }
 
-    name, impl = get_provider()
+    from .provider import dispatch_with_fallback
     try:
-        result = await impl.generate(body)
+        name, result, original, reason = await dispatch_with_fallback(body)
         provider_job_id = result["jobId"]
-        return {
+        response: dict = {
             "jobId": encode_job_id(name, provider_job_id),
             "provider": name,
             "pollAfterMs": poll_after_ms_for(name),
         }
+        if original:
+            response["originalProvider"] = original
+            response["fallbackReason"] = reason
+        return response
     except Exception as exc:
-        logger.exception("[generate] provider %s failed", name)
+        logger.exception("[generate] all providers failed")
         raise HTTPException(
             status_code=502,
             detail={
-                "error": f"Provider \"{name}\" submission failed",
+                "error": "Generation submission failed (primary + cached fallback)",
                 "details": str(exc),
-                "hint": "Set MOCK_MODE=true for instant canned data, or GENERATION_PROVIDER=cached.",
+                "hint": "Set MOCK_MODE=true for instant canned data, or populate cached.DEMO_TRAILER_CLIPS.",
             },
         ) from exc
 
@@ -470,7 +634,18 @@ def stitch(body: dict):
         }
         for item in approved
     ]
-    final_url = build_splice_url(clips, body.get("audioPublicId"))
+    # Audio resolution order: explicit body.audioPublicId > manifest.audioPublicId
+    # > picked-by-mood from audio.pick_music. The session-start path stamps
+    # the manifest field so this is usually a no-op; the body override is
+    # for power-user / external callers.
+    audio_public_id = body.get("audioPublicId") or manifest.get("audioPublicId")
+    if not audio_public_id:
+        from . import audio as audio_service
+        audio_public_id = audio_service.pick_music(
+            manifest.get("videoType", "story"),
+            mood="auto",
+        )
+    final_url = build_splice_url(clips, audio_public_id)
     if not final_url:
         raise HTTPException(status_code=500, detail="Failed to build splice URL")
 
@@ -479,6 +654,7 @@ def stitch(body: dict):
         "finalUrl": final_url,
         "thumbnailUrl": build_thumbnail_url(clips[0]["publicId"]),
         "durationSeconds": duration_seconds,
+        "audioPublicId": audio_public_id,
     }
 
 

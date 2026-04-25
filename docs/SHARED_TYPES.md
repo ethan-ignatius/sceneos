@@ -1,7 +1,7 @@
 # SceneOS — Shared Types
 
 > Source of truth for TypeScript interfaces shared between `frontend/` and `backend/`.
-> Last updated: 2026-04-25.
+> Last updated: 2026-04-25 (round 4 — modern surface appendix at section 9 supersedes older session/agent/orchestrate definitions where they conflict).
 
 These types are duplicated in:
 - `frontend/src/types/manifest.ts`
@@ -384,3 +384,205 @@ export const MAX_POLL_DURATION_MS = 5 * 60 * 1000;
 export const SUFFICIENCY_MIN_QUESTIONS = 2;
 export const SUFFICIENCY_MAX_QUESTIONS = 6;
 ```
+
+---
+
+## 9. Modern surface (round 4, 2026-04-25)
+
+The frontend should use these endpoints + types. Where they conflict with sections 1–4 above (e.g. `VideoType`, `AgentResponse`), this section wins.
+
+### 9.1. Updated `VideoType` + `Manifest`
+
+```ts
+/** Backend-canonical as of 2026-04-25. "story" is the primary path. */
+export type VideoType = "story" | "trailer" | "short" | "feature";
+
+export type SessionMode = "demo" | "normal";
+
+export interface Manifest {
+  projectId: string;
+  videoType: VideoType;
+  masterPrompt: string;
+  createdAt: string;
+  beats: Beat[];
+  /** Stamped by /api/session/start. Read by agent + orchestrator + visualizer. */
+  mode?: SessionMode;
+  /**
+   * Picked by /api/session/start (mood/videoType-based) and stamped on the
+   * manifest. /api/stitch/url uses this as the audio overlay if no explicit
+   * `audioPublicId` is in the stitch body.
+   */
+  audioPublicId?: string;
+  finalCloudinaryUrl?: string;
+  thumbnailUrl?: string;
+  durationSeconds?: number;
+}
+```
+
+`BeatTemplate` adds the 7 `story.*` templates: `story.hook`, `story.exposition`, `story.inciting`, `story.rising`, `story.climax`, `story.falling`, `story.resolution`.
+
+### 9.2. `POST /api/session/start`
+
+```ts
+export interface SessionStartRequest {
+  mode: SessionMode;                 // required
+  masterPromptOverride?: string;
+  promptId?: string;                 // pin to a curated prompt
+  aspectRatio?: "16:9" | "9:16" | "1:1";  // default "16:9"
+}
+
+export interface SessionStartResponse {
+  projectId: string;
+  mode: SessionMode;
+  masterPrompt: string;
+  videoType: VideoType;
+  manifest: Manifest;
+  demoPromptId?: string;             // demo only
+  normalPromptId?: string;           // normal only
+  projectRefs?: ProjectRefs;         // demo only — character + location
+  speculativeJobs?: Record<string, SpeculativeJob>; // demo only — keyed by beatId
+}
+
+export interface ProjectRef {
+  imageUrl: string;
+  publicId: string;
+  kind: "character" | "location";
+  prompt: string;
+  stub?: boolean;                    // true when Imagen safety-filtered
+  degraded?: string;
+}
+
+export interface ProjectRefs {
+  character: ProjectRef | null;
+  location: ProjectRef | null;
+}
+```
+
+In demo mode the response is large because the backend has already fanned out all 7 beat pipelines in parallel. The frontend can poll `/api/status/{jobId}` for each immediately. When the agent eventually calls `markSufficient` for a beat, `/api/orchestrate/{beatId}` returns the pre-warmed job — no new work happens. The speculative-kickoff phase is bounded at 90s; on timeout each missing beat ships `{ speculative: true, error: "timeout" }`.
+
+### 9.3. `GET /api/session/{projectId}`
+
+Reconcile a frontend's in-memory state with the backend's session cache after a refresh / late-join. Avoids burning a fresh Imagen call + 7 video submissions in demo mode.
+
+```ts
+export interface SessionGetResponse {
+  projectId: string;
+  mode: SessionMode;
+  masterPrompt: string;
+  videoType: VideoType;
+  createdAt: string;
+  manifest: Manifest;
+  demoPromptId?: string;
+  normalPromptId?: string;
+  projectRefs?: ProjectRefs;
+  speculativeJobs?: Record<string, SpeculativeJob>;
+}
+```
+
+`404` when the projectId is unknown.
+
+### 9.4. `POST /api/agent/stream` (SSE)
+
+Server-Sent Events stream of one agent turn. Frontend consumes via `fetch` + `ReadableStream` (POST body, so `EventSource` doesn't apply).
+
+Body is the same shape as `/api/agent` (`AgentRequest`). Events:
+
+```ts
+export type AgentStreamEvent =
+  | { type: "ready" }
+  | { type: "thought"; chunk: string }
+  | { type: "tool_call"; name: string; args: Record<string, unknown> }
+  | ({ type: "result" } & AgentResponse)
+  | { type: "error"; message: string }
+  | { type: "done" };
+```
+
+`AgentResponse` itself now has `suggestedAnswers` on the `question` branch and `beatFacts` on the `sufficient` branch:
+
+```ts
+export interface BeatFacts {
+  subject?: string;
+  action?: string;
+  setting?: string;
+  framing?: string;
+  mood?: string;
+  characterDescription?: string;     // for Imagen reference image
+  locationDescription?: string;      // for Imagen reference image
+}
+
+export type AgentResponse =
+  | { kind: "question"; question: string; reasoning: string; estimatedRemaining: number; suggestedAnswers?: [string, string, string] }
+  | { kind: "sufficient"; refinedPrompt: string; sceneSummary: string; suggestedDuration: number; beatFacts?: BeatFacts };
+```
+
+### 9.5. `POST /api/orchestrate/{beatId}`
+
+Runs the deterministic per-beat pipeline: `beatFacts` → motion preset → reference images (or shared project refs) → clipPrompt → provider.generate(). The frontend calls this AFTER the agent emits `kind: "sufficient"`. In demo mode the call returns the pre-warmed speculative job — no new work.
+
+```ts
+export interface OrchestrateRequest {
+  manifest: Manifest;
+  beatFacts: BeatFacts;
+  /** From the previous beat's /api/status response — enables I2V chaining. */
+  previousLastFrameUrl?: string;
+  aspectRatio?: "16:9" | "9:16" | "1:1";
+}
+
+export interface OrchestrateResponse {
+  sceneId: string;
+  jobId: string;
+  provider: GenerationProvider;
+  pollAfterMs: number;
+  chainFromPrevious: boolean;
+  seedImageUrl?: string | null;
+  characterRef?: ProjectRef | null;
+  locationRef?: ProjectRef | null;
+  sharedRefs: boolean;               // true when project_refs were used
+  motionPreset: Record<string, string>;
+  clipPrompt: ClipPrompt;
+  refinedPrompt: string;
+  speculativeReused?: boolean;       // demo cache hit
+  /** Set when active provider failed and `cached` was used instead. */
+  originalProvider?: GenerationProvider;
+  fallbackReason?: string;
+}
+```
+
+### 9.6. `POST /api/references/generate`
+
+Single-call Imagen 3 generation (character or location). Use this if you want to run Imagen on demand outside the orchestrator (e.g. user clicks "regenerate character" in the UI).
+
+```ts
+export interface ReferenceGenerateRequest {
+  kind: "character" | "location";
+  description: string;
+  projectId?: string;
+  beatId?: string;
+  aspectRatio?: "16:9" | "9:16" | "1:1";
+}
+
+export type ReferenceGenerateResponse = ProjectRef;
+```
+
+### 9.7. `GET /api/status/{jobId}` — `lastFrameUrl`
+
+`StatusResponse` adds:
+
+```ts
+/**
+ * Cloudinary `so_99p` derivative — near-final frame of the clip as a JPG.
+ * Set when status === "succeeded" AND clipPublicId is set. Pass to the
+ * next beat's /api/orchestrate as `previousLastFrameUrl` to chain.
+ */
+lastFrameUrl?: string;
+```
+
+### 9.8. `POST /api/stitch/url` — `audioPublicId`
+
+`StitchResponse` echoes back the audio overlay used:
+
+```ts
+audioPublicId?: string;
+```
+
+The frontend can show "Soundtrack: …" in the export confirmation UI.
