@@ -104,66 +104,26 @@ Per spec §6.2:
 
 ## 5. Horizontal pointer-drag with inertial decay
 
-Per spec §6.3, the thumbnail row supports horizontal drag with inertia. We don't need `useScrollVelocity` for this — that hook is wheel/touch-driven and writes to `progressRef` for use in canvas/scroll surfaces. For thumbnail drag, native `overflow-x-auto` plus a small pointer-down handler is cleaner.
+Per spec §6.3, the thumbnail row supports horizontal drag with inertia. We don't reuse `useScrollVelocity` — that's wheel/touch-driven and writes to a 0..1 progress ref for canvas/scroll surfaces. Pointer drag reads/writes `el.scrollLeft` directly, a different operation. Each gets its own primitive.
 
-```ts
-const containerRef = useRef<HTMLDivElement>(null);
-const stateRef = useRef({
-  active: false,
-  startX: 0,
-  scrollLeft: 0,
-  lastX: 0,
-  lastT: 0,
-  velocity: 0,
-});
+The hook lives at `lib/use-pointer-drag.ts` and takes the container ref directly. All listener wiring + RAF inertia + cleanup is encapsulated:
 
-const onPointerDown = (e: PointerEvent) => {
-  const el = containerRef.current; if (!el) return;
-  el.setPointerCapture(e.pointerId);
-  stateRef.current = {
-    active: true,
-    startX: e.clientX,
-    scrollLeft: el.scrollLeft,
-    lastX: e.clientX,
-    lastT: performance.now(),
-    velocity: 0,
-  };
-};
-
-const onPointerMove = (e: PointerEvent) => {
-  const s = stateRef.current; const el = containerRef.current;
-  if (!s.active || !el) return;
-  const dx = e.clientX - s.startX;
-  el.scrollLeft = s.scrollLeft - dx;
-  // Track instantaneous velocity for the post-release decay.
-  const now = performance.now();
-  const dt = Math.max(now - s.lastT, 1);
-  s.velocity = (e.clientX - s.lastX) / dt; // px per ms
-  s.lastX = e.clientX;
-  s.lastT = now;
-};
-
-const onPointerUp = () => {
-  const s = stateRef.current; const el = containerRef.current;
-  if (!s.active || !el) return;
-  s.active = false;
-  // Inertia: apply remaining velocity with exponential decay.
-  let v = s.velocity * 16; // px per frame at 60fps
-  const decay = () => {
-    if (Math.abs(v) < 0.2 || !el) return;
-    el.scrollLeft -= v;
-    v *= 0.92;
-    requestAnimationFrame(decay);
-  };
-  requestAnimationFrame(decay);
-};
+```tsx
+const thumbsRef = useRef<HTMLDivElement>(null);
+usePointerDrag(thumbsRef);
 ```
 
-**Why not use the existing `useScrollVelocity`?** That hook's contract is wheel/touch wheel + progress 0..1 for scroll-based animations. Pointer drag for a horizontal scroll container is a different operation: it reads/writes `el.scrollLeft` directly. Reusing the hook would force ugly conversions. The drag pattern above is ~30 lines, custom-fit, no abstractions. Keep them separate.
+The hook's `useEffect([ref, decay, minVelocity])` registers `pointerdown` / `pointermove` / `pointerup` / `pointercancel` once per mount. On release, it runs an exponential-decay RAF loop (default decay 0.92, min velocity 0.2 px/frame). Boundary clamps kill inertia rather than bounce.
 
-**Cursor:** `cursor: grab`; `cursor: grabbing` while dragging. Add via `data-dragging` attribute or a state class.
+**Why ref-in, not register-out:** an earlier draft returned `{ register }` from the hook, which the consumer called inside its own `useEffect`. The returned object was unstable across renders → effect re-fired every render → listeners thrashed. Taking the ref directly puts all wiring inside the hook's own stable effect. One-liner consumer, no footguns.
 
-**A11y:** native scroll still works (mousewheel, trackpad, focus + arrow keys). Drag is just an enhancement.
+**Pointer button gate:** only `e.button === 0` (left mouse / primary touch) starts a drag. Trackpad two-finger horizontal scroll fires *wheel* events, not pointerdown — so we don't intercept it.
+
+**Touch-action:** the consumer must set `style={{ touchAction: "pan-y" }}` on the container so vertical page scrolls starting from inside the row are preserved on touch devices. Without that, the `setPointerCapture` would hijack vertical drags and block native scroll.
+
+**Cursor:** `cursor: grab`; `cursor: grabbing` while dragging via `data-dragging="true"` attribute the hook sets, paired with Tailwind's `data-[dragging=true]:cursor-grabbing` selector.
+
+**A11y:** native scroll still works (mousewheel, trackpad, focus + arrow keys). The container also gets `tabIndex={0}` so keyboard users can focus and arrow-scroll. Drag is an enhancement, never the only path.
 
 ---
 

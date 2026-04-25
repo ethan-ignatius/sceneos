@@ -21,6 +21,15 @@ interface BeatGraphState {
    * just because they want a different take.
    */
   regenerateScene: (beatId: string, sceneId: string) => void;
+  /**
+   * Patches the final cinematic URL + thumbnail + duration on the manifest
+   * after /api/stitch/url succeeds. Drives the FinalDeliveryRoute.
+   */
+  setFinalCinematic: (params: {
+    finalUrl: string;
+    thumbnailUrl: string;
+    durationSeconds: number;
+  }) => void;
   reset: () => void;
 }
 
@@ -133,6 +142,19 @@ export const useBeatGraphStore = create<BeatGraphState>()(
                 ),
               };
             }),
+          },
+        });
+      },
+
+      setFinalCinematic: ({ finalUrl, thumbnailUrl, durationSeconds }) => {
+        const m = get().manifest;
+        if (!m) return;
+        set({
+          manifest: {
+            ...m,
+            finalCloudinaryUrl: finalUrl,
+            thumbnailUrl,
+            durationSeconds,
           },
         });
       },

@@ -26,6 +26,7 @@ Read in this order:
 10. [`docs/AGENT_FLOW.md`](docs/AGENT_FLOW.md) — Phase 4 lesson reflection: drawer stagger, sequential char reveal, status-as-state-machine, agent + generation API wiring, polling pattern. Read before touching the drawer or agent stream.
 11. [`docs/VIDEO_PLAYER.md`](docs/VIDEO_PLAYER.md) — Phase 5 lesson reflection: HTMLVideoElement API, custom skinned player, click-to-seek progress, edge-underline button hover, regen-via-state-machine. Read before touching the clip preview surface.
 12. [`docs/STITCH_TRAY.md`](docs/STITCH_TRAY.md) — Phase 6 lesson reflection (the Cloudinary moment): fl_splice URL anatomy, ref-based diff for live URL typewriter, pointer-drag with RAF inertia, mood-tinted thumbnails. Read before touching the stitch tray.
+13. [`docs/FINAL_DELIVERY.md`](docs/FINAL_DELIVERY.md) — Phase 7 lesson reflection: route-level fade-to-cinema, `fl_attachment` for forced download, `api.cutosImport` handoff, cross-store reset before navigate, ref-based parallax with `useReducedMotion`. Read before touching the final delivery route.
 7. [`docs/FRONTEND_TODO.md`](docs/FRONTEND_TODO.md) — ranked, motion-rich execution list with acceptance criteria.
 8. [`docs/FRONTEND_BUILDOUT.md`](docs/FRONTEND_BUILDOUT.md) — surface-by-surface buildout guide.
 9. [`docs/MOCK_BACKEND.md`](docs/MOCK_BACKEND.md) — mock backend contract: how the FE always talks to a real backend, even with no keys.

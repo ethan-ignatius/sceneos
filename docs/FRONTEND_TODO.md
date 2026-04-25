@@ -262,20 +262,33 @@ The third winning moment. Three items shipped + a new primitive (`usePointerDrag
 
 ---
 
-## Phase 7 — Final delivery
+## Phase 7 — Final delivery ✅ COMPLETE (2026-04-25)
 
-### 7.1 🔴 Final-delivery route — 1h
-- **Surface:** new `routes/final-delivery-route.tsx`
-- **Spec:**
-  - Fade-to-cinema: 250ms black wipe between Stitch tray and the cinematic.
-  - Title `Your cinematic.` slides up + fades in.
-  - Custom video player (from 5.1) at 70vw width, autoplay.
-  - Three actions: Download MP4, Copy share link, Open in CutOS.
-  - Subtle film-grain overlay on the entire screen.
-  - Bottom-right "Make another" returns to landing.
+The exhale. The delivered product. Both items shipped, plus the StitchTray Render-CTA wiring that was previously a no-op. Lesson reflection lives in [`FINAL_DELIVERY.md`](FINAL_DELIVERY.md).
 
-### 7.2 🟡 Subtle parallax on the cinematic frame — 0.3h
-- **Spec:** as the user scrolls past the player, the player itself translates 0 → -20px Y. Uses scroll-velocity hook.
+### 7.1 ✅ Final-delivery route — `routes/final-delivery-route.tsx`
+- New `/final` route registered in `App.tsx`. Guards on `manifest?.finalCloudinaryUrl` — if missing, redirects to `/`.
+- "Fade to cinema" is route content fading in over 250ms on a `bg-bg-base` route container — no black-overlay div needed; the absence of route transition + the staggered reveal reads as a wipe.
+- Headline: `<motion.h1>` "Your cinematic." with `text-display-lg` italic, `EASE.filmIn` slide-up + fade over `DURATIONS.cinematic` (0.72s) at 0.15s delay. The trailing period is intentional — it's a statement of fact, not a label.
+- Sub-line above the headline: mono caps tracking, `Delivered · {videoType} · {formatDuration}` — anchors the moment as concluded.
+- Reused `<VideoPlayer>` at `w-[70vw] max-w-[1200px]`, `autoPlay`, `muted={false}` (user-gesture is in scope from the prior Render click), with a "Final cut · Cloudinary fl_splice" caption pill.
+- Three actions: **Download MP4** (primary ember; uses `fl_attachment` Cloudinary transform to force `Content-Disposition: attachment`), **Copy share link** (ghost + edge-underline + clipboard + toast), **Open in CutOS** (ghost + edge-underline + `api.cutosImport` + `window.open(editUrl, "_blank", "noopener,noreferrer")` with inline loading state).
+- Below-the-fold metadata: master prompt + numbered beat manifest in mono. Documents what was made; gives the parallax something to scroll past.
+- "Make another" — bottom-right ghost with `btn--edge-underline`, ArrowRight icon. Resets BOTH stores (`useBeatGraphStore.reset()` and `usePromptStore.reset()`) before navigating to `/` — otherwise the persisted prompt-store would pre-fill the landing input with the previous session's text, and the user would start their new session with stale state leaking in.
+- Existing `.film-grain` overlay class applied to the route's `<main>` — visual rhyme with the landing. Bookends the experience.
+
+### 7.2 ✅ Subtle parallax on the player — same file
+- `useScrollVelocity({ clamp: [0, 1] })` registered on `window`. Each RAF tick, the player wrapper's `transform: translate3d(0, progress * -20px, 0)` is mutated directly via ref. No React re-renders per frame.
+- `willChange: transform` on the wrapper for compositor hints.
+- Honors `useReducedMotion()` — when reduced-motion is active, the parallax effect short-circuits and the player stays static.
+
+### 7.3 ✅ (bonus) Render CTA wired in StitchTray
+- The Phase 6 Render CTA was a UI-only toggle. Phase 7 wires `onClick → api.stitchUrl({ manifest }) → setFinalCinematic({ finalUrl, thumbnailUrl, durationSeconds }) → navigate("/final")`.
+- New `setFinalCinematic` store action patches the manifest's `finalCloudinaryUrl`, `thumbnailUrl`, `durationSeconds`.
+- Inline error state in the StitchTray when the API call fails (state reverts; user can retry).
+- `Loader2` spinner + "Stitching…" label while the call is in flight.
+
+**Phase 7 lessons banked (see `FINAL_DELIVERY.md`):** route-level entrance choreography without an overlay div, when to reuse vs replace `<VideoPlayer>` (autoplay sound-on after a user gesture is in scope), `download` attribute + `fl_attachment` belt-and-braces, cross-store reset rules (BOTH stores before navigate to avoid leak), `useReducedMotion()` from Motion to gate ref-based parallax, native `window.open` with `noopener,noreferrer` for external handoffs.
 
 ---
 

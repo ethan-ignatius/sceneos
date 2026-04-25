@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { X, Copy, Sparkles, ExternalLink } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { X, Copy, Sparkles, ExternalLink, Loader2 } from "lucide-react";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -14,6 +15,7 @@ import {
   buildThumbnailUrl,
   moodAccentColor,
 } from "@/lib/cloudinary";
+import { api, ApiError } from "@/lib/api";
 import { SPRING, DURATIONS, EASE } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -37,11 +39,15 @@ interface StitchTrayProps {
  * the sequential TextSplitter.
  */
 export function StitchTray({ onClose }: StitchTrayProps) {
+  const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
+  const setFinalCinematic = useBeatGraphStore((s) => s.setFinalCinematic);
   const approvedIds = useBeatGraphStore(selectApprovedClipPublicIds);
   const totalCount = manifest?.beats.length ?? 0;
   const approvedCount = approvedIds.length;
   const allReady = approvedCount === totalCount && totalCount > 0;
+  const [rendering, setRendering] = useState(false);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   const segments = buildSpliceUrlSegments(approvedIds);
 
@@ -70,10 +76,28 @@ export function StitchTray({ onClose }: StitchTrayProps) {
     toast.success("Cloudinary URL copied");
   };
 
-  // Drag-to-pan thumbnail row.
-  const drag = usePointerDrag();
+  const handleRender = async () => {
+    if (!manifest || !allReady || rendering) return;
+    setRendering(true);
+    setRenderError(null);
+    try {
+      const res = await api.stitchUrl({ manifest });
+      setFinalCinematic({
+        finalUrl: res.finalUrl,
+        thumbnailUrl: res.thumbnailUrl,
+        durationSeconds: res.durationSeconds,
+      });
+      navigate("/final");
+    } catch (err) {
+      setRenderError(err instanceof ApiError ? err.message : "Render failed.");
+      setRendering(false);
+    }
+  };
+
+  // Drag-to-pan thumbnail row. The hook handles register + cleanup inside
+  // its own useEffect — listeners attach exactly once per mount.
   const thumbsRef = useRef<HTMLDivElement>(null);
-  useEffect(() => drag.register(thumbsRef.current), [drag]);
+  usePointerDrag(thumbsRef);
 
   return (
     <motion.aside
@@ -107,7 +131,13 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             Drag-to-pan with inertial decay; native overflow-x stays intact. */}
         <div
           ref={thumbsRef}
-          className="flex cursor-grab gap-2 overflow-x-auto pb-1 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[dragging=true]:cursor-grabbing"
+          tabIndex={0}
+          aria-label="Beat thumbnails — drag or scroll horizontally"
+          // touch-action: pan-y → vertical page scroll starting from this
+          // row is preserved on touch devices; only horizontal pan/drag
+          // is captured by usePointerDrag.
+          style={{ touchAction: "pan-y" }}
+          className="flex cursor-grab gap-2 overflow-x-auto pb-1 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[dragging=true]:cursor-grabbing focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember-dim/60 rounded-md"
         >
           {manifest?.beats.map((b) => {
             const scene = b.scenes[0];
@@ -203,15 +233,28 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         </motion.div>
 
         <div className="flex flex-col gap-2">
+          {renderError ? (
+            <div
+              role="alert"
+              className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error"
+            >
+              {renderError}
+            </div>
+          ) : null}
           <Button
             size="md"
             variant="primary"
-            disabled={!allReady}
-            className={cn("w-full", allReady && "ember-pulse")}
+            disabled={!allReady || rendering}
+            onClick={handleRender}
+            className={cn("w-full", allReady && !rendering && "ember-pulse")}
             aria-label="Render the final cinematic"
           >
-            <Sparkles size={14} strokeWidth={1.5} aria-hidden="true" />
-            Render final cinematic
+            {rendering ? (
+              <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles size={14} strokeWidth={1.5} aria-hidden="true" />
+            )}
+            {rendering ? "Stitching…" : "Render final cinematic"}
           </Button>
           <Button
             size="sm"
