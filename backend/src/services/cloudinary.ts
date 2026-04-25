@@ -22,11 +22,18 @@ if (cloudName && apiKey && apiSecret) {
 
 const CLOUD = cloudName ?? "demo";
 
-interface BuildUrlOptions {
+export interface SpliceClip {
+  publicId: string;
   colorGrade?: string;
+}
+
+interface BuildUrlOptions {
   audioOverlay?: string;
   watermarkPublicId?: string;
+  normalize?: { width: number; height: number; mode?: "fill" | "pad" } | false;
 }
+
+const DEFAULT_NORMALIZE = { width: 1920, height: 1080, mode: "fill" as const };
 
 export interface SignedUploadParams {
   timestamp: number;
@@ -53,6 +60,44 @@ export function signUpload(folder = "sceneos/user-media"): SignedUploadParams {
   };
 }
 
+/**
+ * Build a Cloudinary fl_splice URL from ordered clips. Each clip can carry its
+ * own mood grade, and every clip is normalized to a common frame size before
+ * splicing so the video editor path tolerates mixed provider outputs.
+ */
+export function buildSpliceUrl(
+  clips: SpliceClip[],
+  options: BuildUrlOptions = {},
+): string | null {
+  if (clips.length === 0) return null;
+  const [base, ...overlays] = clips;
+
+  const segments: string[] = [];
+  segments.push(...clipSegments(base, options.normalize));
+
+  for (const overlay of overlays) {
+    const id = toLayerId(overlay.publicId);
+    const transforms = clipSegments(overlay, options.normalize);
+    if (transforms.length > 0) {
+      segments.push(`l_video:${id}`);
+      segments.push(...transforms);
+      segments.push("fl_layer_apply,fl_splice");
+    } else {
+      segments.push(`l_video:${id},fl_splice`);
+    }
+  }
+
+  if (options.audioOverlay) {
+    segments.push(`l_audio:${toLayerId(options.audioOverlay)}`);
+  }
+  if (options.watermarkPublicId) {
+    segments.push(`l_${toLayerId(options.watermarkPublicId)},g_south_east,x_24,y_24`);
+  }
+
+  const transformPath = segments.length ? `${segments.join("/")}/` : "";
+  return `https://res.cloudinary.com/${CLOUD}/video/upload/${transformPath}${base.publicId}.mp4`;
+}
+
 export async function uploadVideoFromUrl(
   remoteUrl: string,
   publicId: string,
@@ -67,6 +112,8 @@ export async function uploadVideoFromUrl(
     resource_type: "video",
     public_id: publicId,
     overwrite: true,
+    unique_filename: false,
+    use_filename: false,
   });
 
   return {
@@ -74,29 +121,6 @@ export async function uploadVideoFromUrl(
     url: result.secure_url,
     durationSeconds: typeof result.duration === "number" ? result.duration : 0,
   };
-}
-
-export function buildSpliceUrl(
-  orderedPublicIds: string[],
-  options: BuildUrlOptions = {},
-): string | null {
-  if (orderedPublicIds.length === 0) return null;
-
-  const [first, ...rest] = orderedPublicIds;
-  const overlays = rest
-    .map((id) => `l_video:${toLayerId(id)},fl_splice`)
-    .join("/");
-  const overlaySegment = overlays ? `${overlays}/` : "";
-
-  const modifiers: string[] = [];
-  if (options.colorGrade) modifiers.push(options.colorGrade);
-  if (options.audioOverlay) modifiers.push(`l_audio:${toLayerId(options.audioOverlay)}`);
-  if (options.watermarkPublicId) {
-    modifiers.push(`l_${toLayerId(options.watermarkPublicId)},g_south_east,x_24,y_24`);
-  }
-  const modifierSegment = modifiers.length ? `${modifiers.join("/")}/` : "";
-
-  return `https://res.cloudinary.com/${CLOUD}/video/upload/${modifierSegment}${overlaySegment}${first}.mp4`;
 }
 
 export function buildClipUrl(
@@ -151,6 +175,20 @@ export function publicIdForScene(args: {
   const beatId = sanitizeSegment(args.beatId ?? "unknown-beat");
   const sceneId = sanitizeSegment(args.sceneId ?? args.fallbackJobId);
   return `sceneos/${projectId}/${beatId}/${sceneId}`;
+}
+
+function clipSegments(
+  clip: SpliceClip,
+  normalize: BuildUrlOptions["normalize"],
+): string[] {
+  const out: string[] = [];
+  if (normalize !== false) {
+    const n = normalize ?? DEFAULT_NORMALIZE;
+    const mode = n.mode ?? "fill";
+    out.push(`c_${mode},w_${n.width},h_${n.height}`);
+  }
+  if (clip.colorGrade) out.push(clip.colorGrade);
+  return out;
 }
 
 function requireCloudinaryCredentials(caller: string): void {

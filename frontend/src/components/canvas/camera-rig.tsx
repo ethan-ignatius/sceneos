@@ -10,9 +10,11 @@ interface CameraRigProps {
   positions: Array<[number, number, number]>;
   activeBeatId: string | null;
   hoveredBeatId: string | null;
+  /** Camera z when no beat is active. Computed from beats.length so outer
+   *  beats stay in frustum (issue #161). */
+  overviewZ?: number;
 }
 
-const OVERVIEW_POS = new THREE.Vector3(0, 0.4, 5.5);
 const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
 
 /**
@@ -31,9 +33,13 @@ const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
  * Rationale for not using GSAP: see docs/CANVAS_3D.md §2. Per-frame
  * lerping handles continuous, multi-source state better than tweens.
  */
-export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId }: CameraRigProps) {
+export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overviewZ = 5.5 }: CameraRigProps) {
   const { camera } = useThree();
-  const targetPos = useRef(OVERVIEW_POS.clone());
+  const overviewPos = useRef(new THREE.Vector3(0, 0.4, overviewZ));
+  // Keep overview position in sync with the dynamic overviewZ — without this,
+  // the rig would lock the camera to the initial z (5.5 was hardcoded before).
+  overviewPos.current.set(0, 0.4, overviewZ);
+  const targetPos = useRef(overviewPos.current.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
   const reducedMotion = usePrefersReducedMotion();
 
@@ -52,7 +58,7 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId }: Cam
       targetPos.current.set(ax + 0.2, ay + 0.4, az + 1.2);
       targetLook.current.set(ax, ay, az);
     } else {
-      targetPos.current.copy(OVERVIEW_POS);
+      targetPos.current.copy(overviewPos.current);
       targetLook.current.copy(OVERVIEW_LOOK);
     }
 

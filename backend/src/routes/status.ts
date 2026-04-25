@@ -3,6 +3,7 @@ import type { GenerationProvider, JobStatus, StatusResponse } from "../types/api
 import { decodeJobId } from "../services/provider.js";
 import * as higgsfield from "../services/higgsfield.js";
 import * as kling from "../services/kling.js";
+import * as fal from "../services/fal.js";
 import * as replicate from "../services/replicate.js";
 import * as cached from "../services/cached-demo.js";
 import { isMockMode } from "../lib/mock-mode.js";
@@ -102,6 +103,8 @@ async function dispatchStatus(
       return higgsfield.getStatus(providerJobId);
     case "kling":
       return kling.getStatus(providerJobId);
+    case "fal":
+      return fal.getStatus(providerJobId);
     case "replicate":
       return replicate.getStatus(providerJobId);
     case "cached":

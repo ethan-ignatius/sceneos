@@ -42,11 +42,44 @@ src/
 └── types/               # mirror of frontend/src/types
 ```
 
-## Stub status
+## Status
 
-All routes return `501 Not Implemented` with a clear stub message. Implementation order recommended in `BACKEND_ARCHITECTURE.md` §10:
+| Endpoint | State | Notes |
+|---|---|---|
+| `POST /api/stitch/url` | ✅ wired | pure `fl_splice` URL builder |
+| `POST /api/generate` | ✅ wired | dispatches to active provider |
+| `GET /api/status/:jobId` | ✅ wired | polls + uploads to Cloudinary on success |
+| `POST /api/agent` | 🟡 stub | Ethan |
+| `POST /api/cutos/import` | 🟡 stub | stretch |
 
-1. `services/cloudinary.ts` + `POST /api/stitch/url` (easiest, pure)
-2. `services/higgsfield.ts` + `POST /api/generate` + `GET /api/status/:jobId`
-3. `services/agent.ts` + `POST /api/agent`
-4. `services/cutos.ts` + `POST /api/cutos/import` (stretch)
+### Generation provider tiers
+
+`services/provider.ts` dispatches based on `GENERATION_PROVIDER`:
+
+| Tier | When | Notes |
+|---|---|---|
+| `higgsfield` | recorded-demo (default) | best quality (Sora 2 / Veo 3.1), 60–180 s/clip — currently a stub |
+| `kling` | live-demo | direct Kling 3.0, 15–30 s/clip — currently a stub |
+| `replicate` | fallback | multi-model gateway — currently a stub |
+| `cached` | on-stage safety net | reads pre-rendered Cloudinary public_ids from `services/cached-demo.ts` |
+
+`MOCK_MODE` (auto-default when keys are missing) bypasses all of these and returns canned data from `mock/`. See `../docs/MOCK_BACKEND.md`.
+
+### End-to-end tests
+
+Mock mode works without any keys. The two scripts both require `jq` (`brew install jq`).
+
+```bash
+npm run dev:mock                 # one terminal — http://localhost:8787
+
+# Generation pipeline: POST /api/generate → poll → open Cloudinary URL
+./scripts/test-pipeline.sh
+./scripts/test-pipeline.sh "your prompt"
+
+# Stitch URL: POST /api/stitch/url → open the spliced result
+./scripts/test-stitch.sh
+./scripts/test-stitch.sh --color-grade
+./scripts/test-stitch.sh --audio samples/audio/<your-public-id>
+```
+
+Both scripts use Cloudinary's public `demo` cloud, so they produce playable URLs regardless of whether you've configured your own Cloudinary creds. Tunable env: `PORT`.

@@ -12,6 +12,7 @@ import type { GenerationProvider, JobStatus } from "../types/api.js";
 import type { HiggsfieldClipPrompt } from "../types/manifest.js";
 import * as higgsfield from "./higgsfield.js";
 import * as kling from "./kling.js";
+import * as fal from "./fal.js";
 import * as replicate from "./replicate.js";
 import * as cached from "./cached-demo.js";
 
@@ -38,6 +39,7 @@ export interface GenerateClipParams {
 const REGISTRY: Record<GenerationProvider, ProviderModule> = {
   higgsfield,
   kling,
+  fal,
   replicate,
   cached,
 };

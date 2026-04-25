@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Sparkles } from "lucide-react";
+import { X, Clapperboard } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
@@ -137,7 +137,10 @@ export function NodeDetailDrawer() {
               Beat {beatIndex + 1} of {totalBeats} · {beat.template.split(".")[0]}
             </div>
             <h2 className="mt-1 text-display-md italic text-fg-primary">{beat.beatName}</h2>
-            <p className="mt-2 max-w-prose font-body text-[0.875rem] leading-[1.55] text-fg-secondary">
+            {/* Description lifted to Fraunces italic 18px so the drawer header
+                reads as title card + voiceover, not form label + helper text.
+                See FINAL_HANDOFF §2.B / §5 P0.2. */}
+            <p className="mt-3 max-w-prose font-display italic text-[1.125rem] leading-[1.4] text-fg-secondary">
               {beat.archetype.intent}
             </p>
           </div>
@@ -169,25 +172,59 @@ export function NodeDetailDrawer() {
           )}
         </motion.div>
 
-        {/* Footer — pill + CTA. Hidden during generation; the panel speaks for itself. */}
+        {/* Footer — progress + CTA. Hidden during generation; the panel speaks for itself. */}
         {!isGenerating && !isPreview ? (
           <motion.footer
             variants={fadeUp}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-            className="space-y-3 border-t border-fg-tertiary/30 p-6"
+            className="space-y-4 border-t border-fg-tertiary/30 p-6"
           >
-            <div
-              className={cn(
-                "rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] transition-colors duration-300",
-                isReadyToGenerate
-                  ? "border-brand-ember/60 bg-brand-ember/10 text-brand-ember"
-                  : "border-fg-tertiary/40 text-fg-tertiary",
-              )}
-            >
-              {isReadyToGenerate
-                ? "Sufficient information collected"
-                : "More questions recommended"}
-            </div>
+            {/* Hairline progress bar replaces the bordered pill that read as
+                an empty input field. Ember fills L→R as the questionnaire
+                progresses. See FINAL_HANDOFF §2.C / §5 P0.3. */}
+            {(() => {
+              const userAnswers = beat.scenes[0]?.conversation.filter(
+                (t) => t.role === "user",
+              ).length ?? 0;
+              // Mock backend asks ~2 questions per beat; if the agent has
+              // already declared sufficient (status flipped) the answer is
+              // exactly userAnswers; otherwise estimate at least one more.
+              const totalQuestions = isReadyToGenerate
+                ? userAnswers
+                : Math.max(2, userAnswers + 1);
+              const ratio = totalQuestions === 0 ? 0 : userAnswers / totalQuestions;
+              return (
+                <div className="space-y-2">
+                  <div className="flex items-baseline justify-between">
+                    <span className="caption-track text-[10px] text-fg-tertiary">
+                      Director's questionnaire
+                    </span>
+                    <span className="caption-track text-[10px] tabular-nums text-fg-tertiary">
+                      {userAnswers.toString().padStart(2, "0")}{" "}
+                      <span className="text-fg-tertiary/50">/</span>{" "}
+                      {totalQuestions.toString().padStart(2, "0")}
+                    </span>
+                  </div>
+                  <div className="relative h-px overflow-hidden bg-fg-tertiary/20">
+                    <motion.div
+                      className={cn(
+                        "absolute inset-y-0 left-0 origin-left",
+                        isReadyToGenerate ? "bg-brand-ember" : "bg-brand-ember/70",
+                      )}
+                      initial={false}
+                      animate={{ width: `${Math.min(ratio, 1) * 100}%` }}
+                      transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+                    />
+                  </div>
+                  {isReadyToGenerate ? (
+                    <p className="caption-track text-[10px] text-brand-ember">
+                      <span className="text-brand-ember">●</span>
+                      <span className="ml-2">The scene has its blocking.</span>
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })()}
 
             {genError ? (
               <div className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error">
@@ -202,8 +239,8 @@ export function NodeDetailDrawer() {
               disabled={!isReadyToGenerate}
               onClick={handleGenerate}
             >
-              <Sparkles size={16} strokeWidth={1.5} />
-              Generate scene
+              <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
+              <span className="caption-track text-[12px]">Roll camera</span>
             </Button>
           </motion.footer>
         ) : null}

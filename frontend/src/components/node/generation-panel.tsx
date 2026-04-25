@@ -8,13 +8,14 @@ import type { GenerationProvider } from "@/types/api";
 interface GenerationPanelProps {
   /** Suggested duration in seconds — drives the `~est` part of the timer. */
   suggestedDurationSeconds: number;
-  /** Provider returned by /api/generate (cached/higgsfield/kling/replicate). */
+  /** Provider returned by /api/generate. */
   provider?: GenerationProvider | null;
 }
 
 const PROVIDER_LABEL: Record<GenerationProvider, string> = {
   higgsfield: "Higgsfield · live",
   kling: "Kling · live",
+  fal: "fal.ai · live",
   replicate: "Replicate · live",
   cached: "Cached · demo",
 };
