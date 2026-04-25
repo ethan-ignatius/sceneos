@@ -43,21 +43,31 @@ export async function importManifest(manifest: Manifest): Promise<{ projectId: s
   const baseUrl = process.env.CUTOS_BASE_URL ?? "http://localhost:3000";
   const token = process.env.CUTOS_API_TOKEN;
 
-  // TODO: when CutOS adds POST /api/projects/import-manifest, uncomment + verify.
-  // const res = await fetch(`${baseUrl}/api/projects/import-manifest`, {
-  //   method: "POST",
-  //   headers: {
-  //     "content-type": "application/json",
-  //     ...(token ? { authorization: `Bearer ${token}` } : {}),
-  //   },
-  //   body: JSON.stringify(payload),
-  // });
-  // if (!res.ok) throw new Error(`CutOS import failed: ${res.status}`);
-  // const { projectId } = (await res.json()) as { projectId: string };
-  // return { projectId, editUrl: `${baseUrl}/projects/${projectId}` };
+  if (payload.beats.length === 0) {
+    throw new Error("No approved clips with clipUrl available for CutOS import");
+  }
 
-  void payload;
-  void baseUrl;
-  void token;
-  throw new Error("services/cutos.ts: importManifest not implemented (CutOS endpoint missing)");
+  const res = await fetch(`${baseUrl}/api/projects/import-manifest`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`CutOS import failed: ${res.status} ${text.slice(0, 300)}`);
+  }
+
+  const body = (await res.json().catch(() => ({}))) as { projectId?: string; editUrl?: string };
+  if (!body.projectId) {
+    throw new Error("CutOS import response missing projectId");
+  }
+
+  return {
+    projectId: body.projectId,
+    editUrl: body.editUrl ?? `${baseUrl}/projects/${body.projectId}`,
+  };
 }

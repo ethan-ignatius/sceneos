@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { StitchRequest, StitchResponse } from "../types/api.js";
-import { buildSpliceUrl, totalDuration } from "../services/cloudinary.js";
+import { buildSpliceUrl, buildThumbnailUrl, totalDuration } from "../services/cloudinary.js";
 
 /**
  * POST /api/stitch/url
@@ -31,8 +31,7 @@ stitchRoute.post("/url", async (c) => {
 
   const response: StitchResponse = {
     finalUrl,
-    // TODO: derive a thumbnail URL via Cloudinary so_auto + jpg transformation.
-    thumbnailUrl: finalUrl.replace(".mp4", ".jpg"),
+    thumbnailUrl: buildThumbnailUrl(orderedPublicIds[0]),
     durationSeconds: totalDuration(manifest),
   };
   return c.json(response, 200);

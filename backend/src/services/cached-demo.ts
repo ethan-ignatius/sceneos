@@ -59,7 +59,7 @@ export async function getStatus(
   const cached = ACTIVE_JOBS.get(jobId);
   if (!cached) return { status: "failed", error: "Unknown cached job" };
   // Cached jobs always succeed immediately — that's the whole point.
-  return { status: "succeeded", clipUrl: cached.clipUrl };
+  return { status: "succeeded", clipUrl: cached.clipUrl, clipPublicId: cached.publicId };
 }
 
 /** Convenience for stitch tests — returns ordered public_ids of the demo trailer. */

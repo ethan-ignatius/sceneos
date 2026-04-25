@@ -3,10 +3,12 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { agentRoute } from "./routes/agent.js";
+import { decomposeRoute } from "./routes/decompose.js";
 import { generateRoute } from "./routes/generate.js";
 import { statusRoute } from "./routes/status.js";
 import { stitchRoute } from "./routes/stitch.js";
 import { cutosRoute } from "./routes/cutos.js";
+import { cloudinaryRoute } from "./routes/cloudinary.js";
 import { isMockMode, logMockBanner } from "./lib/mock-mode.js";
 
 const app = new Hono();
@@ -42,10 +44,12 @@ app.get("/api/health", (c) =>
 );
 
 app.route("/api/agent", agentRoute);
+app.route("/api/decompose", decomposeRoute);
 app.route("/api/generate", generateRoute);
 app.route("/api/status", statusRoute);
 app.route("/api/stitch", stitchRoute);
 app.route("/api/cutos", cutosRoute);
+app.route("/api/cloudinary", cloudinaryRoute);
 
 app.notFound((c) => c.json({ error: "Not Found" }, 404));
 app.onError((err, c) => {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { CutOSImportRequest, CutOSImportResponse } from "../types/api.js";
 import { isMockMode } from "../lib/mock-mode.js";
 import { mockCutosImport } from "../mock/index.js";
+import { importManifest } from "../services/cutos.js";
 
 /**
  * POST /api/cutos/import
@@ -23,9 +24,13 @@ cutosRoute.post("/import", async (c) => {
     return c.json(mockCutosImport(), 200);
   }
 
-  const stub: CutOSImportResponse = {
-    projectId: "stub-project",
-    editUrl: `${process.env.CUTOS_BASE_URL ?? "http://localhost:3000"}/projects/stub-project`,
-  };
-  return c.json(stub, 501);
+  try {
+    const response: CutOSImportResponse = await importManifest(body.manifest);
+    return c.json(response, 200);
+  } catch (err) {
+    return c.json(
+      { error: "CutOS import failed", details: (err as Error).message },
+      502,
+    );
+  }
 });
