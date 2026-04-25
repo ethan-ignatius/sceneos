@@ -84,7 +84,7 @@ export function AnnouncementBar({
           key={i}
           aria-hidden={i === active ? undefined : true}
           className={cn(
-            "absolute left-1/2 top-1/2 inline-flex items-center gap-2 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.24em] transition-[opacity,transform] duration-500 ease-out",
+            "absolute left-1/2 top-1/2 inline-flex items-center gap-2 whitespace-nowrap font-mono text-[10px] uppercase tracking-[0.18em] transition-[opacity,transform] duration-500 ease-out",
             i === active ? "opacity-100" : "opacity-0",
           )}
           style={{

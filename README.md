@@ -19,7 +19,16 @@ Read in this order:
 3. [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md) — service design, API contract, integrations.
 4. [`docs/FRONTEND_PHILOSOPHY.md`](docs/FRONTEND_PHILOSOPHY.md) — design language, motion system, component patterns.
 5. [`docs/MASTER_FRONTEND_DEV.md`](docs/MASTER_FRONTEND_DEV.md) — **the synthesis bible.** Decoded site exemplars, tools-vs-tools decisions, full pattern library, component bestiary, snippet library. Read this before anything else frontend-related.
-6. [`docs/MOTION_LANGUAGE.md`](docs/MOTION_LANGUAGE.md) — motion philosophy, timing/easing system, anti-patterns, cohesion checklist.
+6. [`docs/UI_FUNDAMENTALS.md`](docs/UI_FUNDAMENTALS.md) — **the static-design counterpart.** 60-30-10 audit, card rules, form rules, border-radius matching, title-case CTAs, practical typography, per-screen audit checklist.
+7. [`docs/MOTION_LANGUAGE.md`](docs/MOTION_LANGUAGE.md) — motion philosophy, timing/easing system, anti-patterns, cohesion checklist.
+8. [`docs/SHADERS_AUDIO.md`](docs/SHADERS_AUDIO.md) — Phase 2 lesson reflection: GSAP timelines, R3F screen-quad pattern, GLSL ember-burn shader, Web Audio synthesis. Read before touching the page-crumple surface.
+9. [`docs/CANVAS_3D.md`](docs/CANVAS_3D.md) — Phase 3 lesson reflection: custom camera rigs, Catmull-Rom splines, drei Sparkles + scroll-velocity bridge, ambient Web Audio loops. Read before touching the canvas surface.
+10. [`docs/AGENT_FLOW.md`](docs/AGENT_FLOW.md) — Phase 4 lesson reflection: drawer stagger, sequential char reveal, status-as-state-machine, agent + generation API wiring, polling pattern. Read before touching the drawer or agent stream.
+11. [`docs/VIDEO_PLAYER.md`](docs/VIDEO_PLAYER.md) — Phase 5 lesson reflection: HTMLVideoElement API, custom skinned player, click-to-seek progress, edge-underline button hover, regen-via-state-machine. Read before touching the clip preview surface.
+12. [`docs/STITCH_TRAY.md`](docs/STITCH_TRAY.md) — Phase 6 lesson reflection (the Cloudinary moment): fl_splice URL anatomy, ref-based diff for live URL typewriter, pointer-drag with RAF inertia, mood-tinted thumbnails. Read before touching the stitch tray.
+13. [`docs/FINAL_DELIVERY.md`](docs/FINAL_DELIVERY.md) — Phase 7 lesson reflection: route-level fade-to-cinema, `fl_attachment` for forced download, `api.cutosImport` handoff, cross-store reset before navigate, ref-based parallax with `useReducedMotion`. Read before touching the final delivery route.
+14. [`docs/POLISH_AUDIT.md`](docs/POLISH_AUDIT.md) — Phase 8 cohesion + polish methodology: perf bundle review, reduced-motion coverage matrix + fixes, visual cohesion rubric, soft-sound design philosophy. Read before any cross-cutting polish change.
+15. [`docs/STRETCH_DELIVERIES.md`](docs/STRETCH_DELIVERIES.md) — Phase 9 stretch reflection: hackathon-mode prioritization, CutOS handoff modal pattern, "How it works" judges-friendly walkthrough, explicit-skip-with-rationale for the original 9.1/9.3/9.4 items.
 7. [`docs/FRONTEND_TODO.md`](docs/FRONTEND_TODO.md) — ranked, motion-rich execution list with acceptance criteria.
 8. [`docs/FRONTEND_BUILDOUT.md`](docs/FRONTEND_BUILDOUT.md) — surface-by-surface buildout guide.
 9. [`docs/MOCK_BACKEND.md`](docs/MOCK_BACKEND.md) — mock backend contract: how the FE always talks to a real backend, even with no keys.

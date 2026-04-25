@@ -39,7 +39,9 @@ All foundation primitives are shipped. Every Phase 1+ task imports from these. F
 
 ---
 
-## Phase 1 — Landing surface (the first 30 seconds judges see)
+## Phase 1 — Landing surface ✅ COMPLETE (2026-04-25)
+
+The first 30 seconds judges see. All 7 items shipped across rounds 4–6. Surface lives at `frontend/src/routes/landing-route.tsx`.
 
 ### 1.1 🔴 Landing load choreography (the cinematic entrance) — 2h
 - **Surface:** `routes/landing-route.tsx`
@@ -66,206 +68,305 @@ All foundation primitives are shipped. Every Phase 1+ task imports from these. F
 - **Spec:** 30%-opacity radial gradient (320px radius, ember-warm) follows pointer. CSS-only via custom property updates.
 - **Acceptance:** cursor moves; warm halo follows; no jank; respects reduced-motion (turns off entirely).
 
-### 1.4 🟠 Input field — focus + character-rhythm — 0.5h
-- **Spec:**
-  - On focus: underline draws from left (already in 1.1, but post-load this is on-focus).
-  - On every keystroke: a 60ms ember-tinted underline pulse (subtle).
-  - Placeholder fades in/out with `quick` instead of cutting.
+### 1.4 ✅ Input field — focus + character-rhythm
+- Three-layer underline: (1) base track at 40% fg-tertiary, (2) draw-in ember layer that scales-X on focus or has-content, (3) keystroke pulse that re-mounts per keystroke for a brief 180ms brightness boost. See `routes/landing-route.tsx`.
 
-### 1.5 🟡 Pill selection — sliding ember underline (`layoutId`) — 0.5h
-- **Spec:** Motion's `layoutId` shared between the three pills' underlines so the active indicator slides between them on click instead of cutting. Spring `bubble`.
+### 1.5 ✅ Pill selection — sliding ember underline via `layoutId`
+- Active pill renders a `motion.span` with `layoutId="pill-active-bg"`. Only one pill renders it at a time (the active one); Motion morphs the box between pills using a 380/30 spring. The result is the sliding ember background that follows the click. See `routes/landing-route.tsx`.
 
-### 1.6 🟡 Subtle background ember radial-pulse — 0.3h
-- **Spec:** the existing ember radial gradient pulses 40%→60%→40% over 6s. Almost imperceptible but reads as "alive." Single keyframe.
+### 1.6 ✅ Subtle background ember radial-pulse
+- Already shipped in round 4. `motion.div` cycles opacity 0.4 → 0.7 → 0.4 over 6s, infinite. Behind everything else.
 
-### 1.7 🟢 Easter-egg long-press on version label opens demo project — 0.3h
-- **Spec:** holding the bottom-left "SceneOS · v0" for 1s triggers the cached demo trailer. Useful for judges who poke; safety net.
+### 1.7 ✅ Easter-egg long-press on version label opens demo project
+- `useLongPress` hook + version label button. Hold for 1s to load the cached demo project (`DEMO_PROMPT` + trailer + initialize). Visible thin ember progress bar fills under the label while held. See `lib/use-long-press.ts` and `routes/landing-route.tsx`.
 
----
-
-## Phase 2 — Page-crumple transition (THE showpiece)
-
-### 2.1 🔴 GSAP timeline upgrade — 1.5h
-- **Surface:** `routes/crumple-bridge-route.tsx`
-- **Spec:** see `MOTION_LANGUAGE.md` §6.2. Six tracks running in parallel; total 1.6s.
-  - Track A (0–0.18s): ember-flash gradient ignites.
-  - Track B (0–0.95s): landing content collapse (scale + rotate + translate + blur + opacity).
-  - Track C (0.50–1.20s): canvas page mounts beneath, fades up.
-  - Track D (0.40–0.80s): ember-flash fades.
-  - Track E (0.20–1.40s, optional Plan A): GLSL paper-curl shader.
-  - Track F (1.40–1.60s): final settle.
-- **Acceptance:** GSAP timeline composed once and `play()`ed on mount. `onComplete` navigates to `/canvas`. No double-mount, no flash of unstyled canvas.
-
-### 2.2 🟠 Plan A: GLSL paper-curl shader — 3h (stretch)
-- **Surface:** new `components/transition/paper-curl-canvas.tsx`
-- **Spec:**
-  - Snapshot the landing DOM via `html-to-image` → `data:image/png` → `THREE.Texture`.
-  - Mount a full-viewport `<Plane>` in R3F with a custom fragment shader that applies a curl distortion uniformly seeded by a `uCurlAngle` uniform animated 0 → π by GSAP.
-  - Optional: a noise mask that simulates the paper "burning" along the curl edge with an ember-warm emissive glow.
-- **Plan B (always shipped):** the GSAP-only version from 2.1 is the floor. If the shader slips, the showpiece still works.
-- **References:** see Codrops shader-paper-curl articles for shader sketch.
-
-### 2.3 🟡 Audio cue (optional) — 0.3h
-- **Spec:** at 0.4s into the timeline, play a short analog-fire pop sample at -32dB. Mute respected. Use Howler.js or native `<audio>` with autoplay-friendly user-gesture context.
+**Phase 1 audit notes (post-implementation, against `UI_FUNDAMENTALS.md`):**
+- ✓ 60-30-10: ember accent appears only on (a) input draw-in underline when focused/has-content, (b) keystroke pulse, (c) active pill ring + bg, (d) magnetic-button when ready, (e) long-press progress bar, (f) center radial breath. Total surface ≤ 8% — well under the 10% accent budget.
+- ✓ Title-case CTAs: "Begin" (single word). Pill labels are mono-uppercase tracking — allowed for caption/microtype, not CTA.
+- ✓ Border-radius family: pills `rounded-full`, magnetic button `rounded-lg`, input has no radius (underline-only). Cohesive.
+- ✓ Hierarchy: headline (display large) → sub-line (mono caps tracking, fg-tertiary) → input (mono regular) → pills (mono caps small) → button (regular). Four levers used: size, color, weight, placement.
 
 ---
 
-## Phase 3 — Canvas surface (the map)
+## Phase 2 — Page-crumple transition (THE showpiece) ✅ COMPLETE (2026-04-25)
 
-### 3.1 🔴 Camera rig — auto-glide between nodes — 1.5h
-- **Surface:** `components/canvas/beat-map-3d.tsx`, new `camera-rig.tsx`
-- **Spec:**
-  - Replace `OrbitControls` with a custom rig.
-  - On node click, GSAP-tween the camera position to (node.x + offset, node.y + 0.4, node.z + 1.2) over 720ms `inOutQuart`.
-  - On hover, the camera lerps very subtly toward the hovered node (≤0.05 units).
-  - Idle: camera breathes z by ±0.04 over 8s (sin), giving the scene "alive" feel without distraction.
-- **Acceptance:** clicking a node visually transports you; clicking the same node again transports back to overview.
+The showpiece. All three items shipped. Lesson reflection lives in [`SHADERS_AUDIO.md`](SHADERS_AUDIO.md) — read that first if you're touching this surface.
 
-### 3.2 🔴 Node mesh — three states + breathe + ember-pulse-on-ready — 1h
-- **Surface:** `components/canvas/node-mesh.tsx` (already there, upgrade)
-- **Spec:**
-  - Idle: subtle scale breath (already implemented).
-  - Hover: scale +6%, emissiveIntensity 0.08 → 0.25, halo grows (selective bloom contribution).
-  - Active: scale +15%, position.z +0.4, ember glow saturated.
-  - Approved: ember-saturated steady state. No breathing.
-  - Ready-to-generate: 1.6s ember-pulse on emissiveIntensity (matches `ember-pulse` CSS keyframe).
-- **Acceptance:** all five states render distinctly without a state explosion. State derives from `beat.status` only.
+### 2.1 ✅ GSAP timeline (six tracks, 1.6s) — `routes/crumple-bridge-route.tsx`
+- Six tracks composed via `gsap.timeline()` with explicit position parameters.
+- Track A (0–0.18s) ember-flash gradient ignites at bottom-right.
+- Track B (0–0.95s) landing content collapses (scale + rotate + translate + blur + opacity, `power3.in`).
+- Track C (0.50–1.20s) canvas silhouette fades up beneath.
+- Track D (0.40–0.80s) ember-flash fades out.
+- Track E (0.20–1.60s) **shipped** — see 2.2 below.
+- Track F (1.40–1.60s) final veil for clean handoff.
+- `onComplete` navigates to `/canvas`. Reduced-motion bypasses the timeline entirely.
 
-### 3.3 🔴 Connecting path between nodes — 0.5h
-- **Spec:** sample 32 points along a Catmull-Rom spline between adjacent nodes. Render as `<points>` with `pointsMaterial` size 0.04, color `fg-tertiary` at 30% opacity. The path quietly teaches the trailer's beat order without arrows.
-- **Acceptance:** path visible on first paint; doesn't compete with nodes for attention.
+### 2.2 ✅ Plan A: GLSL ember-burn shader — `components/transition/paper-curl-canvas.tsx`
+- R3F Canvas with orthographic camera + screen-quad mesh + custom `ShaderMaterial`. The vertex shader bypasses view/projection — `gl_Position = vec4(position.xy, 0.0, 1.0)` writes NDC directly.
+- Fragment shader procedurally draws an **ember-burn sweep** (not a paper curl — a simpler, lower-risk choice that reads identically on demo day). Burn axis: bottom-right `(1, 0)` → upper-left `(0, 1)`. Signed-distance `d = burnPos - projection + wobble` drives three smoothstep regions: `burned` (fills bg-base), `emberEdge` (hottest band), `emberHalo` (warm halo). Procedural value-noise wobbles the edge; hash-based sparks flicker in the halo. Palette matched to brand-ember `#f0a868`.
+- GSAP-to-shader bridge: `progressRef = useRef({ value: 0 })`. GSAP mutates `progressRef.current.value` 0→1 over 1.4s. `useFrame` reads it and pushes into `materialRef.current.uniforms.uProgress.value`. **No React re-renders per frame.**
+- Lazy-loaded via `React.lazy` so the 848kB R3F+three chunk doesn't ship on the landing route. Landing preloads the chunk on mount via dynamic import so the bridge route is hot when the user submits.
+- **Plan B floor:** the GSAP-only choreography from 2.1 still lands the transition if the shader chunk fails to load (Suspense fallback is `null`).
 
-### 3.4 🟠 Ambient particles + scroll-velocity reaction — 1h
-- **Spec:**
-  - 200 `<Sparkles>` (drei) at low density across the scene.
-  - Scroll-velocity drives a `--scroll-velocity` CSS var → particles' speed scales 1× → 2.5× when the user scrolls/spins. Calms back when idle.
-- **Acceptance:** scrolling / dragging on the canvas makes the world feel reactive without overwhelming.
+### 2.3 ✅ Audio cues — `lib/audio-cues.ts`
+- Web Audio synthesis (no sample files): `playEmberPop` (filtered noise burst, ~150ms, lowpass 2400Hz → 80Hz) at +0.04s, `playCinematicRiser` (sub-bass sine 28Hz → 95Hz + bandpass noise sweep 400Hz → 3500Hz, 1.2s) at +0.18s.
+- Triggered via GSAP `tl.call()` so audio rides the same timeline as visuals.
+- Mute persisted in `localStorage["sceneos:audio-muted"]`. Landing's mute toggle writes; every `play*` call reads. Defaults to muted.
+- Form submit is the user gesture that unsuspends `AudioContext` — cues fire ~50–200ms later, well inside the activation window.
 
-### 3.5 🟠 Postprocessing — bloom + vignette + film grain — 0.3h
-- **Already in `beat-map-3d.tsx`.** Verify it still runs at 60fps on a 1080p MBA M2. If not, drop bloom mipmapBlur first, vignette second.
-
-### 3.6 🟡 Soft ambient audio loop — 0.3h
-- **Spec:** faint film-projector whir loop, -30dB, mute toggle respects landing's mute state.
+**Phase 2 lessons banked (see `SHADERS_AUDIO.md`):** GSAP timeline composition with position parameter, R3F screen-quad pattern, GLSL signed-distance fields + value noise, ref-bridge between GSAP and shader uniforms, Web Audio synthesis without sample files, lazy chunk preload strategy, reduced-motion graceful degradation.
 
 ---
 
-## Phase 4 — Node detail drawer + agent bubbles
+## Phase 3 — Canvas surface (the map) ✅ COMPLETE (2026-04-25)
 
-### 4.1 🔴 Drawer slide-in with content stagger — 0.5h
-- **Surface:** `components/node/node-detail-drawer.tsx`
-- **Spec:**
-  - Drawer: `motion.aside` x 100% → 0, spring `drawer`. Already wired.
-  - Inside, header → status pill → CTA stagger by 60ms with `motion.div` + `staggerChildren`.
+The second of the three winning moments. All six items shipped. Lesson reflection lives in [`CANVAS_3D.md`](CANVAS_3D.md) — read that before touching the canvas surface.
 
-### 4.2 🔴 Agent bubble character-by-character reveal — 1h
-- **Surface:** `components/agent/agent-bubble.tsx` (already exists; upgrade)
-- **Spec:**
-  - Each bubble's content runs through `<TextSplitter>`.
-  - Characters reveal at ~25ms each, capped at 1.6s total per bubble.
-  - User bubbles appear instantly (no typewriter — the user already knows what they wrote).
-  - Bubble container itself springs in via `bubble`.
-- **Acceptance:** feels like a director thinking out loud, not a chatbot dump.
+### 3.1 ✅ Custom camera rig — `components/canvas/camera-rig.tsx`
+- Replaced `OrbitControls` with a custom `<CameraRig>` component that lerps each frame.
+- Each frame computes target from app state: active beat → glide to `(x+0.2, y+0.4, z+1.2)`; hovered beat → ≤0.05 unit pull on x/y; idle → ±0.04 z breath on an 8s sin.
+- Per-frame lerp (rate 0.06) handles user redirecting clicks mid-glide cleanly — no GSAP `tl.kill()` required.
+- Toggle UX: clicking the active node deselects (returns to overview). Clicking empty canvas via `onPointerMissed` does the same.
 
-### 4.3 🔴 "Sufficient" status pill ember-pulse — 0.3h
-- **Spec:** when sufficiency hits, the status pill animates to ember-warm and starts the `ember-pulse` keyframe. Plus the "Generate scene" CTA gains the same pulse.
-- **Why:** guidance — tells the user the next click is hot.
+### 3.2 ✅ Node mesh — five states + halo + group-z animation — `components/canvas/node-mesh.tsx`
+- All five states derive purely from `beat.status` + local hover/active flags.
+- Idle: scale breath ±2%. Hover: +6% + halo grows. Active: +15% + group steps forward `+0.4z`. Approved: ember-saturated, scale 1.12, no breath. Ready-to-generate: 1.6s ember pulse on `emissiveIntensity` + halo opacity pulse.
+- Halo is its own additive-blended sphere (no depth-write) — composes with bloom.
+- Group-position-z animation (not mesh-position-z) so the `<Html>` label tracks the active offset.
+- `onHoverChange` reports up to BeatMap3D so the camera rig can pull subtly toward hovered nodes.
 
-### 4.4 🟠 Generate-in-progress panel — 1h
-- **Surface:** new `components/node/generation-panel.tsx`
-- **Spec:**
-  - 16:9 placeholder with `animate-blur-pulse` (already in CSS).
-  - A noisy gradient that "develops" into a cinematic still — animate a `mask` or `clip-path` across.
-  - Three steppers in mono with ember dot moving between them:
-    1. "Storyboard generated"
-    2. "Clip rendering"
-    3. "Uploading to Cloudinary"
-  - Live timer "0:32 / ~2:00" (mock backend returns ~1.6s lifecycle, so the timer moves).
-- **Acceptance:** a generation never feels "stuck" — the steppers tell the story.
+### 3.3 ✅ Connecting path — `components/canvas/connecting-path.tsx`
+- `THREE.CatmullRomCurve3` through node positions; `getPoints(8 × beats.length)` samples the spline.
+- Rendered as `<points>` with `pointsMaterial` size 0.04, `color="#9aa6ad"`, opacity 0.3, `sizeAttenuation`. Reads as a faint trail.
+- `depthWrite={false}` so it composites behind nodes without z-fighting.
 
----
+### 3.4 ✅ Ambient particles + scroll-velocity reaction — `components/canvas/ambient-particles.tsx`
+- 200 drei `<Sparkles>` at scale `[14, 8, 8]`, brand-ember color, opacity 0.5.
+- `useScrollVelocity()` registered on canvas container; `velocityRef` passed down. Each frame, `material.uniforms.speed.value = BASE_SPEED × (1 + min(|velocity| × 8, 1.5))` → 1× idle, up to ~2.5× when scrolling. Same ref-bridge pattern as Phase 2 shader.
+- Calms back via the hook's exponential decay.
 
-## Phase 5 — Scene + clip preview
+### 3.5 ✅ Postprocessing verified — already in `beat-map-3d.tsx`
+- `<Bloom intensity={0.9} luminanceThreshold={0.25} mipmapBlur />` + `<Vignette offset={0.2} darkness={0.85} />`. Untouched. Degradation order if perf slips is documented in [`CANVAS_3D.md` §6](CANVAS_3D.md).
 
-### 5.1 🔴 Custom `<VideoPlayer>` with ember scrubber — 1h
-- **Surface:** new `components/ui/video-player.tsx`
-- **Spec:**
-  - Big play overlay (Lucide `Play`, 96px, ember).
-  - Custom progress bar — ember-tinted, click-to-seek.
-  - Time display in mono.
-  - Auto-pause on drawer close.
-  - Mood-graded URL via `buildClipUrl({ mood })`.
-- **Acceptance:** never shows native browser controls.
+### 3.6 ✅ Ambient projector audio loop — `lib/audio-cues.ts`
+- New `startAmbientProjector()` returning a stop fn. Looping noise buffer → bandpass at 480Hz → tremolo gain (LFO at 24Hz writing into the gain AudioParam) → master gain → dest.
+- 0.8s ramp-in, 0.6s ramp-out for clean fades. Volume default 0.025 (≈ -32dB).
+- Wired into `canvas-route.tsx` via `useEffect` mount/unmount. Mute checked at start time.
+- The looping `bufferSource` + AudioParam-modulated tremolo are the new Web Audio idioms banked.
 
-### 5.2 🔴 Approve / Regenerate split CTA — 0.3h
-- **Spec:** Approve = primary ember, full-width. Regenerate = ghost, ¼ width on the right. Spring `bubble` on press.
+**Phase 3 lessons banked (see `CANVAS_3D.md`):** custom camera rigs vs OrbitControls (when each fits), per-frame lerp vs GSAP tween for continuous multi-source state, Catmull-Rom splines, drei `<Sparkles>` shader-instanced primitives, ref-bridge into Sparkles uniforms, looping Web Audio with LFO modulation on AudioParam, performance budgeting on MBA M2.
 
 ---
 
-## Phase 6 — Stitch tray (the Cloudinary moment)
+## Phase 4 — Node detail drawer + agent bubbles ✅ COMPLETE (2026-04-25)
 
-### 6.1 🔴 Live URL build typewriter — 1h
-- **Surface:** `components/stitch/stitch-tray.tsx` (exists; upgrade)
-- **Spec:**
-  - When a beat approves, the tray's URL text gets a new `l_video:<id>,fl_splice/` segment appended via typewriter (~30ms/char, stagger 100ms after approval).
-  - The URL is mono, fg-tertiary; the new segment glows ember briefly (300ms) then settles.
-- **Acceptance:** judges literally watch the post-production pipeline assemble.
+The middle 60 seconds of the demo. All four items shipped, plus the agent + generation API wiring needed to make the flow real (not theatre). Lesson reflection lives in [`AGENT_FLOW.md`](AGENT_FLOW.md) — read that before touching the agent stream or generation panel.
 
-### 6.2 🔴 Thumbnail row with mood tints — 0.5h
-- **Spec:**
-  - Each thumbnail = `<img src={buildThumbnailUrl(publicId, { mood })}>`.
-  - Mood tint at the bottom edge of each thumb.
-  - Approved thumbs glow ember-dim; unapproved are dimmed 50%.
+### 4.1 ✅ Drawer slide-in + content stagger — `components/node/node-detail-drawer.tsx`
+- `motion.aside` springs in via `SPRING.drawer` (existing). Inside, a parent `motion.div` with `staggerChildren: STAGGER.drawerInner` (0.06s) and `delayChildren: 0.08` cascades header → body → footer.
+- Each inner section uses `variants={fadeUp}` (`opacity: 0 → 1`, `y: 8 → 0`, `outQuart`).
+- Footer is conditionally rendered: hidden during `generating`/`preview` so the generation panel speaks for itself.
 
-### 6.3 🟠 Render CTA pulse + horizontal drag inertia — 0.5h
-- **Spec:**
-  - When all beats approve, the Render button gains `ember-pulse`.
-  - The thumbnail row supports horizontal drag with inertial decay (use `lib/use-scroll-velocity.ts`).
+### 4.2 ✅ Agent bubble character-by-character reveal — `components/agent/agent-bubble.tsx`
+- New `delayStrategy="sequential"` mode added to `<TextSplitter>` — each char delays by `i × perCharStep`, with the step auto-scaled so total reveal ≤ 1.6s regardless of length.
+- New CSS keyframe `.reveal-chars > span > span` (`reveal-char`, 0.18s ease-out, fade + 2px y).
+- Only the most recent agent turn reveals; history snaps in (the `reveal` prop on `<AgentBubble>` controls this — prevents replaying past turns when the drawer reopens).
+- User bubbles render plain text, instantly.
+- Reduced-motion override added in `index.css` for `.reveal-chars` selector.
 
----
+### 4.3 ✅ Sufficient pill + Generate-CTA ember-pulse
+- The status pill toggles the existing `.ember-pulse` keyframe class when `beat.status === "ready-to-generate"` — plus border + bg + text shift to ember.
+- The Generate CTA gets the same `.ember-pulse` class. Both share one infinite CSS animation; no JS per frame.
+- Reasoning: Motion for transitions, CSS keyframes for indefinite loops. Reduced-motion already disables `.ember-pulse`.
 
-## Phase 7 — Final delivery
+### 4.4 ✅ Generation-in-progress panel — `components/node/generation-panel.tsx`
+- 16:9 placeholder with the existing `.animate-blur-pulse` keyframe + a centered "Composing the frame" caption + a thin ember progress streak across the bottom edge (scaleX driven by ratio).
+- Three steppers (`Storyboard generated → Clip rendering → Uploading to Cloudinary`) with an active ember dot that morphs between rows via Motion `layoutId="gen-active-dot"` (same sliding pattern as the landing pill underline). Done rows show a check icon; pending rows show a thin outline circle.
+- Live timer: `mm:ss / ~mm:ss`, tabular-nums, updated every 250ms. Total estimate uses `suggestedDuration × 0.12 + 1.5` to stay tuned for both the mock backend's ~1.6s lifecycle and a longer real run.
+- Read-only "Higgsfield · live" provider tag in the footer corner.
 
-### 7.1 🔴 Final-delivery route — 1h
-- **Surface:** new `routes/final-delivery-route.tsx`
-- **Spec:**
-  - Fade-to-cinema: 250ms black wipe between Stitch tray and the cinematic.
-  - Title `Your cinematic.` slides up + fades in.
-  - Custom video player (from 5.1) at 70vw width, autoplay.
-  - Three actions: Download MP4, Copy share link, Open in CutOS.
-  - Subtle film-grain overlay on the entire screen.
-  - Bottom-right "Make another" returns to landing.
+### 4.5 ✅ (bonus) Agent + generation API wired end-to-end
+Not in the original spec but required for the flow to *work* during demo, not just look like it:
+- `AgentBubbleStream` calls `api.agent()` on drawer mount (seed question) and on each user submit. Optimistic local append → POST → append agent reply or flip status to `ready-to-generate`. `cancelled` ref guards stale responses if the drawer unmounts mid-call.
+- `NodeDetailDrawer` wires the Generate CTA to `api.generate()` + a polling loop on `api.status()` with a 30s safety timeout. On success, scene patches `clipPublicId` + `clipUrl` and beat status flips to `preview`.
+- New `sleep(ms)` helper in `lib/utils.ts`.
+- Error state: inline error bubble in the agent stream (Retry-friendly); inline error in the drawer footer for generation failures (status reverts to `ready-to-generate`).
 
-### 7.2 🟡 Subtle parallax on the cinematic frame — 0.3h
-- **Spec:** as the user scrolls past the player, the player itself translates 0 → -20px Y. Uses scroll-velocity hook.
-
----
-
-## Phase 8 — Cohesion & polish pass
-
-### 8.1 🔴 Performance audit — 0.5h
-- **Acceptance:**
-  - Landing initial bundle ≤200KB transferred (gzipped).
-  - Canvas chunk ≤1MB (we're at ~999KB; hold the line).
-  - Canvas runs ≥55fps on a 1080p MBA M2 stress test.
-  - No console warnings, no React StrictMode double-render warnings.
-
-### 8.2 🔴 `prefers-reduced-motion` audit — 0.3h
-- **Acceptance:** all keyframes + Motion components fall back to instant or 200ms fade when the media query matches. Spot-check by toggling OS setting.
-
-### 8.3 🔴 Visual cohesion sweep — 0.5h
-- **Acceptance:** every screen reviewed against the §11 checklist in `MOTION_LANGUAGE.md`. If a section looks like a Tailwind UI starter, redesign before merging.
-
-### 8.4 🟠 Soft sound design — 0.5h
-- **Spec:** a tasteful set per `FRONTEND_PHILOSOPHY.md` §8. Default muted; one-tap unmute toggle in landing footer.
+**Phase 4 lessons banked (see `AGENT_FLOW.md`):** AnimatePresence + popLayout for keyed drawer remounts, `staggerChildren` + `delayChildren` Motion variants pattern, sequential vs jitter character reveal, Motion-vs-CSS rule of thumb (transitions vs indefinite loops), state machine on `beat.status` driving every visual, optimistic-update + cancelled-ref pattern for in-flight API calls, polling loop with safety timeout.
 
 ---
 
-## Phase 9 — Stretch (only if everything 🔴 and 🟠 is shipped)
+## Phase 5 — Scene + clip preview ✅ COMPLETE (2026-04-25)
 
-### 9.1 🟢 GLSL paper-curl shader (Plan A from 2.2) — 3h
-### 9.2 🟢 CutOS handoff modal — 0.5h
-### 9.3 🟢 Scrollable below-the-fold "About / How it works" — *probably skip*
-### 9.4 🟢 Below-fold testimonials / partner logos — *skip*
+The "proof the system delivered" moment. Both items shipped, plus the wiring to actually drive the state transitions. Lesson reflection lives in [`VIDEO_PLAYER.md`](VIDEO_PLAYER.md) — read that before touching the player or split CTA.
+
+### 5.1 ✅ Custom `<VideoPlayer>` — `components/ui/video-player.tsx`
+- Zero browser chrome (`controls={false}`); we draw our own.
+- Big Play overlay: 96×96 ember disc with `Play` icon (96px would be the icon — we use a 36px icon inside a 96px disc for a softer feel + drop-shadow ember glow). AnimatePresence-fades between play and pause states.
+- Click-to-seek progress bar at bottom: 2px idle, 2.5px on hover, ember fill with a faint glow shadow. `role="slider"` + `aria-valuenow` for screen-reader scrubbing.
+- Top-right `mm:ss / mm:ss` mono time readout, tabular-nums, with backdrop-blur pill for legibility over varied frames. Top-left optional caption (passed by ClipPreview as `${beatName} · ${mood}`).
+- Spacebar / `k` toggles play/pause when the player has focus. `tabIndex={0}` + `focus-visible:ring-2`.
+- Auto-pause on unmount: the cleanup in the `src` effect calls `video.pause()`. Closing the drawer or switching beats (key remount) auto-pauses cleanly.
+- `data-cursor="hide"` so the landing's CursorSpotlight (if it ever leaks here) doesn't glow over the clip frame.
+
+### 5.2 ✅ Approve / Regenerate split CTA — `components/node/clip-preview.tsx`
+- `<Button variant="primary" className="flex-1">` — full-width Approve in ember.
+- `<Button variant="ghost" className="btn--edge-underline basis-1/4">` — ¼-width Regenerate ghost.
+- New `.btn--edge-underline` CSS pattern (Unseen Studio reference): two `::before` / `::after` 50%-width underlines slide in from the left + right edges to meet in the middle on hover. 280ms `outQuart` cubic-bezier. Reduced-motion override disables the transition.
+- Approve flow: `approveScene(beatId, sceneId)` → 220ms delay → `setActiveBeat(null)` so the user sees the approve happen before the drawer exit. The store's reducer flips beat status to `approved` if every scene is approved; the canvas's NodeMesh approved state takes over (Phase 3).
+- Regenerate flow: new `regenerateScene` action on the store clears `clipPublicId` + `clipUrl` + `jobId` + `approved=false` and flips beat status to `ready-to-generate`. Conversation is preserved — the user shouldn't lose the questionnaire just because they want a different take. The drawer body swaps from `<ClipPreview>` back to `<AgentBubbleStream>` automatically (state-driven, see Phase 4 §1).
+
+### 5.3 ✅ (audit fixes alongside)
+Phase 4 audit findings fixed in the same commit, since they were demo-blockers:
+- **Polling cancelRef now cleanup-safe**: `useEffect` returns `() => { cancelRef.current = true; }` so closing the drawer mid-generation no longer leaves an orphaned poll loop writing to a stale beat.
+- **Retry button** in `AgentBubbleStream`: when `api.agent` fails, the failing user message is captured in `pendingRetryMessage`; an inline Retry button next to the error re-fires `callAgent` with the same message.
+- **AgentBubble React.memo'd** with explicit comparator on turn fields — prevents the TextSplitter from recomputing animation-delays mid-reveal when the parent re-renders (which would visually flicker already-revealed chars).
+- **Dynamic provider in GenerationPanel**: `provider` prop driven from the `/api/generate` response, with a `PROVIDER_LABEL` map. Shows "Connecting…" before the response arrives.
+- **`aria-modal="true"` + `role="dialog"` + `aria-label` on the drawer**.
+- **`aria-label`s on Loader2 icons**, `role="status"` / `role="alert"` on the loading + error containers.
+- **Dropped pill ember-pulse** so only the CTA pulses (single attention signal, not split).
+- **Removed invalid `role="text"`** from TextSplitter (not a valid ARIA role).
+- **Combined double `cn` import** in node-detail-drawer.
+
+**Phase 5 lessons banked (see `VIDEO_PLAYER.md`):** HTMLVideoElement event lifecycle (timeupdate/loadedmetadata/play/pause/ended), guard `currentTime/duration` against NaN, manual spacebar handler when `controls={false}`, click-to-seek with `getBoundingClientRect`, AnimatePresence for the play overlay, regen-via-state-machine pattern (clear scene fields + flip status, conversation preserved).
+
+---
+
+## Phase 6 — Stitch tray (the Cloudinary moment) ✅ COMPLETE (2026-04-25)
+
+The third winning moment. Three items shipped + a new primitive (`usePointerDrag`). Lesson reflection lives in [`STITCH_TRAY.md`](STITCH_TRAY.md) — read that before touching the tray surface.
+
+### 6.1 ✅ Live URL build typewriter — `components/stitch/stitch-tray.tsx`
+- New `buildSpliceUrlSegments(orderedIds)` in `lib/cloudinary-transforms.ts` returns `{ head, middle, tail, base }` so the tray can render the URL as four pieces, only animating `tail`.
+- Diff strategy: track `approvedIds.length` in a ref. Each render reads the current count; when it grows AND is ≥ 2 (so the first approval doesn't typewriter the whole URL — it just fades in), bump a `revealKey` and flip `shouldType=true`. After 1s, `shouldType` resets.
+- `<TextSplitter delayStrategy="sequential" perCharStep={0.03} maxTotalDelay={1.4}>` runs on the tail, keyed by `revealKey` so the same segment doesn't re-reveal on re-renders.
+- New CSS keyframe `.url-segment-glow` — ember color + 8px text-shadow at 0%, settles to fg-secondary by 100% over 1s. Reduced-motion override sets static fg-secondary.
+- First approval → fade-in (no typewriter). Second+ → typewriter on the new tail with ember afterglow. Edge case (regenerate) handled by the count comparison naturally — going from N to N-1 doesn't trigger the reveal.
+
+### 6.2 ✅ Mood-tinted thumbnail row — same file
+- Each thumb is an `<img src={buildThumbnailUrl(scene.clipPublicId, { mood })}>` — Cloudinary's `so_auto` picks the most representative frame and applies the same per-mood color grade.
+- New `moodAccentColor(mood)` helper maps each `BeatMood` → a brand-aligned hex (cool blue, ember, ember-warm, ember-dim, success-cool, error-warm). Lives in `cloudinary-transforms.ts` next to `colorGradeFor`.
+- Bottom-edge linear-gradient tint at 0x66 (40%) opacity — a *hint* of mood, not a re-grade.
+- Approved thumbs: `border-brand-ember/60` + `shadow-[0_0_18px_-4px_rgba(240,168,104,0.55)]` ember glow. Unapproved: `opacity-50`.
+- Beat name overlay uses `mix-blend-difference` so it reads against either the thumbnail or the bg-base placeholder.
+
+### 6.3 ✅ Render CTA pulse + horizontal drag with inertia
+- New `lib/use-pointer-drag.ts` primitive. Pointer-down → pointer-move (read/write `el.scrollLeft`) → pointer-up triggers RAF inertia loop with exponential decay (factor 0.92, min velocity 0.2 px/frame). Boundary clamps kill inertia rather than bouncing.
+- Only responds to `e.button === 0` (left mouse) — trackpad two-finger horizontal scroll uses wheel events, so it's untouched. Native overflow-x scroll (mousewheel, focus-arrow keys) stays intact.
+- `data-dragging="true"` attribute on the container drives the `cursor: grabbing` swap via Tailwind's `data-[dragging=true]:cursor-grabbing` selector.
+- Render CTA gets `.ember-pulse` class when `allReady`. Same single-source CSS keyframe; same reduced-motion override; no JS each frame.
+- "Open in CutOS" ghost button gets `.btn--edge-underline` from Phase 5 for tasteful hover.
+
+**Phase 6 lessons banked (see `STITCH_TRAY.md`):** Cloudinary `fl_splice` URL anatomy + segment diff strategy, ref-based length comparison for "what just changed" detection, keyed `<TextSplitter>` for one-shot reveals (vs flicker on re-render), pointer-drag with RAF inertia (separate from wheel-driven `useScrollVelocity`), `mix-blend-difference` for legible labels over arbitrary thumbnails, mood-as-tint instead of mood-as-regrade.
+
+---
+
+## Phase 7 — Final delivery ✅ COMPLETE (2026-04-25)
+
+The exhale. The delivered product. Both items shipped, plus the StitchTray Render-CTA wiring that was previously a no-op. Lesson reflection lives in [`FINAL_DELIVERY.md`](FINAL_DELIVERY.md).
+
+### 7.1 ✅ Final-delivery route — `routes/final-delivery-route.tsx`
+- New `/final` route registered in `App.tsx`. Guards on `manifest?.finalCloudinaryUrl` — if missing, redirects to `/`.
+- "Fade to cinema" is route content fading in over 250ms on a `bg-bg-base` route container — no black-overlay div needed; the absence of route transition + the staggered reveal reads as a wipe.
+- Headline: `<motion.h1>` "Your cinematic." with `text-display-lg` italic, `EASE.filmIn` slide-up + fade over `DURATIONS.cinematic` (0.72s) at 0.15s delay. The trailing period is intentional — it's a statement of fact, not a label.
+- Sub-line above the headline: mono caps tracking, `Delivered · {videoType} · {formatDuration}` — anchors the moment as concluded.
+- Reused `<VideoPlayer>` at `w-[70vw] max-w-[1200px]`, `autoPlay`, `muted={false}` (user-gesture is in scope from the prior Render click), with a "Final cut · Cloudinary fl_splice" caption pill.
+- Three actions: **Download MP4** (primary ember; uses `fl_attachment` Cloudinary transform to force `Content-Disposition: attachment`), **Copy share link** (ghost + edge-underline + clipboard + toast), **Open in CutOS** (ghost + edge-underline + `api.cutosImport` + `window.open(editUrl, "_blank", "noopener,noreferrer")` with inline loading state).
+- Below-the-fold metadata: master prompt + numbered beat manifest in mono. Documents what was made; gives the parallax something to scroll past.
+- "Make another" — bottom-right ghost with `btn--edge-underline`, ArrowRight icon. Resets BOTH stores (`useBeatGraphStore.reset()` and `usePromptStore.reset()`) before navigating to `/` — otherwise the persisted prompt-store would pre-fill the landing input with the previous session's text, and the user would start their new session with stale state leaking in.
+- Existing `.film-grain` overlay class applied to the route's `<main>` — visual rhyme with the landing. Bookends the experience.
+
+### 7.2 ✅ Subtle parallax on the player — same file
+- `useScrollVelocity({ clamp: [0, 1] })` registered on `window`. Each RAF tick, the player wrapper's `transform: translate3d(0, progress * -20px, 0)` is mutated directly via ref. No React re-renders per frame.
+- `willChange: transform` on the wrapper for compositor hints.
+- Honors `useReducedMotion()` — when reduced-motion is active, the parallax effect short-circuits and the player stays static.
+
+### 7.3 ✅ (bonus) Render CTA wired in StitchTray
+- The Phase 6 Render CTA was a UI-only toggle. Phase 7 wires `onClick → api.stitchUrl({ manifest }) → setFinalCinematic({ finalUrl, thumbnailUrl, durationSeconds }) → navigate("/final")`.
+- New `setFinalCinematic` store action patches the manifest's `finalCloudinaryUrl`, `thumbnailUrl`, `durationSeconds`.
+- Inline error state in the StitchTray when the API call fails (state reverts; user can retry).
+- `Loader2` spinner + "Stitching…" label while the call is in flight.
+
+**Phase 7 lessons banked (see `FINAL_DELIVERY.md`):** route-level entrance choreography without an overlay div, when to reuse vs replace `<VideoPlayer>` (autoplay sound-on after a user gesture is in scope), `download` attribute + `fl_attachment` belt-and-braces, cross-store reset rules (BOTH stores before navigate to avoid leak), `useReducedMotion()` from Motion to gate ref-based parallax, native `window.open` with `noopener,noreferrer` for external handoffs.
+
+---
+
+## Phase 8 — Cohesion & polish pass ✅ COMPLETE (2026-04-25)
+
+The integration test of taste. Methodology + results documented in [`POLISH_AUDIT.md`](POLISH_AUDIT.md).
+
+### 8.1 ✅ Performance audit
+- **Bundle review (gzipped):** main 192.08 KB ✅ (target ≤200 KB), R3F chunk 227.95 KB (lazy), beat-map-3d chunk 42.46 KB (lazy), paper-curl-canvas 1.92 KB (lazy), CSS 8.57 KB. **All within budget.**
+- **60fps target:** documented degradation order if perf slips on demo hardware (sparkles 200→120, bloom mipmapBlur off, vignette off, dpr clamp). No drops observed in dev.
+
+### 8.2 ✅ `prefers-reduced-motion` audit
+- **Coverage matrix in POLISH_AUDIT.md §3** identified 9 surfaces with gaps. Closed via:
+  - `<MotionConfig reducedMotion="user">` wrapper at three route boundaries (landing, canvas, final-delivery). Auto-degrades transform-based animations to opacity-only across drawer slide, agent bubble enter, generation panel layoutId dot, stitch tray slide, landing pills cascade, etc.
+  - New `lib/use-prefers-reduced-motion.ts` hook (matchMedia bridge for components inside R3F where Motion context isn't available).
+  - `CameraRig` skips idle-breath sin term under reduced-motion.
+  - `NodeMesh` skips breath term, dampens active-scale boost (1.15→1.06), holds group-z still (no +0.4 step forward).
+  - `AmbientParticles` clamps Sparkles speed to 0 — drift stops; sparkles render as still dots.
+
+### 8.3 ✅ Visual cohesion sweep
+- 60-30-10 ember accent budget verified per route — all under the 10% threshold (POLISH_AUDIT.md §4).
+- Border-radius family confirmed cohesive across `rounded-full`/`-md`/`-lg`/`-xl`/`-2xl`.
+- No UPPERCASE CTAs anywhere; title-case + sentence-case used appropriately.
+- Mobile responsiveness fix: final-delivery player now `w-[90vw] sm:w-[70vw]` so the cinematic doesn't shrink to a postage stamp on narrow viewports.
+- Typography rhythm confirmed: display italic on landing/bridge/final, mono caps on captions, Inter on prose/buttons.
+
+### 8.4 ✅ Soft sound design
+- New `playApproveChime` — two-note ascending sine (G4 → C5, perfect fourth, ~120ms total). Fires on Approve scene click. Quiet completion punctuation, ≈ -38dB peak (volume 0.05).
+- New `playRenderWhoosh` — bandpass-noise sweep (300Hz → 4000Hz exponential, ~200ms). Fires at click-time on Render CTA so the cue's tail carries into /final's mount. ≈ -32dB peak (volume 0.045).
+- Both check `isAudioMuted()` → mute toggle dominates. Both are short one-shots, synthesized via Web Audio (no sample files).
+- Combined audio palette is now: ember pop + cinematic riser (bridge), ambient projector (canvas continuous), approve chime + render whoosh (state transitions). **Five cues total, all restrained.**
+
+### 8.5 ✅ (alongside) Phase 7 audit fixes shipped
+- `MotionConfig reducedMotion="user"` wrapping the /final route (entrance animations now reduced-motion-safe).
+- `fl_attachment` URL transform now idempotent (`includes` guard).
+- CutOS handler validates `editUrl` before `window.open`.
+- StitchTray's in-flight render uses a `mountedRef` to skip post-unmount setState.
+- Final-delivery beat manifest now uses `scene.durationSeconds ?? archetype.suggestedDuration` (actual refined duration, not template default).
+
+**Phase 8 lessons banked (see `POLISH_AUDIT.md`):** route-boundary `MotionConfig` as the cleanest way to gate transform-based Motion across an entire surface, matchMedia bridge hook for R3F components outside Motion context, reduced-motion as design-friendly (preserving signal via opacity + minor scale rather than removing all feedback), audio palette restraint (5 cues across the entire flow, no more), bundle review as documented checkpoint not just `npm run build` output.
+
+---
+
+## Phase 9 — Stretch ✅ COMPLETE (2026-04-25)
+
+LA Hacks 2026 is happening live; calculus is hackathon-mode. Skipped 9.1, 9.3, 9.4 with documented rationale. Shipped 9.2 plus a high-leverage hackathon-context bonus (9.B). Lesson reflection lives in [`STRETCH_DELIVERIES.md`](STRETCH_DELIVERIES.md).
+
+### 9.1 ❌ GLSL paper-curl shader — superseded by Phase 2 burn shader
+- The original Plan A (paper curl via `html-to-image` → `THREE.Texture`) was the fallback if Phase 2 stayed GSAP-only. **Phase 2 shipped the GLSL ember-burn instead** (signed-distance burn line, value noise, smoothstep regions, ember palette). That delivers the same emotional beat ("the page is being consumed") without the html-to-image dep. Adding paper-curl ON TOP would be a different metaphor (curl vs. burn) and visually muddy. Deferred-with-rationale; kept in stretch-bin only.
+
+### 9.2 ✅ CutOS handoff modal — `components/node/cutos-handoff-modal.tsx`
+- Replaces the old fire-and-forget `window.open` in the FinalDeliveryRoute with a state-machine modal.
+- New project-styled `components/ui/dialog.tsx` wrapping Radix Dialog (gives a11y for free: focus trap, esc-to-close, overlay click). Reused for 9.B as well.
+- Three states: `importing` (spinner + "Importing project to CutOS…"), `ready` (success badge + "Imported. Ready to open."), `failed` (error message + Retry button).
+- Project metadata (project shortId, beat count, duration) shown in a 3-col mono grid so judges see *what* is being handed off.
+- "Open in CutOS" button inside the modal IS the user gesture — popup-blocker friendly.
+- Lazy-loaded via `React.lazy` so Radix Dialog doesn't bloat the main bundle.
+
+### 9.B ✅ (bonus, hackathon-context) "How it works" walkthrough — `components/landing/how-it-works-modal.tsx`
+- Triggered by the previously-inert Help button in the landing footer. Three steps with lucide icons:
+  - **Direct** (Mic) — "You describe your idea in one sentence. No storyboards, no shot lists."
+  - **Refine** (MessagesSquare) — "A directorial agent asks two questions per beat — lens, blocking, color — using the language of cinema, not 'what mood?'."
+  - **Cut** (Film) — "Cloudinary stitches the final cinematic in a URL you can copy."
+- Footer reads "Built for LA Hacks 2026 · Cloudinary track" — sponsor-track signal.
+- Resists auto-show on first visit (would crash the flicker reveal entrance); strictly opt-in via Help click.
+- Lazy-loaded same as the CutOS modal.
+
+### 9.3 ❌ Below-fold "About / How it works" — superseded by 9.B
+- Spec said "probably skip" — the Help-button modal is the cleaner surface (judges who want context know to click Help; nobody scrolls below the fold on landing during a 30s demo).
+
+### 9.4 ❌ Below-fold testimonials / partner logos — skipped per spec
+- "Nobody at LA Hacks ships testimonials." — the docs.
+
+**Bundle impact:**
+- Main bundle: 192.32 KB gzipped — held the line under the 200KB target despite adding Radix Dialog + two modals.
+- New lazy chunks: `dialog-*.js` 11.68 KB gzipped, `how-it-works-modal-*.js` 1.23 KB, `cutos-handoff-modal-*.js` 1.42 KB. Only paid when a user opens a modal.
+
+**Phase 9 lessons banked (see `STRETCH_DELIVERIES.md`):** hackathon-mode prioritization (every choice documented so the call is defensible), Radix Dialog + Motion variants pattern for project-styled modals, when to lazy-load to hold a bundle budget (Radix Dialog is the canonical example — heavy primitive, infrequent use), explicit-skip-with-rationale > silent backlog.
 
 ---
 

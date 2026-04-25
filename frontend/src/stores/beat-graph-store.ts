@@ -15,6 +15,21 @@ interface BeatGraphState {
   updateScene: (beatId: string, sceneId: string, patch: Partial<Scene>) => void;
   appendAgentTurn: (beatId: string, sceneId: string, turn: AgentTurn) => void;
   approveScene: (beatId: string, sceneId: string) => void;
+  /**
+   * Reset clip fields on a scene and flip the beat back to ready-to-generate.
+   * Conversation is preserved — the user shouldn't lose the questionnaire
+   * just because they want a different take.
+   */
+  regenerateScene: (beatId: string, sceneId: string) => void;
+  /**
+   * Patches the final cinematic URL + thumbnail + duration on the manifest
+   * after /api/stitch/url succeeds. Drives the FinalDeliveryRoute.
+   */
+  setFinalCinematic: (params: {
+    finalUrl: string;
+    thumbnailUrl: string;
+    durationSeconds: number;
+  }) => void;
   reset: () => void;
 }
 
@@ -105,6 +120,41 @@ export const useBeatGraphStore = create<BeatGraphState>()(
               const allApproved = scenes.every((s) => s.approved);
               return { ...b, scenes, status: allApproved ? "approved" : b.status };
             }),
+          },
+        });
+      },
+
+      regenerateScene: (beatId, sceneId) => {
+        const m = get().manifest;
+        if (!m) return;
+        set({
+          manifest: {
+            ...m,
+            beats: m.beats.map((b) => {
+              if (b.beatId !== beatId) return b;
+              return {
+                ...b,
+                status: "ready-to-generate",
+                scenes: b.scenes.map((s) =>
+                  s.sceneId === sceneId
+                    ? { ...s, jobId: undefined, clipPublicId: undefined, clipUrl: undefined, approved: false }
+                    : s,
+                ),
+              };
+            }),
+          },
+        });
+      },
+
+      setFinalCinematic: ({ finalUrl, thumbnailUrl, durationSeconds }) => {
+        const m = get().manifest;
+        if (!m) return;
+        set({
+          manifest: {
+            ...m,
+            finalCloudinaryUrl: finalUrl,
+            thumbnailUrl,
+            durationSeconds,
           },
         });
       },

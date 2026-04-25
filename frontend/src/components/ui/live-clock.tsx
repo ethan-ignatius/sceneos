@@ -45,7 +45,7 @@ export function LiveClock({ label, showDot = true, hour24 = false, className }: 
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] tabular-nums text-fg-secondary",
+        "inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] tabular-nums text-fg-secondary",
         className,
       )}
       style={{ fontVariantNumeric: "tabular-nums" }}
