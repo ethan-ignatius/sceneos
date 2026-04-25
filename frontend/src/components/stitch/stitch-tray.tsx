@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Copy, Sparkles, Loader2, ArrowUpRight, Check } from "lucide-react";
+import { X, Copy, Clapperboard, Loader2, ArrowUpRight, Check } from "lucide-react";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -80,7 +80,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const copy = async () => {
     if (!fullUrl) return;
     await navigator.clipboard.writeText(fullUrl);
-    toast.success("Cloudinary URL copied");
+    toast.success("Final URL copied.");
   };
 
   const handleRender = async () => {
@@ -336,7 +336,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             {rendering ? (
               <Loader2 size={16} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
             ) : (
-              <Sparkles size={16} strokeWidth={1.5} aria-hidden="true" />
+              <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
             )}
             {rendering ? "Stitching the cut…" : allReady ? "Compose the cinematic" : "Render"}
           </span>

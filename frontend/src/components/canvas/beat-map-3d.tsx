@@ -124,6 +124,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           positions={positions}
           activeBeatId={activeBeatId}
           hoveredBeatId={hoveredBeatId}
+          overviewZ={cameraZ}
         />
 
         {/* Postprocessing stack:
@@ -132,25 +133,27 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
                 in NodeMesh). Subtle blur on the rest reads as a camera, not a viewport.
               - Vignette: soft edge fall-off; tightens the eye to the centre.
               See RESEARCH_PLANETARY.md §5 + 3D_PLAYBOOK.md §6. */}
-        {/* Bloom dropped to avoid clamping ember to white in the bloom buffer
-            (issue #166): threshold 0.18→0.6 catches only true highlights;
-            intensity 0.75/0.5 → 0.5/0.35.
-            DoF softened (issue #169): bokehScale 3.0/1.5 → 1.8/1.2,
-            focusDistance 0.012/0.02 → 0.018/0.022 so inactive nodes stay
-            readable as out-of-focus shapes, not invisible smears. */}
+        {/* Postprocessing recalibrated after the streak fix overshot:
+              - Bloom threshold 0.6→0.32: orbs glow visibly again at idle,
+                ember still doesn't clamp to white because tone-mapping +
+                lower atmosphere opacity already prevent it.
+              - DoF idle bokehScale 1.2→0.4: the canvas is no longer a
+                blur-bath when nothing is selected. Inactive scenes need
+                to *show*; only on-dive does the camera bias.
+              - Vignette darkness eased so the orbs don't drown at the edges. */}
         <EffectComposer>
           <Bloom
-            intensity={activeBeatId ? 0.5 : 0.35}
-            luminanceThreshold={0.6}
+            intensity={activeBeatId ? 0.55 : 0.4}
+            luminanceThreshold={0.32}
             luminanceSmoothing={0.35}
             mipmapBlur
           />
           <DepthOfField
-            focusDistance={activeBeatId ? 0.018 : 0.022}
-            focalLength={activeBeatId ? 0.07 : 0.09}
-            bokehScale={activeBeatId ? 1.8 : 1.2}
+            focusDistance={activeBeatId ? 0.02 : 0.03}
+            focalLength={activeBeatId ? 0.06 : 0.12}
+            bokehScale={activeBeatId ? 1.4 : 0.4}
           />
-          <Vignette eskil={false} offset={0.25} darkness={activeBeatId ? 0.85 : 0.7} />
+          <Vignette eskil={false} offset={0.3} darkness={activeBeatId ? 0.8 : 0.55} />
         </EffectComposer>
       </Canvas>
     </div>

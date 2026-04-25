@@ -64,7 +64,7 @@ export function FinalDeliveryRoute() {
   const handleCopy = useCallback(async () => {
     if (!finalUrl) return;
     await navigator.clipboard.writeText(finalUrl);
-    toast.success("Share link copied");
+    toast.success("Cinematic shared.");
   }, [finalUrl]);
 
   const handleMakeAnother = useCallback(() => {
