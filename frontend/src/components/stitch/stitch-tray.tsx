@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Copy, Sparkles, ExternalLink, Loader2 } from "lucide-react";
+import { X, Copy, Sparkles, Loader2 } from "lucide-react";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -273,15 +273,6 @@ export function StitchTray({ onClose }: StitchTrayProps) {
               <Sparkles size={14} strokeWidth={1.5} aria-hidden="true" />
             )}
             {rendering ? "Stitching…" : "Render final cinematic"}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={!allReady}
-            className="btn--edge-underline w-full"
-          >
-            <ExternalLink size={13} strokeWidth={1.5} aria-hidden="true" />
-            Open in CutOS to fine-edit
           </Button>
         </div>
       </div>

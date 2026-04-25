@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DURATIONS, EASE } from "@/lib/motion-presets";
 import type { GenerationProvider } from "@/types/api";
 
 interface GenerationPanelProps {
@@ -69,7 +70,7 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
         <motion.div
           className="absolute inset-x-0 bottom-0 h-px origin-left bg-brand-ember"
           style={{ scaleX: ratio }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
+          transition={{ duration: DURATIONS.quick, ease: EASE.outQuart }}
         />
       </div>
 

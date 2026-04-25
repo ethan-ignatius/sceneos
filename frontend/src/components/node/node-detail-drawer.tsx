@@ -6,7 +6,7 @@ import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
 import { ClipPreview } from "./clip-preview";
 import { Button } from "@/components/ui/button";
-import { SPRING, STAGGER } from "@/lib/motion-presets";
+import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
 import { sleep, cn } from "@/lib/utils";
 import type { GenerationProvider } from "@/types/api";
@@ -121,7 +121,7 @@ export function NodeDetailDrawer() {
         {/* Header */}
         <motion.header
           variants={fadeUp}
-          transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
           className="flex items-start justify-between border-b border-fg-tertiary/30 p-6"
         >
           <div>
@@ -146,7 +146,7 @@ export function NodeDetailDrawer() {
         {/* Body — agent stream OR generation panel OR preview hint */}
         <motion.div
           variants={fadeUp}
-          transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
           className="flex-1 overflow-hidden p-6"
         >
           {isGenerating ? (
@@ -165,7 +165,7 @@ export function NodeDetailDrawer() {
         {!isGenerating && !isPreview ? (
           <motion.footer
             variants={fadeUp}
-            transition={{ duration: 0.32, ease: [0.25, 1, 0.5, 1] }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
             className="space-y-3 border-t border-fg-tertiary/30 p-6"
           >
             <div

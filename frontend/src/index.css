@@ -218,6 +218,20 @@
   }
 
   /* ──────────────────────────────────────────────────────────────────
+   * Slow ember radial breath — used as the landing's center-pulse.
+   * 6s loop, almost imperceptible. CSS keyframe (not Motion) per the
+   * "Motion for transitions, CSS for indefinite loops" rule
+   * (docs/AGENT_FLOW.md §5). Reduced-motion override holds it static.
+   * ────────────────────────────────────────────────────────────────── */
+  .ember-radial-breath {
+    animation: ember-radial-breath 6s ease-in-out infinite;
+  }
+  @keyframes ember-radial-breath {
+    0%, 100% { opacity: 0.4; }
+    50%      { opacity: 0.7; }
+  }
+
+  /* ──────────────────────────────────────────────────────────────────
    * Stitch-tray URL segment afterglow. The newly typed `l_video:…` segment
    * starts ember-bright, then settles to fg-secondary over ~1s.
    * Pairs with the segment-keyed render in stitch-tray.
@@ -322,6 +336,10 @@
     .url-segment-glow {
       animation: none !important;
       color: var(--color-fg-secondary);
+    }
+    .ember-radial-breath {
+      animation: none !important;
+      opacity: 0.4;
     }
   }
 }

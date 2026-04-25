@@ -106,12 +106,13 @@ export function LandingRoute() {
     <main className="film-grain relative grid min-h-screen place-items-center bg-bg-base px-6">
       <CursorSpotlight intensity={0.28} radius={360} />
 
-      {/* Slow ember radial-pulse from center — almost imperceptible but reads as "alive." */}
-      <motion.div
+      {/* Slow ember radial-pulse from center — almost imperceptible but reads as "alive."
+          CSS keyframe (.ember-radial-breath) instead of Motion: indefinite loops belong
+          in CSS so they don't run JS each frame. Reduced-motion override holds it at
+          opacity 0.4. See docs/AGENT_FLOW.md §5 ("Motion for transitions, CSS for loops"). */}
+      <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(240,168,104,0.06),_transparent_60%)]"
-        animate={{ opacity: [0.4, 0.7, 0.4] }}
-        transition={{ duration: 6, ease: "easeInOut", repeat: Infinity }}
+        className="ember-radial-breath pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(240,168,104,0.06),_transparent_60%)]"
       />
 
       <section className="relative z-10 mx-auto flex w-full max-w-3xl flex-col items-center gap-12 text-center">
@@ -189,7 +190,7 @@ export function LandingRoute() {
                   style={{ width: "100%", filter: "blur(0.5px)" }}
                   initial={{ opacity: 0, scaleY: 1 }}
                   animate={{ opacity: [0, 1, 0], scaleY: [1, 3, 1] }}
-                  transition={{ duration: 0.18, ease: "easeOut" }}
+                  transition={{ duration: DURATIONS.instant, ease: EASE.outQuart }}
                 />
               ) : null}
             </span>
