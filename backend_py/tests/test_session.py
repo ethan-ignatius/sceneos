@@ -157,6 +157,92 @@ def test_orchestrate_normal_mode_does_fresh_work(monkeypatch):
     assert body["jobId"]
 
 
+def test_demo_session_returns_shared_project_refs(monkeypatch):
+    """Visual-continuity anchor: ONE character ref + ONE location ref
+    must be generated per project, and every speculative beat must
+    reference the same publicId for each kind. Without this the
+    protagonist drifts beat-to-beat — the most-noticed-by-humans bug."""
+    client = _client(monkeypatch)
+    session = client.post("/api/session/start", json={"mode": "demo"}).json()
+
+    # Top-level projectRefs surfaced for the visualizer
+    refs = session["projectRefs"]
+    assert refs["character"] and refs["character"]["publicId"]
+    assert refs["location"] and refs["location"]["publicId"]
+
+    # Every beat's speculative job carries the SAME publicId per kind
+    char_ids = {job["characterRef"]["publicId"] for job in session["speculativeJobs"].values()}
+    loc_ids  = {job["locationRef"]["publicId"]  for job in session["speculativeJobs"].values()}
+    assert char_ids == {refs["character"]["publicId"]}, (
+        f"character ref drifted across beats: {char_ids}"
+    )
+    assert loc_ids == {refs["location"]["publicId"]}, (
+        f"location ref drifted across beats: {loc_ids}"
+    )
+
+    # And every beat reports sharedRefs=True
+    assert all(job["sharedRefs"] is True for job in session["speculativeJobs"].values())
+
+
+def test_demo_session_stamps_audio_on_manifest(monkeypatch):
+    """Audio must be auto-selected at session start so /api/stitch/url
+    has a default l_audio: layer to overlay without any extra wiring."""
+    client = _client(monkeypatch)
+    session = client.post("/api/session/start", json={"mode": "demo"}).json()
+    audio = session["manifest"].get("audioPublicId")
+    assert audio, "manifest.audioPublicId must be stamped at session start"
+    # The default library uses sceneos/audio/<id> public_ids; an empty
+    # string would skip the l_audio layer in the splice URL builder.
+    assert audio.startswith("sceneos/audio/")
+
+
+def test_orchestrate_normal_mode_lazily_generates_shared_refs(monkeypatch):
+    """First markSufficient in normal mode triggers shared-ref generation;
+    subsequent beats reuse the cached refs (no duplicate generation)."""
+    client = _client(monkeypatch)
+    session = client.post("/api/session/start", json={"mode": "normal"}).json()
+    manifest = session["manifest"]
+
+    # Beat 1: ships character + location descriptions
+    r1 = client.post("/api/orchestrate/beat-1", json={
+        "manifest": manifest,
+        "beatFacts": {
+            "subject": "the protagonist",
+            "action": "looks at the mirror",
+            "setting": "a small bathroom",
+            "mood": "intimate-hook",
+            "characterDescription": "a woman in her 30s with chestnut hair, weary eyes",
+            "locationDescription": "a small bathroom with cracked tile and a flickering bulb",
+        },
+        "aspectRatio": "16:9",
+    }).json()
+    assert r1["sharedRefs"] is True
+    assert r1["characterRef"] and r1["locationRef"]
+    char_pid_1 = r1["characterRef"]["publicId"]
+    loc_pid_1  = r1["locationRef"]["publicId"]
+
+    # Beat 2: ships DIFFERENT descriptions — refs must NOT be regenerated.
+    # The cached project refs win, so the protagonist stays the same.
+    r2 = client.post("/api/orchestrate/beat-2", json={
+        "manifest": manifest,
+        "beatFacts": {
+            "subject": "the protagonist",
+            "action": "walks down a hallway",
+            "setting": "a long hallway",
+            "mood": "wide-establish",
+            # Deliberately drift to verify caching:
+            "characterDescription": "an entirely different woman with red hair",
+            "locationDescription": "a hallway in a different building",
+        },
+        "aspectRatio": "16:9",
+    }).json()
+    assert r2["sharedRefs"] is True
+    assert r2["characterRef"]["publicId"] == char_pid_1, (
+        "character ref leaked between beats — must reuse the project-cached ref"
+    )
+    assert r2["locationRef"]["publicId"] == loc_pid_1
+
+
 def test_demo_speculative_jobs_complete_via_status_polling(monkeypatch):
     """The speculative jobIds must be valid handles that /api/status can
     drive to completion. (Mock mode flips to 'succeeded' on the second

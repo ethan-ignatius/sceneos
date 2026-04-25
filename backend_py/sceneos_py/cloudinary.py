@@ -167,6 +167,41 @@ async def upload_video_from_url(remote_url: str, public_id: str) -> dict:
     }
 
 
+async def upload_audio_from_bytes(content: bytes, public_id: str, mime: str = "audio/mpeg") -> dict:
+    """Upload raw audio bytes (e.g. ElevenLabs TTS output) to Cloudinary.
+
+    Cloudinary stores audio files via the video upload endpoint with
+    resource_type=video — its video pipeline handles audio-only files
+    and exposes them at /video/upload/<public_id>.<ext>, which is what
+    `l_audio:<public_id>` needs to overlay onto the splice URL.
+    """
+    import base64 as _base64
+
+    cloud, api_key, api_secret = _cloudinary_creds()
+    if not api_key or not api_secret or not cloud:
+        raise RuntimeError("missing Cloudinary credentials (set CLOUDINARY_URL or the three explicit vars)")
+    url = f"https://api.cloudinary.com/v1_1/{cloud}/video/upload"
+    data_uri = f"data:{mime};base64,{_base64.b64encode(content).decode('ascii')}"
+    async with httpx.AsyncClient(timeout=120) as client:
+        res = await client.post(
+            url,
+            data={
+                "file": data_uri,
+                "public_id": public_id,
+                "resource_type": "video",  # audio routes through the video pipeline
+                "overwrite": "true",
+            },
+            auth=(api_key, api_secret),
+        )
+        res.raise_for_status()
+    body = res.json()
+    return {
+        "publicId": body["public_id"],
+        "url": body.get("secure_url"),
+        "durationSeconds": body.get("duration", 0),
+    }
+
+
 async def upload_image_from_bytes(content: bytes, public_id: str, mime: str = "image/png") -> dict:
     """Upload raw image bytes (e.g. from Imagen) to Cloudinary as a data URI."""
     import base64 as _base64

@@ -2,7 +2,7 @@
 
 > **The day-2 operational dashboard.** Single source of truth. Open it every morning. CONTEXT.md = vision; BACKEND_ARCHITECTURE.md = legacy design spec; **this file = "where am I right now and what do I do next."**
 >
-> Last updated: 2026-04-25. Deadline: 2026-04-26 11:00am EDT.
+> Last updated: 2026-04-25 (evening) — demo/normal mode split, project-level shared refs, audio + auto-stitch wired end-to-end. Deadline: 2026-04-26 11:00am EDT.
 
 ---
 
@@ -217,31 +217,32 @@ The `beatFacts` field is what the **deterministic pipeline reads**. Without it, 
 
 ---
 
-## 5. API surface — current + planned
+## 5. API surface — current
 
-### Current (8 routes, all functional):
+12 routes, all functional in MOCK_MODE and against real providers when credentials are set.
+
 | # | Endpoint | Status | Notes |
 |---|---|---|---|
 | 1 | `GET  /api/health` | ✅ | Liveness + mock probe. |
-| 2 | `POST /api/decompose` | ✅ | Master prompt → all-beats clipPrompts. Optional fallback. |
-| 3 | `POST /api/agent` | 🟡 → ✅ this turn | **Now emits suggestedAnswers + beatFacts.** |
-| 4 | `POST /api/generate` | 🟡 | startImageUrl is in type but only fal honors it. Veo + Higgsfield need wiring. |
-| 5 | `GET  /api/status/:jobId` | 🟡 | Doesn't return lastFrameUrl yet. |
-| 6 | `POST /api/stitch/url` | ✅ | fl_splice URL builder. |
-| 7 | `POST /api/cloudinary/sign` | ✅ | Signed upload params. |
-| 8 | `POST /api/cutos/import` | ✅ | CutOS handoff. |
+| 2 | `POST /api/decompose` | ✅ | Master prompt → all-beats clipPrompts. Fallback path; story flow uses orchestrator instead. |
+| 3 | `POST /api/agent` | ✅ | Emits suggestedAnswers + beatFacts. Mode-aware (demo speed-mode caps at 1-2 questions). |
+| 4 | `POST /api/agent/stream` | ✅ | SSE streaming with Gemini 2.5 thinking tokens. |
+| 5 | `POST /api/generate` | ✅ | startImageUrl wired in fal + Veo + Higgsfield. |
+| 6 | `GET  /api/status/:jobId` | ✅ | Returns lastFrameUrl on success (`so_99p` Cloudinary derivative). |
+| 7 | `POST /api/stitch/url` | ✅ | fl_splice URL builder. Reads `manifest.audioPublicId`, falls back to `audio.pick_music`. |
+| 8 | `POST /api/cloudinary/sign` | ✅ | Signed upload params. |
+| 9 | `POST /api/cutos/import` | ✅ | CutOS handoff. |
+| 10 | `POST /api/references/generate` | ✅ | Vertex Imagen 3 character/location T2I. |
+| 11 | `POST /api/orchestrate/:beatId` | ✅ | Deterministic pipeline. Speculative-cache hit when /api/session/start primed it. Uses project-level shared refs. |
+| 12 | `POST /api/session/start` | ✅ | Mode-aware boot (demo / normal). Auto-picks master prompt + audio + generates shared character + location refs. Demo mode also fans out all 7 video gens speculatively. |
 
-### Planned (orchestrator + reference gen):
-| # | Endpoint | Owner | Notes |
-|---|---|---|---|
-| 9 | `POST /api/references/generate` | NEW: `vertex_imagen.py` | Generates character or location ref via T2I. |
-| 10 | `POST /api/orchestrate/:beatId` | NEW: `orchestrator.py` | Reads beatFacts, runs deterministic pipeline, kicks off /api/generate. |
-| 11 | `POST /api/edit/finalize` | NEW: `editor.py` (stretch) | Agentic edit pass — music, captions, grading hints. |
+**Stretch (post-LA-Hacks / agentic editing teammate):**
+- `POST /api/edit/finalize` — Agentic edit pass: music selection from a richer library, caption overlays, final grade. The agent.py + audio.py primitives already exist; this would compose them.
 
 **Endpoints we are NOT adding:**
-- ~~`/api/projects`~~ — manifest is client-side, backend stateless.
+- ~~`/api/projects`~~ — manifest is client-side, backend stateless except for short-lived `_SESSIONS`.
 - ~~`/api/canvas/nodes`~~ — canvas state = manifest.
-- ~~`/api/edit/apply`~~ — Cloudinary URL transforms are pure-client (`frontend/src/lib/cloudinary-transforms.ts`).
+- ~~`/api/edit/apply`~~ — Cloudinary URL transforms are pure-client.
 
 ---
 
@@ -249,17 +250,19 @@ The `beatFacts` field is what the **deterministic pipeline reads**. Without it, 
 
 Demo-ready means **all of the following** are true:
 
-1. ✅ Backend running real (not mock). `GENERATION_PROVIDER=vertex` or `higgsfield`.
-2. 🟡 mock_frontend visualizes the agent loop end-to-end. Master prompt → 7 beats → 3-5 questions/beat → 3 suggested answers/question → markSufficient → beatFacts logged.
-3. 🔴 Real frontend (Alex) consumes the new agent shape (suggestedAnswers + beatFacts). **You are NOT doing this — you are not touching the real frontend.**
-4. 🔴 Orchestrator runs deterministic pipeline per beat: motion preset + char/location refs + video gen submission.
-5. 🔴 Last-frame extraction wired in cloudinary.py + status handler.
-6. 🔴 startImageUrl wired into vertex_veo.py + higgsfield.py (fal.py done).
-7. 🔴 Reference image gen (Vertex Imagen 3) at `/api/references/generate`.
-8. 🔴 Cached safety-net: render the demo project Saturday night with real providers, paste public_ids into cached.py.
-9. 🔴 Practiced demo path under 4 minutes, 5 times.
+1. ✅ Backend running real (not mock). `GENERATION_PROVIDER=vertex` or `higgsfield`. (Plumbing complete — needs to be turned on for the demo bake.)
+2. ✅ mock_frontend visualizes the entire pipeline end-to-end. Mode picker → 7 beats with shared character + location refs → questions + suggested answers → markSufficient → orchestrate (cache-hit in demo) → status polls → auto-stitch with audio overlay → playable final cut inline.
+3. 🟡 Real frontend consumes `suggestedAnswers` + `beatFacts` + new `/api/session/start` shape. **Teammate's domain.** Backend hands off SHARED_TYPES.md.
+4. ✅ Orchestrator runs deterministic pipeline per beat: motion preset + project-level shared char/location refs + framing-routed I2V seed + video gen submission.
+5. ✅ Last-frame extraction wired in cloudinary.py + status handler (`so_99p`).
+6. ✅ startImageUrl wired into vertex_veo.py + higgsfield.py (fal.py already chained).
+7. ✅ Reference image gen (Vertex Imagen 3) at `/api/references/generate` AND `vertex_imagen.generate_project_refs()` for the once-per-project shared anchors.
+8. ✅ Audio module: `audio.pick_music(videoType, mood)` + `audio.synthesize_narration(text)` (ElevenLabs, opt-in). Manifest auto-stamps `audioPublicId`. Stitch URL includes `l_audio:` overlay.
+9. 🔴 Cached safety-net (Module D): render the demo project against real providers (Vertex + Imagen + Veo or Higgsfield), capture all 7 publicIds + the audio publicId, paste into `cached.py` so the on-stage failure mode is "instant replay" not "white screen."
+10. 🔴 Practiced demo path under 4 minutes, 5 times.
+11. 🟡 Voice narration (optional polish). `audio.synthesize_narration` is wired, ElevenLabs API key + a per-beat narration script need to be assembled. Agent could emit `voiceLine` per beat — see Stretch in §7.
 
-After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete next steps with clear handoffs.
+Items 1-8 are SHIPPED. Items 9-10 are wallclock-only (no engineering blockers). Item 11 is genuinely optional for a demo that's already cinematic.
 
 ---
 
@@ -300,6 +303,47 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 - **mock_frontend overhaul.** Full rewrite. Streams SSE via `fetch + ReadableStream`. Live cyan thinking panel that streams character-by-character with thought-fade-in animation. Typewriter on the question (22ms/char). Suggestion chips slide up in stagger. beatFacts cards populate one-at-a-time when markSufficient fires. Aurora-pulse background while thinking. JetBrains Mono for thoughts. Inter for everything else. Beat-strip glow animation on active node.
 - **Mock-mode streaming parity.** `mock.run_mock_agent_streaming()` synthesizes thinking events around the canned result so the visualizer feels alive even without GCP creds.
 
+### ✅ Done this turn (round 3 — demo/normal mode + shared refs + audio + auto-stitch)
+
+**The core demo/normal mode split.** Two fundamentally different timing budgets, one shared backend.
+- New `POST /api/session/start { mode: "demo" | "normal", promptId?, masterPromptOverride?, aspectRatio? }`.
+- New `session.py` module with in-memory `_SESSIONS` + `_SPECULATIVE` stores keyed by `projectId` (12-char hex).
+- New `demo_prompts.py` with 3 curated demo prompts (`monkey-banana`, `lighthouse-ship`, `drone-mall`) and 5 normal prompts. Demo prompts ship pre-curated `beatFactsByTemplate` for all 7 story beats with HAND-TUNED Imagen-quality character + location descriptions.
+- Auto-selection: the system picks the master prompt; the user picks the mode. Override available via `masterPromptOverride`.
+
+**Speculative kickoff (demo mode only).** The "how we hit 3-4 minutes" trick.
+- At session start: 1 character ref + 1 location ref generated in parallel (~5-8s). Then all 7 beat pipelines fan out in parallel via `asyncio.gather` (~60-100s).
+- The agent conversation runs in parallel as theatre. Demo speed-mode caps user turns at 1-2 per beat (`agent.py: DEMO_MAX_QUESTIONS=2`, `THINKING_BUDGET_DEMO=512`, dynamic system-prompt block instructing terseness).
+- When the agent eventually calls `markSufficient`, the orchestrate route returns the cached job in O(1) — `speculativeReused: true`. Total wall-clock is dominated by provider time, not orchestration time.
+
+**Project-level shared refs (THE visual-continuity fix).** Without this, each beat regenerates its own Imagen character + location → 7 different chimps, 7 different lighthouses. The most-noticed-by-humans correctness bug.
+- `vertex_imagen.generate_project_refs(project_id, character_description, location_description)` generates ONE character ref + ONE location ref per project, in parallel.
+- Orchestrator's seed-priority order is now: `project_refs > previous lastFrameUrl > fresh per-beat Imagen` (last is fallback only).
+- Framing-aware seed routing: wide / establish / locked-off framings → location ref; close / medium / handheld / push-in → character ref. Both refs are still surfaced in the response so the visualizer + downstream consumers can render either.
+- Demo mode: refs generated upfront at `/api/session/start`. Normal mode: refs generated lazily on the first `markSufficient` that ships descriptions, then cached project-wide via `session.ensure_project_refs()`. Subsequent beats reuse — same character, same world, every clip.
+- Result: across all 7 speculative jobs, `characterRef.publicId` and `locationRef.publicId` are IDENTICAL. Verified in tests + live smoke.
+
+**Audio module (`audio.py`).**
+- `pick_music(videoType, mood)` — deterministic selection from a curated library, override-able via `SCENEOS_MUSIC_LIBRARY` env JSON. Default library uses `sceneos/audio/<id>` Cloudinary public_ids that customers can drop their own audio into.
+- `synthesize_narration(text)` — ElevenLabs TTS → Cloudinary upload via new `cloudinary.upload_audio_from_bytes`. Auto-skipped when `ELEVEN_LABS_API_KEY` isn't set so demos don't break.
+- `manifest.audioPublicId` is auto-stamped at session start (BOTH modes). `/api/stitch/url` reads it (or honors body override) so the final splice URL includes the `l_audio:<publicId>` overlay.
+
+**Auto-stitch in mock_frontend.**
+- New "Project refs" panel under the loop renders the shared character + location anchors so the user can see the visual-continuity contract.
+- New "Final cut" panel — the moment all 7 beats land a `clipPublicId` (via either the speculative poller in demo mode OR the agent → orchestrate → status path in normal mode), the frontend POSTs `/api/stitch/url` automatically and renders the resulting MP4 inline with audio metadata + a Cloudinary deep link.
+- Mode badge (DEMO / NORMAL) in the header. Demo timer (mm:ss countdown) live in the header during demo mode.
+
+**Tests: 30 green** (was 22). New coverage:
+- `test_session.py`: 8 tests including `test_demo_session_returns_shared_project_refs` (asserts publicId equality across all 7 beats), `test_demo_session_stamps_audio_on_manifest`, `test_orchestrate_normal_mode_lazily_generates_shared_refs` (drift-protection assertion).
+- `test_audio_and_stitch.py`: 5 tests including `test_full_demo_flow_stitches_with_audio` (full session → poll-to-succeeded → stitch round trip; asserts the `l_audio:` segment is in the splice URL) and `test_pick_music_respects_env_override`.
+
+**Live end-to-end smoke (Mock mode, no provider needed):**
+1. `POST /api/session/start {"mode":"demo"}` → 7 speculative jobs + projectRefs + audioPublicId
+2. Agent walks all 7 beats; every `/api/orchestrate` returns `speculativeReused: true`
+3. `/api/status` polls drive every job to `succeeded` with `clipPublicId` + `lastFrameUrl`
+4. `/api/stitch/url` returns a final URL with `l_audio:` overlay
+5. Visual continuity asserted: 1 unique character publicId + 1 unique location publicId across all 7 clips.
+
 ### ✅ Modules A, B, C — done & verified live
 
 **Module A: Last-frame + chain wiring** ✅
@@ -329,31 +373,40 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 ### 🔴 Next up
 
 **Module D: Demo project bake (~1 hr) — IMMEDIATE NEXT** *(user-driven)*
-- Run the full pipeline against ONE chosen master prompt with real providers (Vertex Gemini agent + Imagen refs + Veo or Higgsfield video).
-- Capture all 7 clip `publicId`s as they succeed.
-- Hardcode into `cached.py` so the on-stage safety net replays the same demo instantly when wifi or quota dies.
-- **Why this needs you:** picking the demo prompt and judging the agent questions are creative calls. I can run the pipeline once you've picked.
+- Run the full pipeline against ONE chosen demo prompt with real providers (Vertex Gemini agent + Imagen project refs + Veo or Higgsfield video). Pick `monkey-banana` / `lighthouse-ship` / `drone-mall` from `demo_prompts.py`.
+- Capture all 7 `clipPublicId`s as they succeed + the project's `character` and `location` shared ref publicIds + the audio publicId.
+- Hardcode into `cached.py` so the on-stage safety net replays the same cinematic instantly if wifi or quota dies.
+- **Why this needs the user:** selecting the demo prompt + judging the visual quality is a creative call. The pipeline runs once you've picked.
 
-**Module E: Editing pass (stretch)**
-- Music selection (canned library for hackathon scope).
-- Caption overlays via `l_text:`.
-- Final color grade pass.
-- All Cloudinary URL-only — no server-side render.
+**Module E: Audio polish — voice narration (stretch)**
+- `audio.synthesize_narration` already wired. Needs:
+  1. Per-beat `voiceLine` field added to `beatFacts` (agent emits a single 1-2 sentence narration line at `markSufficient`).
+  2. ElevenLabs API key wired into env.
+  3. Stitch URL extended to overlay TWO `l_audio:` layers (music underneath, narration on top, with mix levels via `e_volume:-30` on the music track).
+- ~30-45 min of work. Skippable for the demo if cinematic music alone reads well.
+
+**Module F: Real frontend handoff** *(teammate's domain)*
+- Hand over SHARED_TYPES.md.
+- Surfaces to consume: `POST /api/session/start` shape (mode buttons + `projectRefs` panel + `manifest.audioPublicId` + `speculativeJobs` map), `POST /api/agent/stream` SSE shape (already wired in mock_frontend; copy the parser), `POST /api/orchestrate/{beatId}` response (now includes `sharedRefs: bool`), `POST /api/stitch/url` (now returns `audioPublicId` for display).
+
+**Module G: Agentic editing teammate's surface** *(teammate's domain)*
+- The agent's per-beat `markSufficient` already lands structured `beatFacts`. The editing teammate's pass plugs in BETWEEN stitch and final delivery: ingest manifest + clipPublicIds → propose trims, captions (`l_text:`), volume curves, optional VO line per beat.
+- Backend exposes `audio.synthesize_narration` + `cloudinary.upload_audio_from_bytes` + the existing `l_audio:` plumbing. No new backend routes needed — they consume the manifest and emit a transformed splice URL.
 
 ### 🟡 In progress (across project)
 
-- Real frontend (Alex) has the canvas + drawer + agent bubble shell but doesn't yet consume `suggestedAnswers` or `beatFacts`. Hand him SHARED_TYPES.md after this turn.
-- `decompose.py` still references the trailer-style mood cues. Works fine for trailer template; for story.* path, the orchestrator's deterministic clipPrompt composer takes over and decompose becomes a fallback.
+- Real frontend has the canvas + drawer + agent bubble shell but doesn't yet consume `/api/session/start` or `projectRefs` or `audioPublicId`. SHARED_TYPES.md update is the handoff.
+- `decompose.py` still references the trailer-style mood cues. Works fine for trailer template; for story.* path, the orchestrator's deterministic clipPrompt composer takes over and decompose becomes a fallback only.
+- `cached.py` provider exists but `cached.py` data file is empty. Module D fills it.
 
 ### 🧊 Cut for hackathon scope (revisit post-LA Hacks)
 
-- Celery + Redis. asyncio.create_task() suffices for single-process FastAPI.
-- Multi-user / auth / persistence beyond localStorage.
+- Celery + Redis. `asyncio.gather` suffices for single-process FastAPI.
+- Multi-user / auth / persistence beyond localStorage. (`_SESSIONS` is in-memory and process-local; that's fine for demo, not for prod.)
 - LangGraph migration of the agent. Per-turn tool loop is fine; LangGraph adds value when you want multi-agent or visual graph debugging, neither needed for demo.
 - Recursive scenes inside a beat.
 - Mobile / responsive.
-- Audio generation (ElevenLabs). Pre-record VO if needed.
-- True parallel video generation across processes. asyncio gives concurrency-on-one-thread, which is enough.
+- True parallel video generation across processes. asyncio gives concurrency-on-one-thread, which is enough for 7 fan-out + speculative kickoff.
 
 ---
 
@@ -361,27 +414,30 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 
 | Layer | File | Owns | Status |
 |---|---|---|---|
-| **Routes** | `app.py` | HTTP surface, error envelope, mock-mode branching. | ✅ |
-| **Agent** | `agent.py` | Per-turn askQuestion / markSufficient with suggestedAnswers + beatFacts. The voice. **Gemini via Vertex.** | ✅ this turn |
-| | `genai_client.py` | `make_genai_client()` for Gemini via Vertex AI. Defaults: `gemini-2.5-flash` for agent, `gemini-2.5-pro` for decompose. | ✅ this turn |
-| | `sufficiency.py` | Facet coverage scoring. MIN=3, MAX=5. | ✅ this turn |
-| | `beat_templates.py` | TRAILER + SHORT + FEATURE + **STORY** archetype lists. | ✅ this turn |
-| **Decompose** | `decompose.py` | Master → all-beats clipPrompts (one-shot LLM with stub fallback). Used as fallback path. | ✅ |
-| | `anthropic_client.py` | Direct API vs Vertex routing. | ✅ |
-| **Orchestrator** | `orchestrator.py` | **NEW.** beatFacts → motion preset + refs + clipPrompt + /api/generate dispatch. | 🔴 |
-| **References** | `vertex_imagen.py` | **NEW.** Vertex Imagen 3 T2I for character + location refs. | 🔴 |
+| **Routes** | `app.py` | HTTP surface, error envelope, mock-mode branching. 12 routes. | ✅ |
+| **Sessions** | `session.py` | Mode-aware boot. `start_session(mode)` + speculative kickoff + `ensure_project_refs` (lazy normal-mode anchors) + manifest builder. In-memory `_SESSIONS` + `_SPECULATIVE` stores. | ✅ this turn |
+| | `demo_prompts.py` | 3 curated demo prompts with hand-tuned `beatFactsByTemplate` for all 7 story beats; 5 normal prompts. Auto-selection. | ✅ this turn |
+| **Agent** | `agent.py` | Per-turn askQuestion / markSufficient with suggestedAnswers + beatFacts. The voice. **Gemini via Vertex.** Demo-mode speed-mode (DEMO_MAX_QUESTIONS=2, THINKING_BUDGET_DEMO=512, dynamic prompt block). | ✅ |
+| | `genai_client.py` | `make_genai_client()` for Gemini via Vertex AI. Defaults: `gemini-2.5-flash` for agent, `gemini-2.5-pro` for decompose. | ✅ |
+| | `sufficiency.py` | Facet coverage scoring. MIN=3, MAX=5 (soft cap). | ✅ |
+| | `beat_templates.py` | TRAILER + SHORT + FEATURE + STORY archetype lists. | ✅ |
+| **Decompose** | `decompose.py` | Master → all-beats clipPrompts (one-shot LLM with stub fallback). Fallback path; orchestrator is the canonical one. | ✅ |
+| | `anthropic_client.py` | Direct API vs Vertex routing (legacy — unused on the story path). | ✅ |
+| **Orchestrator** | `orchestrator.py` | beatFacts → motion preset + project-ref-aware seed pick + clipPrompt + provider.generate dispatch. Returns `sharedRefs: bool`. | ✅ |
+| **References** | `vertex_imagen.py` | Vertex Imagen 3 T2I. `generate_reference()` for ad-hoc + `generate_project_refs()` for once-per-project shared anchors. | ✅ |
+| **Audio** | `audio.py` | `pick_music(videoType, mood)` + `synthesize_narration(text)` (ElevenLabs, opt-in). Manifest auto-stamps `audioPublicId`. | ✅ this turn |
 | **Providers** | `provider.py` | Universal ProviderModule + dispatcher. | ✅ |
-| | `vertex_veo.py` | Vertex Veo 2/3. **Needs startImageUrl wiring.** | 🟡 |
-| | `higgsfield.py` | T2I→I2V→Cloudinary. **Needs startImageUrl shortcut.** | 🟡 |
-| | `fal.py` | LTX-Video. Already chains. | ✅ |
+| | `vertex_veo.py` | Vertex Veo 2/3. startImageUrl wired. | ✅ |
+| | `higgsfield.py` | T2I→I2V→Cloudinary. startImageUrl shortcut wired. | ✅ |
+| | `fal.py` | LTX-Video. Native chaining. | ✅ |
 | | `kling.py`, `replicate.py` | Stubs. | 🧊 |
-| | `cached.py` | On-stage safety net. **Bake the demo project here.** | 🔴 |
-| | `mock.py` | Deterministic mock data. **suggestedAnswers added.** | ✅ this turn |
-| **Media** | `cloudinary.py` | fl_splice URL + color grade + signed upload. **Needs last_frame_url().** | 🟡 |
+| | `cached.py` | On-stage safety net. **Module D bakes the demo project here.** | 🔴 |
+| | `mock.py` | Deterministic mock data + streaming agent parity. | ✅ |
+| **Media** | `cloudinary.py` | fl_splice URL + color grade + signed upload + `last_frame_url` + `upload_image_from_bytes` + `upload_audio_from_bytes`. | ✅ |
 | **State** | `jobs.py` | In-memory Higgsfield job registry. | ✅ |
 | | `config.py` | env loader, mock_mode probe. | ✅ |
-| **Editor** | `editor.py` | **NEW (stretch).** Agentic final pass: music + captions + grade. | 🔴 |
-| **Visualize** | `mock_frontend/index.html` | **NEW.** Standalone agent-loop visualizer. Don't touch real frontend. | ✅ this turn |
+| **Editor** | `editor.py` | Agentic final pass — captions + per-beat trims + VO mixing. Stretch (Module E/G). | 🔴 |
+| **Visualize** | `mock_frontend/index.html` | Standalone end-to-end visualizer with mode picker, demo timer, project refs panel, pipeline dispatch panel, auto-stitch + inline final-cut player. | ✅ |
 
 ---
 
@@ -398,56 +454,71 @@ open mock_frontend/index.html        # macOS
 ```
 
 What you'll see:
-- Master prompt input at the top.
-- 7 nodes in a horizontal strip: hook → exposition → inciting → rising → climax → falling → resolution. Active one glows.
-- Conversation panel: agent bubble (with character-by-character feel) → user bubble.
-- Below the latest agent question: 3 suggested-answer chips + a free-text input.
-- Right rail: structured beatFacts as the agent extracts them. **You** can see the structure even though the user wouldn't.
-- When markSufficient fires for a beat, it visually completes (green tick), the next beat activates, the conversation continues.
+1. **Mode picker.** Two big buttons: DEMO (3-4 min, auto-prompt, all 7 beats kicked off speculatively) and NORMAL (full agent loop, no time budget). Optional `masterPromptOverride` hidden behind a `<details>`.
+2. **Header.** Mode badge + demo timer (mm:ss countdown when in demo mode).
+3. **Beat strip.** 7 nodes: hook → exposition → inciting → rising → climax → falling → resolution. In demo mode, each shows a `▱ rendering…` badge that flips to `▰ pre-warmed` when its speculative clip is ready.
+4. **Project refs panel.** Two stills, side by side: the SHARED character + location anchors used by every beat. Visual continuity contract.
+5. **Conversation panel.** Agent bubbles streaming character-by-character; user bubbles. 3 suggested-answer chips below the latest question.
+6. **Right rail.** Structured beatFacts as the agent extracts them (you see the architecture; the user doesn't).
+7. **Pipeline dispatch panel.** After markSufficient for a beat: chain-or-cut tag, character/location ref thumbnails, motion preset, provider jobId. In demo mode shows `pre-warmed · cached` (instant); in normal mode shows the live orchestration.
+8. **Final cut.** When all 7 beats land a `clipPublicId`, this panel auto-pops with a stitched MP4 + audio metadata + Cloudinary deep link.
 
-To test against real Anthropic (not mock):
+To run against real providers (not mock):
 ```bash
 # Terminal 1
 cd backend_py
-ANTHROPIC_API_KEY=<your-key> uvicorn sceneos_py.app:app --reload --port 8787
-# (or set ANTHROPIC_USE_VERTEX=true + GCP_PROJECT_ID for Vertex.)
+GOOGLE_PROJECT_ID=<your-project> \
+GOOGLE_APPLICATION_CREDENTIALS=<path-to-sa.json> \
+CLOUDINARY_URL=cloudinary://<key>:<secret>@<cloud> \
+GENERATION_PROVIDER=vertex \
+uvicorn sceneos_py.app:app --reload --port 8787
+# Optional: ELEVEN_LABS_API_KEY=<key>  for narration
+# Optional: SCENEOS_MUSIC_LIBRARY='{"story":{"auto":"sceneos/audio/your-track"}}'  for custom music
 ```
 
-mock_frontend doesn't change. It just hits /api/agent.
+mock_frontend doesn't change. It just hits the same endpoints.
 
 ---
 
-## 10. The honest priority order for the next 12 hours
+## 10. The honest priority order for the remaining ~16 hours
 
 ```
-NOW            Verify mock_frontend renders the agent loop end-to-end. Type a master
-               prompt, click Begin, answer 3 questions, watch the next node activate.
-               This is the proof the agent works.
+NOW            Open mock_frontend/index.html, point it at the running backend.
+               Click DEMO. Verify: mode badge, demo timer, project refs panel
+               populates, beat strip shows pre-warmed badges, agent walks 7 beats,
+               final cut renders inline with audio. This is the proof. Backend
+               is closed; everything from here is data + handoff + practice.
 
-HOUR 0-1       Module A: last-frame + chain wiring. Three files, ~30 lines.
-               After: fal already chains, Veo + Higgsfield now also chain.
+HOUR 0-1       Module D — the demo bake. Pick a demo prompt (monkey-banana,
+               lighthouse-ship, drone-mall). Run /api/session/start with real
+               providers (no MOCK_MODE). Wait ~3 min. Capture the projectRefs
+               publicIds + all 7 clip publicIds + the chosen audioPublicId.
+               Paste into cached.py. The on-stage failure mode goes from
+               "white screen" to "instant replay."
 
-HOUR 1-2.5     Module B: vertex_imagen.py + /api/references/generate.
-               After: character + location refs are programmatic.
+HOUR 1-2       Hand SHARED_TYPES.md + a 1-page brief to the frontend teammate.
+               The brief: "session/start gives you everything; just consume
+               manifest + projectRefs + speculativeJobs + audioPublicId."
 
-HOUR 2.5-4.5   Module C: orchestrator.py.
-               After: agent calls markSufficient → orchestrator dispatches everything
-               deterministically. Demo path is conceptually closed.
+HOUR 2-3       Hand a 1-page brief to the agentic-editing teammate. Their pass
+               sits between stitch and final delivery; backend exposes
+               audio.synthesize_narration + l_audio: + l_text: primitives.
 
-HOUR 4.5-5.5   Module D: bake the demo project. Render all 7 beats with real Vertex
-               or Higgsfield. Paste public_ids into cached.py.
+HOUR 3-4       (Optional) Module E — voice narration polish. Wire ELEVEN_LABS_API_KEY,
+               extend agent.markSufficient to emit a voiceLine, double-overlay
+               in stitch. Skippable if music alone reads well in practice.
 
-HOUR 5.5-7     Hand SHARED_TYPES.md to Alex. He wires the real frontend to consume
-               suggestedAnswers + beatFacts. (Not your work — your work is plumbing.)
+HOUR 4-7       Practice the demo. Time it. Sub-4-minutes is the bar. Note
+               where the agent slows down. Tune DEMO_MAX_QUESTIONS or the
+               speed-mode block in agent.py if needed.
 
-HOUR 7-9       Practice the demo. Time it. Sub-4-minutes is the bar.
+HOUR 7-10      Cushion + sleep.
 
-HOUR 9-10      Stretch: editor.py for the final agentic pass, OR rest.
-
-HOUR 10-12     Sleep.
+HOUR 10-16     Show up. Run the demo from the cached tier as a warm-up. Run
+               the live demo for the judges.
 ```
 
-If a step takes more than 2x its budget: scope-cut to the cached tier and ship.
+If anything takes more than 2x its budget: drop to the cached tier and ship.
 
 ---
 

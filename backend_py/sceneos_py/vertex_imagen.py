@@ -58,6 +58,68 @@ def _stub_demo_url(kind: str) -> str:
     return f"https://res.cloudinary.com/{cloud}/image/upload/{public_id}.jpg"
 
 
+async def generate_project_refs(
+    *,
+    project_id: str | None,
+    character_description: str | None,
+    location_description: str | None,
+    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+) -> dict:
+    """
+    Generate ONE character ref and ONE location ref per project, in parallel.
+
+    This is the visual-continuity anchor: a single character image + a single
+    location image that EVERY beat reuses as its I2V seed. Without this, each
+    beat's pipeline calls Imagen independently and gets a different chimp /
+    different lighthouse / different drone — the protagonist drifts beat to
+    beat, which is the most-noticed-by-humans failure mode.
+
+    Returns:
+      {
+        "character": {imageUrl, publicId, kind, prompt} | None,
+        "location":  {imageUrl, publicId, kind, prompt} | None,
+      }
+
+    Either ref may be None if the description was empty or generation failed.
+    Callers are expected to fall back gracefully — usually by passing the
+    other ref as the seed, or by skipping I2V entirely.
+    """
+    coros: list[Any] = []
+    kinds: list[str] = []
+    if character_description:
+        coros.append(generate_reference(
+            kind="character",
+            description=character_description,
+            project_id=project_id,
+            beat_id="shared",
+            aspect_ratio=aspect_ratio,
+        ))
+        kinds.append("character")
+    if location_description:
+        coros.append(generate_reference(
+            kind="location",
+            description=location_description,
+            project_id=project_id,
+            beat_id="shared",
+            aspect_ratio=aspect_ratio,
+        ))
+        kinds.append("location")
+
+    refs: dict[str, dict | None] = {"character": None, "location": None}
+    if not coros:
+        return refs
+
+    results = await asyncio.gather(*coros, return_exceptions=True)
+    for kind, res in zip(kinds, results):
+        if isinstance(res, Exception):
+            # Soft failure — caller can fall back to the other ref. The
+            # alternative (raise) tears down the whole project boot.
+            refs[kind] = None
+            continue
+        refs[kind] = res
+    return refs
+
+
 async def generate_reference(
     *,
     kind: str,

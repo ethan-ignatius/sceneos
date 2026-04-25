@@ -6,20 +6,27 @@ and dispatches everything downstream WITHOUT an LLM in the loop:
 
   1. Motion preset lookup (mood → preset table)
   2. chainFromPrevious decision (from manifest)
-  3. Reference images (Imagen 3) when not chained or first beat
-     — character + location are generated CONCURRENTLY via asyncio.gather
+  3. Reference images: character + location are PROJECT-LEVEL. They are
+     generated ONCE at session-start (see session.start_session →
+     vertex_imagen.generate_project_refs) and passed in here as
+     `project_refs`. Every beat reuses the same character + location frame
+     as its I2V seed so the protagonist + world stay consistent across
+     all 7 beats. This is the most-noticed-by-humans correctness property.
+     If `project_refs` is missing AND chaining is unavailable, we fall back
+     to per-beat Imagen calls so the pipeline degrades gracefully.
   4. clipPrompt composition (image prompt + motion prompt)
-  5. Provider.generate() submission, with startImageUrl seeded from either
-     the previous beat's lastFrameUrl OR the freshly generated character ref
+  5. Provider.generate() submission, with startImageUrl seeded from
+     project ref → previous beat's lastFrameUrl → fresh per-beat ref.
 
 The point of the boundary: the agent decides the *story*, the orchestrator
 executes the *production*. Reliability lives here.
 
 Demo mode: when a session was started via /api/session/start with mode=demo,
 all 7 beats were already kicked off speculatively at T=0 using curated
-beatFacts (see session.py). The agent conversation runs in parallel as
-theatre. When the frontend hits /api/orchestrate after markSufficient, we
-return the existing speculative job — NO new work is done.
+beatFacts (see session.py) and a SHARED character + location ref. The agent
+conversation runs in parallel as theatre. When the frontend hits
+/api/orchestrate after markSufficient, we return the existing speculative
+job — NO new work is done.
 """
 from __future__ import annotations
 
@@ -98,6 +105,31 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
 # ── Pipeline entry point ──────────────────────────────────────────────────
 
 
+def _pick_seed_for_framing(framing: str | None, project_refs: dict | None) -> tuple[dict | None, dict | None, str | None]:
+    """Decide which project-level ref to use as the I2V seed for this beat.
+
+    Returns (character_ref, location_ref, seed_image_url).
+
+    Heuristic: wide / establishing / locked-off framings prefer the LOCATION
+    ref so the gen model anchors on the geography. Close / medium / handheld
+    / push-in framings prefer the CHARACTER ref so the protagonist's identity
+    stays locked. Both refs are still surfaced in the response for the
+    visualizer + downstream consumers.
+    """
+    refs = project_refs or {}
+    char = refs.get("character")
+    loc = refs.get("location")
+    f = (framing or "").lower()
+    prefer_location = any(kw in f for kw in ("wide", "establish", "static", "locked off", "locked-off", "24mm", "god view", "pull-back", "pull back"))
+    if prefer_location and loc:
+        return char, loc, loc.get("imageUrl")
+    if char:
+        return char, loc, char.get("imageUrl")
+    if loc:
+        return char, loc, loc.get("imageUrl")
+    return char, loc, None
+
+
 async def run_beat_pipeline(
     *,
     manifest: dict,
@@ -105,9 +137,18 @@ async def run_beat_pipeline(
     beat_facts: dict,
     previous_last_frame_url: str | None = None,
     aspect_ratio: str = "16:9",
+    project_refs: dict | None = None,
 ) -> dict:
     """
     Orchestrate one beat from beatFacts → submitted video job.
+
+    Args:
+      project_refs: { "character": {imageUrl, publicId, ...} | None,
+                      "location":  {imageUrl, publicId, ...} | None }
+        Generated ONCE per project at session start (see session.py). When
+        provided, every beat reuses these as its I2V seed instead of doing
+        a fresh per-beat Imagen call. This is what keeps the character +
+        location consistent across all 7 beats.
 
     Returns:
       {
@@ -116,6 +157,7 @@ async def run_beat_pipeline(
         seedImageUrl: str | None,
         characterRef: { imageUrl, publicId, kind, prompt } | None,
         locationRef:  { imageUrl, publicId, kind, prompt } | None,
+        sharedRefs: bool,         # True when project_refs were used
         motionPreset: { ... },
         clipPrompt:   { imagePrompt, motionPrompt, ... },
         refinedPrompt: str,
@@ -132,15 +174,29 @@ async def run_beat_pipeline(
     character_ref: dict | None = None
     location_ref: dict | None = None
     seed_image_url: str | None = None
+    shared_refs = False
 
-    if chain:
+    # Priority order for the I2V seed:
+    #   1. Project-level shared refs (character + location consistency)
+    #   2. Previous beat's lastFrameUrl (chain — narrative continuity)
+    #   3. Fresh per-beat Imagen (fallback when neither exists)
+    #
+    # We deliberately put project_refs above chaining: a 5s clip that picks
+    # up from the previous frame but doesn't show the same character/world
+    # is a worse failure mode than a hard cut between beats.
+
+    if project_refs and (project_refs.get("character") or project_refs.get("location")):
+        character_ref, location_ref, seed_image_url = _pick_seed_for_framing(
+            beat_facts.get("framing") or motion_preset.get("composition"),
+            project_refs,
+        )
+        shared_refs = True
+    elif chain:
         seed_image_url = previous_last_frame_url
     else:
-        # First beat or hard cut — generate fresh reference frames.
-        # Run character + location concurrently. Imagen is ~3-6s per call;
-        # parallelizing halves the per-beat cost. In demo mode, all 7 beats
-        # also run in parallel (kickoff_speculative_pipelines), so total
-        # Imagen wallclock is ~5-8s for 14 calls instead of ~70-100s serial.
+        # Last-resort fallback: no project refs, no chain. Generate per-beat
+        # refs concurrently. Older callers (tests, ad-hoc /api/orchestrate
+        # without /api/session/start) take this path.
         coros = []
         kinds = []
         if beat_facts.get("characterDescription"):
@@ -165,15 +221,11 @@ async def run_beat_pipeline(
             results = await asyncio.gather(*coros, return_exceptions=True)
             for kind, ref in zip(kinds, results):
                 if isinstance(ref, Exception):
-                    # Don't tear down the whole pipeline if one ref fails —
-                    # the other ref or the chain seed can carry the I2V step.
                     continue
                 if kind == "character":
                     character_ref = ref
                 elif kind == "location":
                     location_ref = ref
-        # Prefer the character reference as the I2V seed for character continuity;
-        # fall back to the location ref if no character was described.
         seed_image_url = (character_ref or {}).get("imageUrl") or (location_ref or {}).get("imageUrl")
 
     clip_prompt = compose_clip_prompt(beat, beat_facts, motion_preset, aspect_ratio)
@@ -209,6 +261,7 @@ async def run_beat_pipeline(
         "seedImageUrl": seed_image_url,
         "characterRef": character_ref,
         "locationRef": location_ref,
+        "sharedRefs": shared_refs,
         "motionPreset": motion_preset,
         "clipPrompt": clip_prompt,
         "refinedPrompt": refined_prompt,

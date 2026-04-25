@@ -358,6 +358,36 @@
         </div>
       </div>
     </div>
+
+    <!-- ── Project refs & final cut ───────────────────────────────────── -->
+    <div id="projectRefsRow" class="hidden mt-5 grid grid-cols-12 gap-5">
+      <div class="col-span-12 panel p-5">
+        <div class="flex items-center justify-between mb-3">
+          <span class="label label-accent">project refs · shared across all 7 beats</span>
+          <span class="text-[10px] text-zinc-600 mono">visual-continuity anchor</span>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <div class="label text-[9px] mb-2">character</div>
+            <img id="projectCharImg" class="w-full rounded-md aspect-video object-cover bg-zinc-900/40 border border-white/[.06]" alt="character ref" />
+          </div>
+          <div>
+            <div class="label text-[9px] mb-2">location</div>
+            <img id="projectLocImg" class="w-full rounded-md aspect-video object-cover bg-zinc-900/40 border border-white/[.06]" alt="location ref" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="finalCutRow" class="hidden mt-5 panel p-5">
+      <div class="flex items-center justify-between mb-3">
+        <span class="label label-accent">final cut · stitched + scored</span>
+        <span id="finalCutStatus" class="text-[10px] text-zinc-600 mono">waiting on beats…</span>
+      </div>
+      <div id="finalCutBody" class="space-y-3">
+        <p class="text-zinc-700 italic text-sm">stitching kicks off automatically when all 7 clips are ready.</p>
+      </div>
+    </div>
   </section>
 
   <script>
@@ -393,8 +423,10 @@
     let previousLastFrameUrl = null;  // chain primitive — fed to next beat's orchestrate call
     let sessionMode = null;           // 'demo' | 'normal'
     let speculativeJobs = {};         // { beatId: orchestrateResult } from /api/session/start
+    let projectRefs = null;           // { character, location } shared across all beats
     let demoStartedAt = null;
     let demoTimerHandle = null;
+    let finalCutKicked = false;       // guard — stitch fires once per session
 
     const $ = (id) => document.getElementById(id);
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -794,6 +826,7 @@
       manifest = session.manifest;
       sessionMode = session.mode;
       speculativeJobs = session.speculativeJobs || {};
+      projectRefs = session.projectRefs || null;
       currentBeatIndex = 0;
       previousLastFrameUrl = null;
 
@@ -805,6 +838,7 @@
       if (sessionMode === 'demo') {
         startDemoTimer();
         primeSpeculativeStrip();
+        renderProjectRefs();
       }
 
       renderBeatStrip();
@@ -890,10 +924,109 @@
         beat.scenes[0].lastFrameUrl = body.lastFrameUrl;
         beat.scenes[0].prewarmReady = true;
         renderBeatStrip();
+        maybeKickFinalCut();
       } catch (_err) {
         // Silent — the orchestrate path will surface the error if the
         // agent ever lands on this beat.
       }
+    }
+
+    /* ── Project refs ──────────────────────────────────────────────────── */
+    function renderProjectRefs() {
+      if (!projectRefs) return;
+      const row = $('projectRefsRow');
+      const charImg = $('projectCharImg');
+      const locImg  = $('projectLocImg');
+      const charUrl = (projectRefs.character || {}).imageUrl;
+      const locUrl  = (projectRefs.location  || {}).imageUrl;
+      if (!charUrl && !locUrl) return;
+      if (charUrl) charImg.src = charUrl; else charImg.style.opacity = 0.3;
+      if (locUrl)  locImg.src  = locUrl;  else locImg.style.opacity  = 0.3;
+      row.classList.remove('hidden');
+    }
+
+    /* ── Final cut (auto-stitch) ───────────────────────────────────────── */
+    function showFinalCutPanel() {
+      const row = $('finalCutRow');
+      row.classList.remove('hidden');
+      row.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    function setFinalCutStatus(text, tone) {
+      const el = $('finalCutStatus');
+      el.textContent = text;
+      el.style.color = tone === 'done' ? 'rgb(52 211 153)'
+        : tone === 'error' ? 'rgb(248 113 113)'
+        : 'rgb(251 191 36)';
+    }
+
+    async function maybeKickFinalCut() {
+      if (finalCutKicked || !manifest) return;
+      // All 7 beats must have a clipPublicId (either via the speculative
+      // poller or the agent → orchestrate → status path).
+      const allReady = manifest.beats.every((b) => b.scenes && b.scenes[0] && b.scenes[0].clipPublicId);
+      if (!allReady) return;
+      finalCutKicked = true;
+      showFinalCutPanel();
+      setFinalCutStatus('stitching all 7 clips…', 'working');
+
+      // Build a stitch-shaped manifest from what we have: every beat
+      // gets status='approved' (the contract /api/stitch/url uses) and
+      // its clipPublicId + duration. We send a copy so we don't mutate
+      // the live manifest.
+      const stitchManifest = {
+        ...manifest,
+        beats: manifest.beats.map((b) => ({
+          ...b,
+          status: 'approved',
+          archetype: b.archetype,
+          scenes: b.scenes.map((s) => ({
+            ...s,
+            clipPublicId: s.clipPublicId,
+            durationSeconds: s.durationSeconds || (b.archetype && b.archetype.suggestedDuration) || 5,
+          })),
+        })),
+      };
+
+      try {
+        const res = await postJson('/api/stitch/url', {
+          manifest: stitchManifest,
+          colorGrade: true,
+        });
+        renderFinalCut(res);
+        setFinalCutStatus(`done · ${res.durationSeconds}s`, 'done');
+      } catch (err) {
+        $('finalCutBody').innerHTML = `
+          <div class="text-rose-400 text-[12px] mono">stitch failed: ${escapeHtml(err.message || 'unknown')}</div>
+          <div class="text-zinc-600 text-[11px] mt-2">All 7 clips rendered — but the final splice URL build failed. Check Cloudinary creds.</div>
+        `;
+        setFinalCutStatus('error', 'error');
+      }
+    }
+
+    function renderFinalCut(res) {
+      const url = res.finalUrl || res.finalVideoUrl;
+      const audio = res.audioPublicId;
+      $('finalCutBody').innerHTML = `
+        <video class="w-full rounded-md bg-black border border-white/[.06]" controls preload="metadata" poster="${escapeHtml(res.thumbnailUrl || '')}">
+          <source src="${escapeHtml(url)}" type="video/mp4" />
+          your browser cannot play the splice URL directly. <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" class="text-amber-400">open in a new tab</a>
+        </video>
+        <div class="grid grid-cols-3 gap-3 text-[11px] mt-3">
+          <div>
+            <div class="label text-[9px] mb-1">duration</div>
+            <div class="text-zinc-300 mono">${res.durationSeconds || '?'}s</div>
+          </div>
+          <div>
+            <div class="label text-[9px] mb-1">audio</div>
+            <div class="text-zinc-300 mono break-all">${audio ? escapeHtml(audio) : '<span class="text-zinc-600">none</span>'}</div>
+          </div>
+          <div>
+            <div class="label text-[9px] mb-1">cloudinary url</div>
+            <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" class="text-amber-400 mono break-all hover:underline">open ↗</a>
+          </div>
+        </div>
+      `;
     }
 
     async function sendAnswer(text) {
@@ -986,6 +1119,18 @@
           beat.scenes[0].seedImageUrl = orchestrateResult.seedImageUrl || null;
           beat.scenes[0].clipPrompt = orchestrateResult.clipPrompt || null;
           beat.chainFromPrevious = orchestrateResult.chainFromPrevious;
+          // Lazy normal-mode population: the orchestrator returns the
+          // shared character + location refs when sharedRefs=true. The
+          // first beat's markSufficient triggers their generation; we
+          // mirror them into the projectRefs panel so the user can see
+          // the visual-continuity anchors as soon as they exist.
+          if (!projectRefs && orchestrateResult.sharedRefs) {
+            projectRefs = {
+              character: orchestrateResult.characterRef || null,
+              location:  orchestrateResult.locationRef  || null,
+            };
+            renderProjectRefs();
+          }
           renderPipeline(orchestrateResult);
           if (orchestrateResult.speculativeReused) {
             // Demo mode: this beat's job was kicked off at session-start,
@@ -1007,7 +1152,9 @@
               beat.scenes[0].clipUrl = statusBody.clipUrl;
               beat.scenes[0].clipPublicId = statusBody.clipPublicId;
               beat.scenes[0].lastFrameUrl = statusBody.lastFrameUrl;
+              beat.scenes[0].durationSeconds = statusBody.durationSeconds || beat.scenes[0].durationSeconds || (beat.archetype && beat.archetype.suggestedDuration) || 5;
               setPipelineStatus('clip ready', 'done');
+              maybeKickFinalCut();
             } else {
               // Timeout — real-mode video still rendering. Don't chain;
               // next beat will get fresh refs.
@@ -1051,10 +1198,15 @@
       previousLastFrameUrl = null;
       sessionMode = null;
       speculativeJobs = {};
+      projectRefs = null;
+      finalCutKicked = false;
       stopDemoTimer();
       setThinkingActive(false);
       clearPipeline();
       $('modeBadge').classList.add('hidden');
+      $('projectRefsRow').classList.add('hidden');
+      $('finalCutRow').classList.add('hidden');
+      $('finalCutBody').innerHTML = `<p class="text-zinc-700 italic text-sm">stitching kicks off automatically when all 7 clips are ready.</p>`;
       $('loop').classList.add('hidden');
       $('boot').classList.remove('hidden');
       $('resetBtn').classList.add('hidden');

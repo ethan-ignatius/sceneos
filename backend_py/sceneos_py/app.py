@@ -253,6 +253,16 @@ async def orchestrate(beat_id: str, body: dict):
 
     if mock_mode():
         # Mock branch: skip Imagen + provider, return deterministic stub mirroring the live shape.
+        # We honor the same project-refs contract as the live branch so
+        # tests + the visualizer see identical shapes between mock and
+        # real mode. Project refs come from ensure_project_refs() —
+        # which itself uses the mock-refs synth when MOCK_MODE=true.
+        project_refs = await session_service.ensure_project_refs(
+            project_id=project_id,
+            character_description=beat_facts.get("characterDescription"),
+            location_description=beat_facts.get("locationDescription"),
+            aspect_ratio=aspect_ratio,
+        )
         chain = orchestrator.decide_chain(manifest, beat, previous_last_frame_url)
         motion_preset = pick_motion_preset(beat_facts.get("mood") or beat.get("archetype", {}).get("mood", "cinematic"))
         clip_prompt = orchestrator.compose_clip_prompt(beat, beat_facts, motion_preset, aspect_ratio)
@@ -260,7 +270,31 @@ async def orchestrate(beat_id: str, body: dict):
         scenes = beat.get("scenes") or []
         scene_id = (scenes[0] or {}).get("sceneId") if scenes else f"{beat_id}-scene-1"
         cloud = env("CLOUDINARY_CLOUD_NAME") or "demo"
-        seed = previous_last_frame_url if chain else f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg"
+
+        if project_refs and (project_refs.get("character") or project_refs.get("location")):
+            # Project refs win over chaining (same priority as the live
+            # orchestrator). The framing-based pick keeps wide framings
+            # routed to the location ref.
+            character_ref, location_ref, seed = orchestrator._pick_seed_for_framing(
+                beat_facts.get("framing") or motion_preset.get("composition"),
+                project_refs,
+            )
+            shared_refs = True
+        else:
+            shared_refs = False
+            seed = previous_last_frame_url if chain else f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg"
+            character_ref = None if chain else {
+                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg",
+                "publicId": f"mock::character-{beat_id}",
+                "kind": "character",
+                "prompt": "[mock] cinematic character reference",
+            }
+            location_ref = None if chain else {
+                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/couple.jpg",
+                "publicId": f"mock::location-{beat_id}",
+                "kind": "location",
+                "prompt": "[mock] cinematic location reference",
+            }
         return {
             "sceneId": scene_id,
             "jobId": mock_service.deterministic_job_id("mock", f"{beat['template']}-{scene_id}"),
@@ -268,30 +302,33 @@ async def orchestrate(beat_id: str, body: dict):
             "pollAfterMs": 800,
             "chainFromPrevious": chain,
             "seedImageUrl": seed,
-            "characterRef": None if chain else {
-                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg",
-                "publicId": f"mock::character-{beat_id}",
-                "kind": "character",
-                "prompt": "[mock] cinematic character reference",
-            },
-            "locationRef": None if chain else {
-                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/couple.jpg",
-                "publicId": f"mock::location-{beat_id}",
-                "kind": "location",
-                "prompt": "[mock] cinematic location reference",
-            },
+            "characterRef": character_ref,
+            "locationRef": location_ref,
+            "sharedRefs": shared_refs,
             "motionPreset": motion_preset,
             "clipPrompt": clip_prompt,
             "refinedPrompt": refined_prompt,
         }
 
     try:
+        # Look up (or generate-and-cache) the project-level character +
+        # location refs. In demo mode this was already populated at
+        # /api/session/start. In normal mode this is the lazy first-time
+        # generation triggered by the first markSufficient that ships
+        # characterDescription / locationDescription.
+        project_refs = await session_service.ensure_project_refs(
+            project_id=project_id,
+            character_description=beat_facts.get("characterDescription"),
+            location_description=beat_facts.get("locationDescription"),
+            aspect_ratio=aspect_ratio,
+        )
         result = await orchestrator.run_beat_pipeline(
             manifest=manifest,
             beat_id=beat_id,
             beat_facts=beat_facts,
             previous_last_frame_url=previous_last_frame_url,
             aspect_ratio=aspect_ratio,
+            project_refs=project_refs,
         )
         # Cache it under the projectId so subsequent calls (e.g. retries)
         # hit the same job without re-submitting.
@@ -549,7 +586,18 @@ def stitch(body: dict):
         }
         for item in approved
     ]
-    final_url = build_splice_url(clips, body.get("audioPublicId"))
+    # Audio resolution order: explicit body.audioPublicId > manifest.audioPublicId
+    # > picked-by-mood from audio.pick_music. The session-start path stamps
+    # the manifest field so this is usually a no-op; the body override is
+    # for power-user / external callers.
+    audio_public_id = body.get("audioPublicId") or manifest.get("audioPublicId")
+    if not audio_public_id:
+        from . import audio as audio_service
+        audio_public_id = audio_service.pick_music(
+            manifest.get("videoType", "story"),
+            mood="auto",
+        )
+    final_url = build_splice_url(clips, audio_public_id)
     if not final_url:
         raise HTTPException(status_code=500, detail="Failed to build splice URL")
 
@@ -558,6 +606,7 @@ def stitch(body: dict):
         "finalUrl": final_url,
         "thumbnailUrl": build_thumbnail_url(clips[0]["publicId"]),
         "durationSeconds": duration_seconds,
+        "audioPublicId": audio_public_id,
     }
 
 
