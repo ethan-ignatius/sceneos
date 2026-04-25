@@ -163,10 +163,11 @@ export interface GenerateResponse {
  * Dispatch tiers, switched via backend GENERATION_PROVIDER env var.
  *  - higgsfield: recorded-demo tier (best quality, slow)
  *  - kling:      live-demo tier (faster, slightly lower quality)
+ *  - fal:        fast/cheap real-AI tier via fal.ai (LTX-Video)
  *  - replicate:  multi-model fallback
  *  - cached:     hard-coded demo project (instant, on-stage safety net)
  */
-export type GenerationProvider = "higgsfield" | "kling" | "replicate" | "cached";
+export type GenerationProvider = "higgsfield" | "kling" | "fal" | "replicate" | "cached";
 ```
 
 ### `GET /api/status/:jobId`

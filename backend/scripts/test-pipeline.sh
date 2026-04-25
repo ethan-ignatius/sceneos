@@ -4,16 +4,39 @@
 # Usage:
 #   ./scripts/test-pipeline.sh
 #   ./scripts/test-pipeline.sh "A lone astronaut at a porthole, Earth in visor, golden hour"
+#   ./scripts/test-pipeline.sh --real "a lone astronaut at a porthole, Earth in her visor"
 #   PORT=8787 ./scripts/test-pipeline.sh
+#
+# Flags:
+#   --real    Asserts that the backend is dispatching to a real AI provider
+#             (fal.ai LTX-Video). Prints a warning if the response comes back
+#             with provider != "fal" (which means the backend was started with
+#             a different GENERATION_PROVIDER, or with MOCK_MODE=true).
+#
+#             The backend must be started with these env vars:
+#               FAL_API_KEY=<key> GENERATION_PROVIDER=fal MOCK_MODE=false npm run dev
 #
 # Requires the backend running (`npm run dev`) and Cloudinary creds in .env.
 # Provider auto-selects: mock by default, Higgsfield when HIGGSFIELD_API_KEY is set.
 
 set -euo pipefail
 
+REAL=0
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --real)
+      REAL=1
+      ;;
+    *)
+      ARGS+=("$arg")
+      ;;
+  esac
+done
+
 PORT="${PORT:-8787}"
 BASE="http://localhost:${PORT}"
-PROMPT="${1:-A lone astronaut stands at a porthole, Earth reflected in her visor, golden hour light, cinematic, IMAX, shallow depth of field}"
+PROMPT="${ARGS[0]:-A lone astronaut stands at a porthole, Earth reflected in her visor, golden hour light, cinematic, IMAX, shallow depth of field}"
 DURATION="${DURATION:-8}"
 PROJECT_ID="${PROJECT_ID:-test-$(date +%s)}"
 BEAT_ID="${BEAT_ID:-hook}"
@@ -23,6 +46,16 @@ MAX_POLLS="${MAX_POLLS:-60}"  # 60 × 5s = 5 min ceiling
 if ! command -v jq >/dev/null 2>&1; then
   echo "error: jq is required (install with: brew install jq)" >&2
   exit 1
+fi
+
+if [ "$REAL" -eq 1 ]; then
+  cat <<'EOF'
+─────────────────────────────────────────────────────────────────────────
+  --real: expecting fal.ai LTX-Video. This burns fal credit (~$0.01)
+  and takes ~10–30s. Backend must be started with:
+    FAL_API_KEY=<key> GENERATION_PROVIDER=fal MOCK_MODE=false npm run dev
+─────────────────────────────────────────────────────────────────────────
+EOF
 fi
 
 echo "→ POST $BASE/api/generate"
@@ -49,6 +82,13 @@ POLL_MS=$(echo "$GEN_RESPONSE" | jq -r '.pollAfterMs // 5000')
 if [ -z "$JOB_ID" ]; then
   echo "✗ generate did not return a jobId" >&2
   exit 1
+fi
+
+if [ "$REAL" -eq 1 ] && [ "$PROVIDER" != "fal" ]; then
+  cat >&2 <<EOF
+⚠ --real was passed but the server returned provider="$PROVIDER" (expected "fal").
+  Stop the backend and restart with the env vars in the banner above.
+EOF
 fi
 
 echo
