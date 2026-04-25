@@ -39,7 +39,9 @@ All foundation primitives are shipped. Every Phase 1+ task imports from these. F
 
 ---
 
-## Phase 1 — Landing surface (the first 30 seconds judges see)
+## Phase 1 — Landing surface ✅ COMPLETE (2026-04-25)
+
+The first 30 seconds judges see. All 7 items shipped across rounds 4–6. Surface lives at `frontend/src/routes/landing-route.tsx`.
 
 ### 1.1 🔴 Landing load choreography (the cinematic entrance) — 2h
 - **Surface:** `routes/landing-route.tsx`
@@ -66,20 +68,23 @@ All foundation primitives are shipped. Every Phase 1+ task imports from these. F
 - **Spec:** 30%-opacity radial gradient (320px radius, ember-warm) follows pointer. CSS-only via custom property updates.
 - **Acceptance:** cursor moves; warm halo follows; no jank; respects reduced-motion (turns off entirely).
 
-### 1.4 🟠 Input field — focus + character-rhythm — 0.5h
-- **Spec:**
-  - On focus: underline draws from left (already in 1.1, but post-load this is on-focus).
-  - On every keystroke: a 60ms ember-tinted underline pulse (subtle).
-  - Placeholder fades in/out with `quick` instead of cutting.
+### 1.4 ✅ Input field — focus + character-rhythm
+- Three-layer underline: (1) base track at 40% fg-tertiary, (2) draw-in ember layer that scales-X on focus or has-content, (3) keystroke pulse that re-mounts per keystroke for a brief 180ms brightness boost. See `routes/landing-route.tsx`.
 
-### 1.5 🟡 Pill selection — sliding ember underline (`layoutId`) — 0.5h
-- **Spec:** Motion's `layoutId` shared between the three pills' underlines so the active indicator slides between them on click instead of cutting. Spring `bubble`.
+### 1.5 ✅ Pill selection — sliding ember underline via `layoutId`
+- Active pill renders a `motion.span` with `layoutId="pill-active-bg"`. Only one pill renders it at a time (the active one); Motion morphs the box between pills using a 380/30 spring. The result is the sliding ember background that follows the click. See `routes/landing-route.tsx`.
 
-### 1.6 🟡 Subtle background ember radial-pulse — 0.3h
-- **Spec:** the existing ember radial gradient pulses 40%→60%→40% over 6s. Almost imperceptible but reads as "alive." Single keyframe.
+### 1.6 ✅ Subtle background ember radial-pulse
+- Already shipped in round 4. `motion.div` cycles opacity 0.4 → 0.7 → 0.4 over 6s, infinite. Behind everything else.
 
-### 1.7 🟢 Easter-egg long-press on version label opens demo project — 0.3h
-- **Spec:** holding the bottom-left "SceneOS · v0" for 1s triggers the cached demo trailer. Useful for judges who poke; safety net.
+### 1.7 ✅ Easter-egg long-press on version label opens demo project
+- `useLongPress` hook + version label button. Hold for 1s to load the cached demo project (`DEMO_PROMPT` + trailer + initialize). Visible thin ember progress bar fills under the label while held. See `lib/use-long-press.ts` and `routes/landing-route.tsx`.
+
+**Phase 1 audit notes (post-implementation, against `UI_FUNDAMENTALS.md`):**
+- ✓ 60-30-10: ember accent appears only on (a) input draw-in underline when focused/has-content, (b) keystroke pulse, (c) active pill ring + bg, (d) magnetic-button when ready, (e) long-press progress bar, (f) center radial breath. Total surface ≤ 8% — well under the 10% accent budget.
+- ✓ Title-case CTAs: "Begin" (single word). Pill labels are mono-uppercase tracking — allowed for caption/microtype, not CTA.
+- ✓ Border-radius family: pills `rounded-full`, magnetic button `rounded-lg`, input has no radius (underline-only). Cohesive.
+- ✓ Hierarchy: headline (display large) → sub-line (mono caps tracking, fg-tertiary) → input (mono regular) → pills (mono caps small) → button (regular). Four levers used: size, color, weight, placement.
 
 ---
 
