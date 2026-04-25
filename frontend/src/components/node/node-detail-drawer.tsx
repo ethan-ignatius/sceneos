@@ -8,7 +8,7 @@ import { ClipPreview } from "./clip-preview";
 import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
-import { sleep, cn } from "@/lib/utils";
+import { sleep } from "@/lib/utils";
 import type { GenerationProvider } from "@/types/api";
 
 const fadeUp = {
@@ -173,36 +173,35 @@ export function NodeDetailDrawer() {
         }}
         className="flex h-full flex-col"
       >
-        {/* Header */}
+        {/* Header — stripped to the essentials.
+            Was: index/total + template name + h2 + italic intent paragraph.
+            Now: a tiny "04 / 07" counter + the beat name. The italic intent
+            prose was the agent's first thought; the agent says it in the
+            chat, so showing it twice was just noise. The template name
+            ("story", "trailer") is metadata — irrelevant once you're inside
+            the beat — also dropped. */}
         <motion.header
           variants={fadeUp}
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-          className="flex items-start justify-between border-b border-fg-tertiary/30 p-6"
+          className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-6 pb-4 pt-5"
         >
           <div>
-            <div className="caption-track text-[10px] tabular-nums text-fg-tertiary">
+            <div className="caption-track text-[9px] tabular-nums text-fg-tertiary/70">
               <span className="text-brand-ember">{(beatIndex + 1).toString().padStart(2, "0")}</span>
-              <span className="mx-2 text-fg-tertiary/50">/</span>
+              <span className="mx-1.5 text-fg-tertiary/40">/</span>
               <span>{totalBeats.toString().padStart(2, "0")}</span>
-              <span className="mx-2 text-fg-tertiary/50">·</span>
-              <span>{beat.template.split(".")[0]}</span>
             </div>
-            <h2 className="mt-2 text-display-md italic leading-[1.05] text-fg-primary">
+            <h2 className="mt-1.5 font-display text-2xl italic leading-[1.05] text-fg-primary">
               {beat.beatName}
             </h2>
-            {/* Description lifted to Fraunces italic 18px so the drawer header
-                reads as title card + voiceover, not form label + helper text. */}
-            <p className="mt-3 max-w-prose font-display italic text-lede leading-[1.4] text-fg-secondary">
-              {beat.archetype.intent}
-            </p>
           </div>
           <button
             onClick={() => setActiveBeat(null)}
-            className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-fg-tertiary transition-colors hover:bg-bg-elev-2 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
+            className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-fg-tertiary/70 transition-colors hover:bg-bg-elev-2 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
             aria-label="Close drawer"
             title="Close"
           >
-            <X size={18} strokeWidth={1.5} />
+            <X size={16} strokeWidth={1.5} />
           </button>
         </motion.header>
 
@@ -224,60 +223,18 @@ export function NodeDetailDrawer() {
           )}
         </motion.div>
 
-        {/* Footer — progress + CTA. Hidden during generation; the panel speaks for itself. */}
+        {/* Footer — single CTA at a time. No labels, no progress meters,
+            no eyebrow text. The chat already shows the user where they are
+            in the conversation; duplicating that as a "Director's questionnaire
+            00/02" pill was double-bookkeeping. The CTA flips between
+            "Lock it in" (early-finish) and "Roll camera" (ready) based on
+            beat status. */}
         {!isGenerating && !isPreview ? (
           <motion.footer
             variants={fadeUp}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-            className="space-y-4 border-t border-fg-tertiary/30 p-6"
+            className="space-y-3 border-t border-fg-tertiary/15 px-6 py-4"
           >
-            {/* Hairline progress bar replaces the bordered pill that read as
-                an empty input field. Ember fills L→R as the questionnaire
-                progresses. See FINAL_HANDOFF §2.C / §5 P0.3. */}
-            {(() => {
-              const userAnswers = beat.scenes[0]?.conversation.filter(
-                (t) => t.role === "user",
-              ).length ?? 0;
-              // Mock backend asks ~2 questions per beat; if the agent has
-              // already declared sufficient (status flipped) the answer is
-              // exactly userAnswers; otherwise estimate at least one more.
-              const totalQuestions = isReadyToGenerate
-                ? userAnswers
-                : Math.max(2, userAnswers + 1);
-              const ratio = totalQuestions === 0 ? 0 : userAnswers / totalQuestions;
-              return (
-                <div className="space-y-2">
-                  <div className="flex items-baseline justify-between">
-                    <span className="caption-track text-[10px] text-fg-tertiary">
-                      Director's questionnaire
-                    </span>
-                    <span className="caption-track text-[10px] tabular-nums text-fg-tertiary">
-                      {userAnswers.toString().padStart(2, "0")}{" "}
-                      <span className="text-fg-tertiary/50">/</span>{" "}
-                      {totalQuestions.toString().padStart(2, "0")}
-                    </span>
-                  </div>
-                  <div className="relative h-px overflow-hidden bg-fg-tertiary/20">
-                    <motion.div
-                      className={cn(
-                        "absolute inset-y-0 left-0 origin-left",
-                        isReadyToGenerate ? "bg-brand-ember" : "bg-brand-ember/70",
-                      )}
-                      initial={false}
-                      animate={{ width: `${Math.min(ratio, 1) * 100}%` }}
-                      transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-                    />
-                  </div>
-                  {isReadyToGenerate ? (
-                    <p className="caption-track text-[10px] text-brand-ember">
-                      <span className="text-brand-ember">●</span>
-                      <span className="ml-2">The scene has its blocking.</span>
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })()}
-
             {genError ? (
               <div
                 role="alert"
@@ -287,60 +244,60 @@ export function NodeDetailDrawer() {
               </div>
             ) : null}
 
-            {/* Two-CTA footer: the primary "Roll camera" demands the
-                questionnaire is sufficient; the secondary "Lock it in"
-                lets the user bail out of the conversation early when
-                they feel they've said enough. We synthesize a refined
-                prompt from their answers + the beat archetype and flip
-                the beat to ready-to-generate locally — no backend call
-                needed since the agent's job is just to extract structure
-                from what the user has already typed. */}
-            {!isReadyToGenerate ? (
-              (() => {
-                const userAnswers = beat.scenes[0]?.conversation
-                  .filter((t) => t.role === "user")
-                  .map((t) => t.content)
-                  .join(". ");
-                const canLock = !!userAnswers && userAnswers.length > 0;
-                if (!canLock) return null;
-                const lockIn = () => {
-                  const refined = [
-                    beat.archetype.intent,
-                    beat.archetype.directorNotes ?? "",
-                    `Director's notes: ${userAnswers}.`,
-                    `Mood ${beat.archetype.mood}; cinematic, ~${beat.archetype.suggestedDuration}s.`,
-                  ]
-                    .filter(Boolean)
-                    .join(" ");
-                  updateScene(beat.beatId, beat.scenes[0].sceneId, {
-                    refinedPrompt: refined,
-                    durationSeconds: beat.archetype.suggestedDuration,
-                  });
-                  updateBeat(beat.beatId, { status: "ready-to-generate" });
-                };
-                return (
-                  <button
-                    type="button"
-                    onClick={lockIn}
-                    className="block w-full rounded-md border border-fg-tertiary/30 bg-bg-elev-2/30 px-4 py-2.5 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
-                    aria-label="Lock in answers and prepare to generate"
-                  >
-                    I have enough — lock it in
-                  </button>
-                );
-              })()
-            ) : null}
+            {(() => {
+              const userAnswers = beat.scenes[0]?.conversation
+                .filter((t) => t.role === "user")
+                .map((t) => t.content)
+                .join(". ");
+              const canLock = !!userAnswers && userAnswers.length > 0;
 
-            <Button
-              size="lg"
-              variant="primary"
-              className={cn("w-full", isReadyToGenerate && "ember-pulse")}
-              disabled={!isReadyToGenerate}
-              onClick={handleGenerate}
-            >
-              <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
-              <span className="caption-track text-[12px]">Roll camera</span>
-            </Button>
+              if (isReadyToGenerate) {
+                return (
+                  <Button
+                    size="lg"
+                    variant="primary"
+                    className="w-full ember-pulse"
+                    onClick={handleGenerate}
+                  >
+                    <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
+                    <span className="caption-track text-[12px]">Roll camera</span>
+                  </Button>
+                );
+              }
+
+              if (!canLock) {
+                // No answers yet — no CTA. The chat is the work; show
+                // nothing so the input bar isn't crowded with a disabled
+                // button that just says "answer first."
+                return null;
+              }
+
+              const lockIn = () => {
+                const refined = [
+                  beat.archetype.intent,
+                  beat.archetype.directorNotes ?? "",
+                  `Director's notes: ${userAnswers}.`,
+                  `Mood ${beat.archetype.mood}; cinematic, ~${beat.archetype.suggestedDuration}s.`,
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                updateScene(beat.beatId, beat.scenes[0].sceneId, {
+                  refinedPrompt: refined,
+                  durationSeconds: beat.archetype.suggestedDuration,
+                });
+                updateBeat(beat.beatId, { status: "ready-to-generate" });
+              };
+              return (
+                <button
+                  type="button"
+                  onClick={lockIn}
+                  className="block w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-2/30 px-4 py-2.5 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+                  aria-label="Lock in answers and prepare to generate"
+                >
+                  I have enough — lock it in
+                </button>
+              );
+            })()}
           </motion.footer>
         ) : null}
       </motion.div>

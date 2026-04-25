@@ -33,12 +33,18 @@ export interface PlanetSpec {
 
 // ── Body archetypes ─────────────────────────────────────────────────────
 
+// baseScales are intentionally compressed into ~0.6–0.85. The Sun and
+// Jupiter would visually dwarf Mercury and Moon if rendered at real-solar-
+// system proportions, and they were physically intersecting their neighbors
+// on the timeline. The relative ordering (Sun ≈ Jupiter biggest, Moon
+// smallest) is preserved; the absolute range is tighter so every planet
+// gets breathing room on the timeline.
 const SUN: PlanetSpec = {
   texture: "2k_sun.jpg",
   atmosphereTint: "#ffb874",
   isEmissive: true,
   hasRing: false,
-  baseScale: 1.15,
+  baseScale: 0.85,
   spinY: 0.04,
   bodyName: "Sun",
 };
@@ -48,7 +54,7 @@ const MERCURY: PlanetSpec = {
   atmosphereTint: "#a87447",
   isEmissive: false,
   hasRing: false,
-  baseScale: 0.85,
+  baseScale: 0.62,
   spinY: 0.05,
   bodyName: "Mercury",
 };
@@ -58,7 +64,7 @@ const VENUS: PlanetSpec = {
   atmosphereTint: "#d4a574",
   isEmissive: false,
   hasRing: false,
-  baseScale: 1.0,
+  baseScale: 0.7,
   spinY: 0.03,
   bodyName: "Venus",
 };
@@ -68,7 +74,7 @@ const EARTH: PlanetSpec = {
   atmosphereTint: "#5e7080",
   isEmissive: false,
   hasRing: false,
-  baseScale: 1.05,
+  baseScale: 0.74,
   spinY: 0.06,
   bodyName: "Earth",
 };
@@ -78,7 +84,7 @@ const MARS: PlanetSpec = {
   atmosphereTint: "#c97f3f",
   isEmissive: false,
   hasRing: false,
-  baseScale: 0.95,
+  baseScale: 0.68,
   spinY: 0.07,
   bodyName: "Mars",
 };
@@ -88,7 +94,7 @@ const JUPITER: PlanetSpec = {
   atmosphereTint: "#d4a574",
   isEmissive: false,
   hasRing: false,
-  baseScale: 1.2,
+  baseScale: 0.85,
   spinY: 0.09, // gas giants spin fast in real life — keep that energy
   bodyName: "Jupiter",
 };
@@ -98,7 +104,7 @@ const SATURN: PlanetSpec = {
   atmosphereTint: "#c5b9a8",
   isEmissive: false,
   hasRing: true,
-  baseScale: 1.1,
+  baseScale: 0.78,
   spinY: 0.085,
   bodyName: "Saturn",
 };
@@ -108,7 +114,7 @@ const URANUS: PlanetSpec = {
   atmosphereTint: "#5e7080",
   isEmissive: false,
   hasRing: false,
-  baseScale: 0.9,
+  baseScale: 0.65,
   spinY: 0.05,
   bodyName: "Uranus",
 };
@@ -118,7 +124,7 @@ const NEPTUNE: PlanetSpec = {
   atmosphereTint: "#5e7080",
   isEmissive: false,
   hasRing: false,
-  baseScale: 0.95,
+  baseScale: 0.68,
   spinY: 0.05,
   bodyName: "Neptune",
 };
@@ -128,7 +134,7 @@ const MOON: PlanetSpec = {
   atmosphereTint: "#6b6359",
   isEmissive: false,
   hasRing: false,
-  baseScale: 0.8,
+  baseScale: 0.6,
   spinY: 0.025,
   bodyName: "Moon",
 };
@@ -140,14 +146,19 @@ const MOON: PlanetSpec = {
 // to mood-based defaults below.
 
 const PLANET_BY_TEMPLATE: Partial<Record<BeatTemplate, PlanetSpec>> = {
-  // story.* — canonical 7-beat dramatic arc
+  // story.* — canonical 7-beat dramatic arc.
+  // Mapping reads as a single emotional curve through the solar system:
+  //   Sun (origin spark) → Earth (familiar ground) → Mars (red disruption)
+  //   → Jupiter (escalation, the largest body) → Saturn (grand peak with rings)
+  //   → Neptune (cool aftermath) → Moon (intimate close, a quiet companion).
+  // Heat drops, scale builds-then-falls, ending small + reflective.
   "story.hook": SUN,
   "story.exposition": EARTH,
-  "story.inciting": MERCURY,
-  "story.rising": MARS,
+  "story.inciting": MARS,
+  "story.rising": JUPITER,
   "story.climax": SATURN,
-  "story.falling": MOON,
-  "story.resolution": NEPTUNE,
+  "story.falling": NEPTUNE,
+  "story.resolution": MOON,
 
   // trailer.* — 5 beats
   "trailer.establishing": EARTH,

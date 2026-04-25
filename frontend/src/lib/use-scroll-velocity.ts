@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 /**
  * RAF-driven inertial scroll/velocity hook.
@@ -89,48 +89,59 @@ export function useScrollVelocity(opts: UseScrollVelocityOptions = {}): ScrollVe
     return () => cancelAnimationFrame(raf);
   }, [interpolation, decayRate]);
 
-  const setTargetProgress = (value: number) => {
-    if (clamp) {
-      targetRef.current = Math.max(clamp[0], Math.min(clamp[1], value));
-    } else {
-      targetRef.current = value;
-    }
-  };
+  // Stable across renders. `clamp`, `wheelGain`, `touchGain` are captured
+  // once; if a caller actually wants those to change at runtime they should
+  // remount the hook. Without this, BeatMap3D's `useEffect(... [registerElement])`
+  // re-fires on every parent render, detaching + re-attaching wheel listeners
+  // and re-triggering the canvas's pointer setup work.
+  const setTargetProgress = useCallback(
+    (value: number) => {
+      if (clamp) {
+        targetRef.current = Math.max(clamp[0], Math.min(clamp[1], value));
+      } else {
+        targetRef.current = value;
+      }
+    },
+    [clamp],
+  );
 
-  const registerElement = (el: HTMLElement | Window | null) => {
-    if (!el) return () => {};
-    const target: HTMLElement | Window = el;
+  const registerElement = useCallback(
+    (el: HTMLElement | Window | null) => {
+      if (!el) return () => {};
+      const target: HTMLElement | Window = el;
 
-    const onWheel = (e: WheelEvent) => {
-      const delta = e.deltaY * wheelGain;
-      setTargetProgress(targetRef.current + delta);
-    };
-    const onTouchStart = (e: TouchEvent) => {
-      lastTouchYRef.current = e.touches[0]?.clientY ?? null;
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      const y = e.touches[0]?.clientY;
-      if (y == null || lastTouchYRef.current == null) return;
-      const deltaY = lastTouchYRef.current - y;
-      lastTouchYRef.current = y;
-      setTargetProgress(targetRef.current + deltaY * touchGain);
-    };
-    const onTouchEnd = () => {
-      lastTouchYRef.current = null;
-    };
+      const onWheel = (e: WheelEvent) => {
+        const delta = e.deltaY * wheelGain;
+        setTargetProgress(targetRef.current + delta);
+      };
+      const onTouchStart = (e: TouchEvent) => {
+        lastTouchYRef.current = e.touches[0]?.clientY ?? null;
+      };
+      const onTouchMove = (e: TouchEvent) => {
+        const y = e.touches[0]?.clientY;
+        if (y == null || lastTouchYRef.current == null) return;
+        const deltaY = lastTouchYRef.current - y;
+        lastTouchYRef.current = y;
+        setTargetProgress(targetRef.current + deltaY * touchGain);
+      };
+      const onTouchEnd = () => {
+        lastTouchYRef.current = null;
+      };
 
-    target.addEventListener("wheel", onWheel as EventListener, { passive: true });
-    target.addEventListener("touchstart", onTouchStart as EventListener, { passive: true });
-    target.addEventListener("touchmove", onTouchMove as EventListener, { passive: true });
-    target.addEventListener("touchend", onTouchEnd as EventListener, { passive: true });
+      target.addEventListener("wheel", onWheel as EventListener, { passive: true });
+      target.addEventListener("touchstart", onTouchStart as EventListener, { passive: true });
+      target.addEventListener("touchmove", onTouchMove as EventListener, { passive: true });
+      target.addEventListener("touchend", onTouchEnd as EventListener, { passive: true });
 
-    return () => {
-      target.removeEventListener("wheel", onWheel as EventListener);
-      target.removeEventListener("touchstart", onTouchStart as EventListener);
-      target.removeEventListener("touchmove", onTouchMove as EventListener);
-      target.removeEventListener("touchend", onTouchEnd as EventListener);
-    };
-  };
+      return () => {
+        target.removeEventListener("wheel", onWheel as EventListener);
+        target.removeEventListener("touchstart", onTouchStart as EventListener);
+        target.removeEventListener("touchmove", onTouchMove as EventListener);
+        target.removeEventListener("touchend", onTouchEnd as EventListener);
+      };
+    },
+    [wheelGain, touchGain, setTargetProgress],
+  );
 
   return { progressRef, velocityRef, setTargetProgress, registerElement };
 }
