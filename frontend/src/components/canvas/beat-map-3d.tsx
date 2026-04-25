@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
+import { computeBeatPositions } from "@/lib/beat-layout";
 import { NodeMesh } from "./node-mesh";
 import { CameraRig } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
@@ -41,16 +42,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     return registerElement(containerRef.current);
   }, [registerElement]);
 
-  const positions = useMemo(() => {
-    const total = Math.max(beats.length - 1, 1);
-    return beats.map((_, i) => {
-      const t = i / total;
-      const x = (t - 0.5) * (beats.length * 1.05);
-      const y = Math.sin(t * Math.PI) * 0.45 - 0.1;
-      const z = -t * 1.1;
-      return [x, y, z] as [number, number, number];
-    });
-  }, [beats]);
+  const positions = useMemo(() => computeBeatPositions(beats), [beats]);
 
   return (
     <div ref={containerRef} className="absolute inset-0">
@@ -79,14 +71,18 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
             key={beat.beatId}
             beat={beat}
             position={positions[i]}
-            index={i}
             onHoverChange={setHoveredBeatId}
           />
         ))}
 
         <AmbientParticles velocityRef={velocityRef} />
 
-        <CameraRig beats={beats} activeBeatId={activeBeatId} hoveredBeatId={hoveredBeatId} />
+        <CameraRig
+          beats={beats}
+          positions={positions}
+          activeBeatId={activeBeatId}
+          hoveredBeatId={hoveredBeatId}
+        />
 
         <EffectComposer>
           <Bloom intensity={0.9} luminanceThreshold={0.25} luminanceSmoothing={0.3} mipmapBlur />

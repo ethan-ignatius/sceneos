@@ -28,6 +28,19 @@ interface TextSplitterProps {
   seed?: number;
   ariaLabel?: string;
   style?: CSSProperties;
+  /**
+   * "jitter" (default) — each char gets `baseDelay + pseudoRandom(i) * jitter`.
+   *   Reads as flicker. Used on the landing headline.
+   *
+   * "sequential" — each char gets `baseDelay + i * perCharStep`, capped so
+   *   the total never exceeds `maxTotalDelay` (default 1.6s). Reads as
+   *   typewriter. Used on agent bubbles.
+   */
+  delayStrategy?: "jitter" | "sequential";
+  /** Sequential mode only: per-char step in seconds. Default 0.025 (25ms). */
+  perCharStep?: number;
+  /** Sequential mode only: total reveal cap in seconds. Default 1.6. */
+  maxTotalDelay?: number;
 }
 
 function pseudoRandom(i: number, seed: number): number {
@@ -44,8 +57,16 @@ export function TextSplitter({
   seed = 1,
   ariaLabel,
   style,
+  delayStrategy = "jitter",
+  perCharStep = 0.025,
+  maxTotalDelay = 1.6,
 }: TextSplitterProps): ReactNode {
   const chars = useMemo(() => Array.from(text), [text]);
+
+  // Sequential mode: scale per-char step down so total ≤ maxTotalDelay.
+  // Long answers therefore reveal faster, keeping the read time bounded.
+  const sequentialStep =
+    chars.length > 0 ? Math.min(perCharStep, maxTotalDelay / chars.length) : perCharStep;
 
   return (
     <span
@@ -55,7 +76,10 @@ export function TextSplitter({
       role={ariaLabel ? "text" : undefined}
     >
       {chars.map((char, i) => {
-        const delay = baseDelay + pseudoRandom(i, seed) * jitter;
+        const delay =
+          delayStrategy === "sequential"
+            ? baseDelay + i * sequentialStep
+            : baseDelay + pseudoRandom(i, seed) * jitter;
         const isSpace = char === " ";
         return (
           <span

@@ -159,38 +159,41 @@ The second of the three winning moments. All six items shipped. Lesson reflectio
 
 ---
 
-## Phase 4 — Node detail drawer + agent bubbles
+## Phase 4 — Node detail drawer + agent bubbles ✅ COMPLETE (2026-04-25)
 
-### 4.1 🔴 Drawer slide-in with content stagger — 0.5h
-- **Surface:** `components/node/node-detail-drawer.tsx`
-- **Spec:**
-  - Drawer: `motion.aside` x 100% → 0, spring `drawer`. Already wired.
-  - Inside, header → status pill → CTA stagger by 60ms with `motion.div` + `staggerChildren`.
+The middle 60 seconds of the demo. All four items shipped, plus the agent + generation API wiring needed to make the flow real (not theatre). Lesson reflection lives in [`AGENT_FLOW.md`](AGENT_FLOW.md) — read that before touching the agent stream or generation panel.
 
-### 4.2 🔴 Agent bubble character-by-character reveal — 1h
-- **Surface:** `components/agent/agent-bubble.tsx` (already exists; upgrade)
-- **Spec:**
-  - Each bubble's content runs through `<TextSplitter>`.
-  - Characters reveal at ~25ms each, capped at 1.6s total per bubble.
-  - User bubbles appear instantly (no typewriter — the user already knows what they wrote).
-  - Bubble container itself springs in via `bubble`.
-- **Acceptance:** feels like a director thinking out loud, not a chatbot dump.
+### 4.1 ✅ Drawer slide-in + content stagger — `components/node/node-detail-drawer.tsx`
+- `motion.aside` springs in via `SPRING.drawer` (existing). Inside, a parent `motion.div` with `staggerChildren: STAGGER.drawerInner` (0.06s) and `delayChildren: 0.08` cascades header → body → footer.
+- Each inner section uses `variants={fadeUp}` (`opacity: 0 → 1`, `y: 8 → 0`, `outQuart`).
+- Footer is conditionally rendered: hidden during `generating`/`preview` so the generation panel speaks for itself.
 
-### 4.3 🔴 "Sufficient" status pill ember-pulse — 0.3h
-- **Spec:** when sufficiency hits, the status pill animates to ember-warm and starts the `ember-pulse` keyframe. Plus the "Generate scene" CTA gains the same pulse.
-- **Why:** guidance — tells the user the next click is hot.
+### 4.2 ✅ Agent bubble character-by-character reveal — `components/agent/agent-bubble.tsx`
+- New `delayStrategy="sequential"` mode added to `<TextSplitter>` — each char delays by `i × perCharStep`, with the step auto-scaled so total reveal ≤ 1.6s regardless of length.
+- New CSS keyframe `.reveal-chars > span > span` (`reveal-char`, 0.18s ease-out, fade + 2px y).
+- Only the most recent agent turn reveals; history snaps in (the `reveal` prop on `<AgentBubble>` controls this — prevents replaying past turns when the drawer reopens).
+- User bubbles render plain text, instantly.
+- Reduced-motion override added in `index.css` for `.reveal-chars` selector.
 
-### 4.4 🟠 Generate-in-progress panel — 1h
-- **Surface:** new `components/node/generation-panel.tsx`
-- **Spec:**
-  - 16:9 placeholder with `animate-blur-pulse` (already in CSS).
-  - A noisy gradient that "develops" into a cinematic still — animate a `mask` or `clip-path` across.
-  - Three steppers in mono with ember dot moving between them:
-    1. "Storyboard generated"
-    2. "Clip rendering"
-    3. "Uploading to Cloudinary"
-  - Live timer "0:32 / ~2:00" (mock backend returns ~1.6s lifecycle, so the timer moves).
-- **Acceptance:** a generation never feels "stuck" — the steppers tell the story.
+### 4.3 ✅ Sufficient pill + Generate-CTA ember-pulse
+- The status pill toggles the existing `.ember-pulse` keyframe class when `beat.status === "ready-to-generate"` — plus border + bg + text shift to ember.
+- The Generate CTA gets the same `.ember-pulse` class. Both share one infinite CSS animation; no JS per frame.
+- Reasoning: Motion for transitions, CSS keyframes for indefinite loops. Reduced-motion already disables `.ember-pulse`.
+
+### 4.4 ✅ Generation-in-progress panel — `components/node/generation-panel.tsx`
+- 16:9 placeholder with the existing `.animate-blur-pulse` keyframe + a centered "Composing the frame" caption + a thin ember progress streak across the bottom edge (scaleX driven by ratio).
+- Three steppers (`Storyboard generated → Clip rendering → Uploading to Cloudinary`) with an active ember dot that morphs between rows via Motion `layoutId="gen-active-dot"` (same sliding pattern as the landing pill underline). Done rows show a check icon; pending rows show a thin outline circle.
+- Live timer: `mm:ss / ~mm:ss`, tabular-nums, updated every 250ms. Total estimate uses `suggestedDuration × 0.12 + 1.5` to stay tuned for both the mock backend's ~1.6s lifecycle and a longer real run.
+- Read-only "Higgsfield · live" provider tag in the footer corner.
+
+### 4.5 ✅ (bonus) Agent + generation API wired end-to-end
+Not in the original spec but required for the flow to *work* during demo, not just look like it:
+- `AgentBubbleStream` calls `api.agent()` on drawer mount (seed question) and on each user submit. Optimistic local append → POST → append agent reply or flip status to `ready-to-generate`. `cancelled` ref guards stale responses if the drawer unmounts mid-call.
+- `NodeDetailDrawer` wires the Generate CTA to `api.generate()` + a polling loop on `api.status()` with a 30s safety timeout. On success, scene patches `clipPublicId` + `clipUrl` and beat status flips to `preview`.
+- New `sleep(ms)` helper in `lib/utils.ts`.
+- Error state: inline error bubble in the agent stream (Retry-friendly); inline error in the drawer footer for generation failures (status reverts to `ready-to-generate`).
+
+**Phase 4 lessons banked (see `AGENT_FLOW.md`):** AnimatePresence + popLayout for keyed drawer remounts, `staggerChildren` + `delayChildren` Motion variants pattern, sequential vs jitter character reveal, Motion-vs-CSS rule of thumb (transitions vs indefinite loops), state machine on `beat.status` driving every visual, optimistic-update + cancelled-ref pattern for in-flight API calls, polling loop with safety timeout.
 
 ---
 

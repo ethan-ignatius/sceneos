@@ -8,7 +8,6 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 interface NodeMeshProps {
   beat: Beat;
   position: [number, number, number];
-  index: number;
   /** Reports hover changes up to BeatMap3D so the camera rig can react. */
   onHoverChange?: (beatId: string | null) => void;
 }

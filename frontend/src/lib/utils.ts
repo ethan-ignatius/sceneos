@@ -15,3 +15,7 @@ export function uuid() {
 export function nowISO() {
   return new Date().toISOString();
 }
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

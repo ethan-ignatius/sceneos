@@ -23,6 +23,7 @@ Read in this order:
 7. [`docs/MOTION_LANGUAGE.md`](docs/MOTION_LANGUAGE.md) — motion philosophy, timing/easing system, anti-patterns, cohesion checklist.
 8. [`docs/SHADERS_AUDIO.md`](docs/SHADERS_AUDIO.md) — Phase 2 lesson reflection: GSAP timelines, R3F screen-quad pattern, GLSL ember-burn shader, Web Audio synthesis. Read before touching the page-crumple surface.
 9. [`docs/CANVAS_3D.md`](docs/CANVAS_3D.md) — Phase 3 lesson reflection: custom camera rigs, Catmull-Rom splines, drei Sparkles + scroll-velocity bridge, ambient Web Audio loops. Read before touching the canvas surface.
+10. [`docs/AGENT_FLOW.md`](docs/AGENT_FLOW.md) — Phase 4 lesson reflection: drawer stagger, sequential char reveal, status-as-state-machine, agent + generation API wiring, polling pattern. Read before touching the drawer or agent stream.
 7. [`docs/FRONTEND_TODO.md`](docs/FRONTEND_TODO.md) — ranked, motion-rich execution list with acceptance criteria.
 8. [`docs/FRONTEND_BUILDOUT.md`](docs/FRONTEND_BUILDOUT.md) — surface-by-surface buildout guide.
 9. [`docs/MOCK_BACKEND.md`](docs/MOCK_BACKEND.md) — mock backend contract: how the FE always talks to a real backend, even with no keys.

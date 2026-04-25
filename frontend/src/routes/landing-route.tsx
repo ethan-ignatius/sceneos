@@ -286,7 +286,11 @@ export function LandingRoute() {
           >
             {muted ? <VolumeX size={16} strokeWidth={1.5} /> : <Volume2 size={16} strokeWidth={1.5} />}
           </button>
-          <button className="text-fg-tertiary transition-colors hover:text-fg-primary" aria-label="Help">
+          <button
+            className="text-fg-tertiary transition-colors hover:text-fg-primary"
+            aria-label="Help"
+            title="Help"
+          >
             <HelpCircle size={16} strokeWidth={1.5} />
           </button>
         </div>

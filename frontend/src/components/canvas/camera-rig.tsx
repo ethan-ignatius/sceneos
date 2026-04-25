@@ -1,10 +1,12 @@
 import { useFrame, useThree } from "@react-three/fiber";
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
 
 interface CameraRigProps {
   beats: Beat[];
+  /** Parallel array of [x, y, z] from `computeBeatPositions(beats)`. */
+  positions: Array<[number, number, number]>;
   activeBeatId: string | null;
   hoveredBeatId: string | null;
 }
@@ -28,32 +30,25 @@ const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
  * Rationale for not using GSAP: see docs/CANVAS_3D.md §2. Per-frame
  * lerping handles continuous, multi-source state better than tweens.
  */
-export function CameraRig({ beats, activeBeatId, hoveredBeatId }: CameraRigProps) {
+export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId }: CameraRigProps) {
   const { camera } = useThree();
   const targetPos = useRef(OVERVIEW_POS.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
 
-  // Beat positions are derived in BeatMap3D from index. We mirror that math
-  // here — keeping the layout function in one place would be the right
-  // refactor, but for hackathon speed we duplicate.
-  const beatPositions = useMemo(() => {
-    const total = Math.max(beats.length - 1, 1);
-    return beats.map((b, i) => {
-      const t = i / total;
-      const x = (t - 0.5) * (beats.length * 1.05);
-      const y = Math.sin(t * Math.PI) * 0.45 - 0.1;
-      const z = -t * 1.1;
-      return { id: b.beatId, x, y, z };
-    });
-  }, [beats]);
+  const findPosition = (beatId: string | null) => {
+    if (!beatId) return null;
+    const i = beats.findIndex((b) => b.beatId === beatId);
+    return i === -1 ? null : positions[i];
+  };
 
   useFrame((state) => {
-    const active = activeBeatId ? beatPositions.find((p) => p.id === activeBeatId) : null;
-    const hovered = hoveredBeatId ? beatPositions.find((p) => p.id === hoveredBeatId) : null;
+    const active = findPosition(activeBeatId);
+    const hovered = findPosition(hoveredBeatId);
 
     if (active) {
-      targetPos.current.set(active.x + 0.2, active.y + 0.4, active.z + 1.2);
-      targetLook.current.set(active.x, active.y, active.z);
+      const [ax, ay, az] = active;
+      targetPos.current.set(ax + 0.2, ay + 0.4, az + 1.2);
+      targetLook.current.set(ax, ay, az);
     } else {
       targetPos.current.copy(OVERVIEW_POS);
       targetLook.current.copy(OVERVIEW_LOOK);
@@ -62,8 +57,9 @@ export function CameraRig({ beats, activeBeatId, hoveredBeatId }: CameraRigProps
     // Hover offset (≤0.05 units) only when nothing is actively selected —
     // otherwise the active glide dominates and hover would feel jittery.
     if (hovered && !active) {
-      targetPos.current.x += hovered.x * 0.025;
-      targetPos.current.y += hovered.y * 0.025;
+      const [hx, hy] = hovered;
+      targetPos.current.x += hx * 0.025;
+      targetPos.current.y += hy * 0.025;
     }
 
     // Idle breath — sin wave on z, 8s period, ±0.04. Stays subtle but
@@ -72,7 +68,7 @@ export function CameraRig({ beats, activeBeatId, hoveredBeatId }: CameraRigProps
     targetPos.current.z += Math.sin((t / 8) * Math.PI * 2) * 0.04;
 
     camera.position.lerp(targetPos.current, 0.06);
-    // Manually lerp the lookAt target so it doesn't snap when active changes.
+    // Lerp the lookAt direction so it doesn't snap when active changes.
     const lookCurrent = camera.getWorldDirection(new THREE.Vector3()).normalize();
     const desired = targetLook.current.clone().sub(camera.position).normalize();
     const blended = lookCurrent.lerp(desired, 0.08).normalize();

@@ -182,6 +182,24 @@
   }
 
   /* ──────────────────────────────────────────────────────────────────
+   * Sequential character reveal for agent bubbles. Pairs with
+   * <TextSplitter delayStrategy="sequential" /> — each <span> gets an
+   * inline animation-delay computed from its index.
+   * ────────────────────────────────────────────────────────────────── */
+  .reveal-chars > span > span {
+    opacity: 0;
+    animation-name: reveal-char;
+    animation-duration: 0.18s;
+    animation-timing-function: ease-out;
+    animation-fill-mode: forwards;
+  }
+
+  @keyframes reveal-char {
+    0% { opacity: 0; transform: translateY(2px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ──────────────────────────────────────────────────────────────────
    * Magnetic button corner-flicker telegraph (alexportfolio pattern).
    * ────────────────────────────────────────────────────────────────── */
   .magnetic-button {
@@ -232,6 +250,7 @@
   /* Reduced-motion overrides — always last to win cascade. */
   @media (prefers-reduced-motion: reduce) {
     .flicker-on-mount > span > span,
+    .reveal-chars > span > span,
     .ember-pulse,
     .magnetic-button[data-ready="true"],
     .magnetic-button:hover .magnetic-button-tick,
@@ -239,7 +258,8 @@
     .film-grain::before {
       animation: none !important;
     }
-    .flicker-on-mount > span > span {
+    .flicker-on-mount > span > span,
+    .reveal-chars > span > span {
       opacity: 1 !important;
     }
     .underline-draw {
