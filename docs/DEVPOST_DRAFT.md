@@ -12,31 +12,33 @@
 
 ## Tagline (max 200 chars on Devpost)
 
-> Pizza-ordering simplicity for cinematic video. A node-canvas exploration of cinematography theory, an agent that asks just-enough questions, Higgsfield generation, Cloudinary URL-based stitching.
+> The first cinematic-theory-as-UI tool. A node canvas where directorial knowledge IS the interface, an agent that speaks in lens / movement / light, and a Cloudinary URL that *is* the post-production pipeline.
 
 ---
 
 ## Inspiration
 
-The cinematic-video industry has a knowledge bottleneck, not a generation bottleneck. Sora 2, Veo 3.1, and Kling 3.0 can already render film-quality shots from prompts. What's still scarce is the human knowledge needed to *direct* those models — three-act structure, beats, conflict-resolution shape, framing language, pacing.
+The cinematic-video industry has a knowledge bottleneck, not a generation bottleneck. Sora 2, Veo 3.1, and Kling 3.0 can already render film-quality shots from prompts. What's still scarce is the human knowledge needed to *direct* those models — three-act structure, beats, conflict shape, framing language, pacing.
 
 We watched friends drop $5K on a 90-second branded trailer that took six weeks. We watched indie filmmakers abandon scripts because they couldn't afford a DP. Meanwhile, the AI tools were *right there* — but the people who needed them most didn't know how to direct them.
 
-So we built **SceneOS**: a tool that encodes cinematography knowledge directly into the UX, takes a creative idea as input, and renders a polished cinematic as output. Pizza-ordering simplicity, but for cinematic video.
+The wrappers that exist around these models all funnel users through linear chat: "describe your scene." That's a generation tool, not a director's tool. Our insight: **cinematography theory should be the interface**, not buried in a prompt template. So we built **SceneOS** — the first cinematic-theory-as-UI tool. The canvas of beats, the directorial questions, the per-beat archetypes are the product. The generation models become commodity primitives we route between.
 
 ---
 
 ## What it does
 
-Type a creative prompt. Pick a video type (trailer, short, or feature). The page crumples away into a **3D canvas of glowing story-beat nodes** — Establishing, Hook, Rising, Climax Tease, Sting for trailers; three-act structure for features.
+Type a creative prompt. Pick a video type (trailer for the demo). The page crumples away into a **3D canvas of glowing story-beat nodes** — Establishing, Hook, Rising, Climax Tease, Sting.
 
-Click a node. A drawer opens. An **agent powered by GPT-4o** asks you cinematography questions — *just enough* questions, adapting to how specific your prompt was. Once it has enough, it builds a refined Higgsfield prompt and renders that beat as a 5–10 second cinematic clip.
+Click a node. A drawer opens. An **agent powered by GPT-4o** asks you *directorial* questions — not "what mood?" but "for the establishing wide, do you want a 24mm sweep across the dunes or an 85mm compression on a lone figure?" Two to four questions, never more. Each question references a specific cinematographic decision (lens, movement, light, blocking, pace) baked into the beat's archetype.
+
+Once enough information is collected, the agent composes a refined prompt and dispatches it through our **provider tier** — Higgsfield (best quality, recorded demo), Kling (faster, live demo), or a pre-rendered cached fallback. The clip uploads to Cloudinary.
 
 Approve each beat. As you do, a **Cloudinary `fl_splice` URL** builds in real time in the Stitch Tray — your final cinematic is a single transformation URL. No render farm. No waiting.
 
 Click "Render." The cinematic plays.
 
-For power users, click "Open in CutOS" — your beats hand off seamlessly to a multi-track timeline editor with WebGL effects, 29-language dubbing, AI morph transitions, and semantic search across every clip.
+For power users, click "Open in CutOS" — your beats hand off to a multi-track timeline editor with WebGL effects, 29-language dubbing, AI morph transitions, and semantic search across every clip.
 
 ---
 
@@ -62,6 +64,11 @@ The clever bit: we treat **Cloudinary's `fl_splice` transformation as our entire
 
 The same primitives that would normally require Premiere, After Effects, and a render farm collapse into a single GET request. That's the magic.
 
+### The provider-tiering insight
+AI video generation is high-latency and provider-flaky on demo day. We architected **`GENERATION_PROVIDER`** as a single env var that switches the live engine between Higgsfield (best quality), Kling (fastest), Replicate (fallback), and a Cached tier (pre-rendered demo project as on-stage safety net). All four conform to a single `ProviderModule` interface. No code changes between tiers — flip the env, you change the engine.
+
+This let us record a buttery-smooth demo video on Higgsfield while presenting live on Kling, with Cloudinary's color-grade transformations normalising the visual quality between tiers so judges couldn't tell the difference.
+
 ### CutOS handoff (stretch)
 SceneOS hands a manifest to **CutOS** (`POST /api/projects/import-manifest`), which loads every beat as a clip on a multi-track timeline. From there, the user gets the full editor — split, trim, effects, transitions, ElevenLabs dubbing, TwelveLabs semantic search.
 
@@ -79,10 +86,11 @@ SceneOS hands a manifest to **CutOS** (`POST /api/projects/import-manifest`), wh
 
 ## Accomplishments we're proud of
 
-- **The page-crumple transition** is a literal showpiece. Judges will not have seen this elsewhere.
+- **The page-crumple transition** is a literal showpiece. Judges have not seen this elsewhere.
 - **The 3D node canvas** runs at 60 fps on M1 / M2 / mid-range Windows. Lazy-loaded so the landing stays under 200 KB.
 - **Cloudinary URL as the stitch engine** — collapses post-production to a GET request.
-- **Provider-agnostic generation** — Higgsfield primary, Segmind/Replicate failover. Demo-day-resilient.
+- **Provider-tiering with seamless failover** — Higgsfield → Kling → Replicate → Cached. Single `GENERATION_PROVIDER` env var switches the live engine. Zero code changes between tiers.
+- **Directorial agent** — questions reference lens, movement, light, blocking, and pace, baked into per-beat archetypes. Not a wrapper around a chat model.
 - **CutOS handoff** opens the door for power users without complicating the simple flow.
 - **No generic UI anywhere.** Every screen is hand-tuned to a godly.website / awwwards quality bar.
 

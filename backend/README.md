@@ -7,10 +7,17 @@ Hono on Node + TypeScript. Thin orchestration layer over Higgsfield (video gen),
 ## Quick start
 
 ```bash
-cp .env.example .env       # fill in Cloudinary, Higgsfield, OpenAI keys
 npm install
-npm run dev                # http://localhost:8787
+
+# Mock mode — no keys needed, instant realistic data
+npm run dev:mock           # http://localhost:8787
+
+# Real services — fill .env first
+cp .env.example .env
+npm run dev                # auto-detects: missing keys → mock; full keys → real
 ```
+
+See [`../docs/MOCK_BACKEND.md`](../docs/MOCK_BACKEND.md) for the mock contract (what every endpoint returns, how auto-detect works, when to flip to real).
 
 ## Endpoints
 

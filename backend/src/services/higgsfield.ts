@@ -1,74 +1,32 @@
 /**
- * Video-generation facade. Filename preserved per docs/BACKEND_ARCHITECTURE.md;
- * this module is now provider-agnostic and dispatches to whichever provider is
- * active (mock when no keys, Higgsfield Cloud when HIGGSFIELD_API_KEY is set).
+ * Higgsfield video-generation service — recorded-demo tier.
  *
- * Adding a new provider:
- *   1. Drop a file under services/providers/ implementing VideoProvider.
- *   2. Register it in `pickProvider()` below.
+ * Tier: recorded-demo (best quality, slow). Uses the team's HIGGSFIELD_API_KEY
+ * to dispatch through Higgsfield Cloud (which itself routes Sora 2 / Veo 3.1 /
+ * Kling 3.0 internally).
  *
- * No call site outside this file should import a concrete provider directly.
+ * Owner: Vishnu
+ * Reference:
+ *   https://cloud.higgsfield.ai/
+ *   https://github.com/higgsfield-ai/higgsfield-client (Python SDK)
+ *   https://www.segmind.com/models/higgsfield-image2video/api (gateway fallback)
  */
-import type { GenerateRequest, GenerateResponse, JobStatus } from "../types/api.js";
-import { higgsfieldProvider } from "./providers/higgsfield-cloud.js";
-import { mockProvider } from "./providers/mock.js";
-import type { VideoProvider } from "./providers/types.js";
-import { registerJob, getJob, type JobRecord } from "./job-registry.js";
+import type { JobStatus } from "../types/api.js";
+import { encodeJobId, type GenerateClipParams } from "./provider.js";
 
-function pickProvider(): VideoProvider {
-  if (process.env.HIGGSFIELD_API_KEY) return higgsfieldProvider;
-  return mockProvider;
+export async function generate(_params: GenerateClipParams): Promise<{ jobId: string }> {
+  // TODO(vishnu): POST to Higgsfield, return providerJobId.
+  // For now the route returns 501; once wired, return:
+  //   const { id } = await higgsfieldClient.generate({...})
+  //   return { jobId: encodeJobId("higgsfield", id) }
+  void encodeJobId;
+  throw new Error("services/higgsfield.ts: generate not implemented");
 }
 
-const provider = pickProvider();
-
-export const activeProviderName = provider.name;
-
-console.log(`[generation] active provider: ${provider.name}`);
-
-/**
- * Kick off generation, register the job under our internal id, and return
- * the response shape expected by routes/generate.ts.
- */
-export async function startGeneration(req: GenerateRequest): Promise<GenerateResponse> {
-  const { providerJobId, pollAfterMs } = await provider.generate({
-    prompt: req.refinedPrompt,
-    durationSeconds: req.durationSeconds,
-    startImageUrl: process.env.TEST_REFERENCE_IMAGE_URL,
-  });
-
-  const jobId = registerJob({
-    providerJobId,
-    providerName: provider.name,
-    projectId: req.projectId,
-    beatId: req.beatId,
-    sceneId: req.sceneId,
-    durationSeconds: req.durationSeconds,
-  });
-
-  return { jobId, provider: provider.name, pollAfterMs };
-}
-
-export interface ProviderPollResult {
-  job: JobRecord;
-  status: JobStatus;
-  providerClipUrl?: string;
-  error?: string;
-}
-
-/**
- * Poll the active provider for a previously registered job. Returns the raw
- * provider state plus the registry record so the caller can decide what to do
- * (e.g. trigger a Cloudinary upload on first success).
- */
-export async function pollProvider(jobId: string): Promise<ProviderPollResult | null> {
-  const job = getJob(jobId);
-  if (!job) return null;
-  const status = await provider.getStatus(job.providerJobId);
-  return {
-    job,
-    status: status.status,
-    providerClipUrl: status.clipUrl,
-    error: status.error,
-  };
+export async function getStatus(_jobId: string): Promise<{ status: JobStatus; clipUrl?: string; clipPublicId?: string; error?: string }> {
+  // TODO(vishnu): GET Higgsfield job status, map to JobStatus union.
+  // On succeeded, upload the Higgsfield-hosted MP4 to Cloudinary via
+  // services/cloudinary.ts.uploadVideoFromUrl(clipUrl, "sceneos/<projectId>/<beatId>/<sceneId>")
+  // and return clipPublicId so /api/stitch/url can splice it.
+  throw new Error("services/higgsfield.ts: getStatus not implemented");
 }

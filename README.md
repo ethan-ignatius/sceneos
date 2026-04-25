@@ -14,14 +14,16 @@ SceneOS is a **LA Hacks 2026** project that turns a creative-but-non-expert user
 
 Read in this order:
 
-1. [`CONTEXT.md`](CONTEXT.md) — the master overview. Vision, market thesis, UX flow, stack.
-2. [`docs/HACKATHON_STRATEGY.md`](docs/HACKATHON_STRATEGY.md) — track choices, day-by-day plan, judging criteria map.
+1. [`CONTEXT.md`](CONTEXT.md) — master overview: vision, market thesis, UX flow, stack.
+2. [`docs/HACKATHON_STRATEGY.md`](docs/HACKATHON_STRATEGY.md) — track choices, day-by-day plan, judging-criteria map.
 3. [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md) — service design, API contract, integrations.
 4. [`docs/FRONTEND_PHILOSOPHY.md`](docs/FRONTEND_PHILOSOPHY.md) — design language, motion system, component patterns.
-5. [`docs/SHARED_TYPES.md`](docs/SHARED_TYPES.md) — TypeScript contracts shared between frontend and backend.
-6. [`docs/STITCH_PROMPTS.md`](docs/STITCH_PROMPTS.md) — Google Stitch prompts per screen for prototyping.
-7. [`docs/DEMO_PHILOSOPHY.md`](docs/DEMO_PHILOSOPHY.md) — how we shoot the 2-minute demo video.
-8. [`docs/DEVPOST_DRAFT.md`](docs/DEVPOST_DRAFT.md) — Devpost submission draft.
+5. [`docs/FRONTEND_BUILDOUT.md`](docs/FRONTEND_BUILDOUT.md) — Alex's surface-by-surface roadmap. **Read this before touching frontend code.**
+6. [`docs/MOCK_BACKEND.md`](docs/MOCK_BACKEND.md) — mock backend contract: how the FE always talks to a real backend, even with no keys.
+7. [`docs/SHARED_TYPES.md`](docs/SHARED_TYPES.md) — TypeScript contracts shared between frontend and backend.
+8. [`docs/STITCH_PROMPTS.md`](docs/STITCH_PROMPTS.md) — Google Stitch prompts per screen for prototyping.
+9. [`docs/DEMO_PHILOSOPHY.md`](docs/DEMO_PHILOSOPHY.md) — how we shoot the 2-minute demo video.
+10. [`docs/DEVPOST_DRAFT.md`](docs/DEVPOST_DRAFT.md) — Devpost submission draft.
 
 ---
 
@@ -37,19 +39,22 @@ sceneos/
 
 ## Quick start
 
+Two terminals, always.
+
 ```bash
-# Frontend
+# terminal 1 — backend (mock mode, no keys needed)
+cd backend
+npm install
+npm run dev:mock           # http://localhost:8787
+
+# terminal 2 — frontend
 cd frontend
-cp .env.example .env       # fill in Cloudinary cloud_name + preset
+cp .env.example .env
 npm install
 npm run dev                # http://localhost:5173
-
-# Backend (separate terminal)
-cd backend
-cp .env.example .env       # fill in Cloudinary, Higgsfield, OpenAI keys
-npm install
-npm run dev                # http://localhost:8787
 ```
+
+The frontend is **never** mocked itself — it always makes real HTTP calls to a real backend. In mock mode, the **backend** returns canned realistic data. Flip to real services later by populating `backend/.env` and running `npm run dev` (auto-detects keys).
 
 ---
 

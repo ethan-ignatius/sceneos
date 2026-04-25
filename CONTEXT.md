@@ -37,25 +37,27 @@ SceneOS encodes that directorial knowledge into the product itself. The user sup
 |---|---|---|
 | Pro cinematic trailers cost ~$10K | **Validated, conservative.** Industry rates run $10K–$100K **per finished minute**. Game trailers $5K–$50K. Voiceover alone $1K–$5K/min. | [Animost](https://animost.com/uncategorized/how-much-does-it-cost-to-make-a-cinematic-trailer/), [Pixune](https://pixune.com/blog/how-much-does-a-video-game-trailer-cost/), [MU2 commercial guide 2026](https://www.mu2pro.com/2026/02/14/commercial-video-cost-2026-guide) |
 | AI video creators are in demand | **Validated.** Storyboard/agent platforms have exploded in 2026 — Invideo Agent, LTX, Higgsfield Popcorn, Katalist, Novi, DeeVid. | [Invideo Agent review](https://resource.digen.ai/invideo-ai-video-agent-review-2026/), [LTX](https://ltx.studio/blog/best-ai-video-generators) |
-| "Nothing like SceneOS exists" | **Partially true.** Linear prompt→storyboard→video pipelines exist. A *node-canvas exploration interface organised around cinematography theory*, with Cloudinary-stitched delivery and an optional CutOS editor handoff, does not. | See competitor table in `docs/HACKATHON_STRATEGY.md`. |
+| "First cinematic-theory-as-UI tool" | **True and defensible.** Linear prompt→storyboard→video pipelines exist. A node canvas where cinematography theory IS the interface, an agent speaking directorial language, and a Cloudinary-URL delivery pipeline — that combination is novel. | See competitor table in `docs/HACKATHON_STRATEGY.md`. |
 | Higgsfield is callable from a frontend-friendly stack | **Yes.** Cloud console at [cloud.higgsfield.ai](https://cloud.higgsfield.ai/), official Python SDK, third-party API gateways (Segmind, Unifically). Public API maturity is uneven — backend team must confirm auth + rate limits. | [Higgsfield client SDK](https://github.com/higgsfield-ai/higgsfield-client), [Segmind I2V](https://www.segmind.com/models/higgsfield-image2video/api) |
 
 **Net:** the user/business value is real and quantifiable. SceneOS that gets a non-pro to a credible 1-minute cinematic in <15 minutes is replacing tens of thousands of dollars of human production time.
 
 ---
 
-## 3. The wedge
+## 3. The wedge — cinematic theory as UI
 
-We are not the first AI-video tool. We are the first to ship a **node-canvas exploration UI organised around cinematography theory**, paired with a delivery pipeline that hides every operational detail (storage, concat, transcoding, CDN) behind a Cloudinary URL.
+**SceneOS is the first cinematic-theory-as-UI tool.** Other AI-video products treat generation as the product. We treat *direction* as the product — the canvas of beats, the directorial questions, the per-beat archetypes (lens, movement, light, blocking, pace) — and use generation models as commodity primitives we route between (Higgsfield / Kling / Replicate). Storage, concat, transcoding, and CDN collapse into a single Cloudinary `fl_splice` URL.
+
+The questions our agent asks are not "what mood?" — they are "for the establishing wide, do you want a 24mm sweep across the dunes, or an 85mm compression on a lone figure against the horizon?" That difference is the moat. Generic questions make us a wrapper. Directorial questions make us a tool a real director would respect.
 
 | Tool | What it does | Where it falls short |
 |---|---|---|
-| **LTX Studio** | End-to-end: script → storyboard → timeline → render | Linear timeline, no spatial/beat-tree exploration |
-| **Higgsfield Popcorn** | Multi-frame consistent storyboards | Image-layer only, no narrative agent, no beat structure |
-| **Invideo Agent** | Autonomous prompt → final video | Optimised for SEO/stock content, not cinematic narrative |
-| **Katalist / Novi AI** | Story → storyboard → produced video | Linear, no theory-driven scaffolding |
+| **LTX Studio** | End-to-end: script → storyboard → timeline → render | Linear timeline; no theory-driven scaffolding |
+| **Higgsfield Popcorn** | Multi-frame consistent storyboards | Image-layer only; no directorial questioning |
+| **Invideo Agent** | Autonomous prompt → final video | Optimised for SEO/stock content; no cinematography opinion |
+| **Katalist / Novi AI** | Story → storyboard → produced video | Linear funnels; chat-style instead of canvas |
 
-**SceneOS wedge:** *the canvas is the product*. Cinematography (acts, beats, conflict shape) becomes a navigable spatial map. The user explores instead of being interviewed in a linear funnel.
+**SceneOS wedge:** the canvas is the product. Cinematography (acts, beats, conflict shape) becomes a navigable spatial map; the agent speaks in directorial language; the delivery pipeline is one URL. None of the above ship all three.
 
 ---
 
@@ -120,6 +122,7 @@ Detailed diagrams in [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.
 
 Key decisions:
 - **Cloudinary `fl_splice`** is the stitching engine. The "final video URL" is just a transformation URL — no server-side concat job, no waiting.
+- **Generation provider is configurable via `GENERATION_PROVIDER` env var**: `higgsfield` (recorded-demo tier, best quality) → `kling` (live-demo tier, faster) → `replicate` (multi-model fallback) → `cached` (pre-rendered demo project, on-stage safety net). Switch tiers without code changes. See `docs/BACKEND_ARCHITECTURE.md` §6.5.
 - **Higgsfield is server-side only** (we proxy because of API-key handling and rate limits).
 - **CutOS handoff is optional**. The hackathon happy-path delivers a final cinematic without ever entering CutOS. Editor mode is a "wow" surface for the demo.
 
@@ -177,16 +180,31 @@ Detailed rationale in `docs/FRONTEND_PHILOSOPHY.md` and `docs/BACKEND_ARCHITECTU
 
 ---
 
-## 9. Open questions (need team confirmation)
+## 9. Scope decisions (locked 2026-04-25 after critique)
 
-1. **Higgsfield API auth** — do we have keys? If not, secure them ASAP. Without them, switch to Segmind or Replicate as fallback.
-2. **Cloudinary cloud name / upload preset** — needs a free-tier account; whoever sets it up adds `cloud_name` and `upload_preset` to `frontend/.env`.
-3. **Recursive nodes** — feature mode only for hackathon, or skip entirely?
-4. **Audio** — does v0 include ambient + generated VO via ElevenLabs (through CutOS), or video-only?
-5. **CutOS handoff** — if we implement, who builds CutOS's `POST /api/projects/import-manifest`? It doesn't exist yet.
+**Shipping (ranked by criticality):**
+1. The **page-crumple → 3D canvas hook** (the first 30 seconds of the demo). This is the visual that wins the room.
+2. **One complete cinematic playing on stage**, end-to-end (master prompt → 5 trailer beats → Cloudinary `fl_splice` URL).
+3. **Trailer mode only.** 5 flat beats. No recursion.
+4. **Provider tiering** (higgsfield / kling / cached) so the live render survives whatever Sunday throws at us.
+5. **Cinematography moat** — the agent asks directorial questions (lens, movement, light, blocking, pace), not generic ones. See `BeatArchetype.directorNotes` in `frontend/src/lib/beat-templates.ts`.
+
+**Explicitly cut:**
+- **Recursive nodes** — too risky for 36-hour scope. Flat 5-beat trailer only.
+- **Feature mode** in the live demo — schema exists, but we don't demo it.
+- **CutOS handoff** as core flow — only implement if endpoint lands by Sunday noon. Otherwise: pitch as roadmap.
+- **ElevenLabs dubbing** as core flow — same as CutOS handoff: only if free.
+- **Multi-user / auth / persistence beyond localStorage**.
+- **Mobile / responsive** — desktop-only at MVP.
+
+**Still open (need team confirmation):**
+1. **Higgsfield API auth** — do we have keys? If not, secure them ASAP. Live demo can run on `kling` or `cached` tier without them.
+2. **Cloudinary cloud name / upload preset** — whoever sets up the free-tier account fills `cloud_name` + `upload_preset` in `frontend/.env`.
+3. **Demo project prompt** — confirm `DEMO_PROMPT` in `frontend/src/lib/demo-project.ts` Saturday before rendering.
 
 ---
 
 ## 10. Changelog
 
 - **2026-04-25** — Doc seeded; market validated; competitor scan complete; stack chosen; **track decided (Flicker to Flow + Cloudinary)**; CutOS recon complete (Next.js 16 / React 19.2 / Supabase / Kling-ElevenLabs-TwelveLabs; no Higgsfield, no Cloudinary — those are SceneOS's contribution); FlowBoard reviewed for design inspiration (tldraw + Radix + glassmorphism); Cloudinary `fl_splice` URL-based stitching identified as the stitch engine. Repo layout (`frontend/` + `backend/` + `docs/`) mirrors FlowBoard.
+- **2026-04-25 (rev 2)** — Reviewer critique applied. Reframed wedge from "nothing like SceneOS exists" to "first cinematic-theory-as-UI." Added **GENERATION_PROVIDER** dispatch (higgsfield/kling/replicate/cached) so we can flip tiers between recorded demo, live demo, and on-stage cached fallback. Added rich `directorNotes` to every beat archetype (lens, movement, light, blocking, pace) — this is the moat. Cut recursive nodes and feature-mode demo from scope. Locked happy path on trailer mode only.
