@@ -88,7 +88,7 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const isReady = beat.status === "ready-to-generate";
   const reducedMotion = usePrefersReducedMotion();
 
-  const [slotX, slotY, slotZ] = position;
+  const slotZ = position[2];
   const mood = beat.archetype.mood;
   const geometryKind = geometryForMood(mood);
   const spin = baseSpinForMood(mood);
@@ -298,7 +298,12 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   }, [geometryKind, palette.core, palette.emissive]);
 
   return (
-    <group ref={groupRef} position={[slotX, slotY, slotZ]}>
+    // Pass the parent's stable position tuple directly. Constructing a fresh
+    // [slotX, slotY, slotZ] every render handed R3F a new tuple identity each
+    // time, which reset the group's local matrix mid-lerp from useFrame —
+    // visible as orbs blinking back to their slot positions on every parent
+    // re-render.
+    <group ref={groupRef} position={position}>
       {/* Atmosphere shell — scale set in useFrame (target × 1.4) so it tracks
           the form size and never gets swallowed when active. */}
       <mesh ref={atmosphereRef}>

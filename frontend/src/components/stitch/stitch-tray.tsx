@@ -2,6 +2,7 @@ import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Copy, Clapperboard, Loader2, ArrowUpRight, Check } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -45,7 +46,10 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
   const setFinalCinematic = useBeatGraphStore((s) => s.setFinalCinematic);
-  const approvedIds = useBeatGraphStore(selectApprovedClipPublicIds);
+  // useShallow — same reasoning as PersistentUrlStrip: selector returns a
+  // fresh array each call; zustand v5's strict equality would otherwise
+  // re-render every store change and crash under React 19 StrictMode.
+  const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
   const totalCount = manifest?.beats.length ?? 0;
   const approvedCount = approvedIds.length;
   const allReady = approvedCount === totalCount && totalCount > 0;
@@ -130,7 +134,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       className={cn(
         // Bottom-sheet on <md, floating panel on >=md (#155). Same visual
         // weight, different geometry per viewport.
-        "fixed inset-x-0 bottom-0 z-40 flex max-h-[85svh] w-full flex-col rounded-t-md",
+        "fixed inset-x-0 bottom-0 z-50 flex max-h-[85svh] w-full flex-col rounded-t-md",
         "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[40rem] md:max-w-[calc(100vw-3rem)] md:rounded-md",
         "overflow-hidden border border-brand-ember-dim/30",
         "bg-bg-elev-1/85 backdrop-blur-2xl",

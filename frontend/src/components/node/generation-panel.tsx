@@ -16,6 +16,7 @@ const PROVIDER_LABEL: Record<GenerationProvider, string> = {
   higgsfield: "Higgsfield · live",
   kling: "Kling · live",
   fal: "fal.ai · live",
+  vertex: "Vertex · Veo 3.1",
   replicate: "Replicate · live",
   cached: "Cached · demo",
 };

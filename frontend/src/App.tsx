@@ -3,6 +3,7 @@ import { LandingRoute } from "@/routes/landing-route";
 import { CrumpleBridgeRoute } from "@/routes/crumple-bridge-route";
 import { CanvasRoute } from "@/routes/canvas-route";
 import { FinalDeliveryRoute } from "@/routes/final-delivery-route";
+import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
 import { StageIndicator } from "@/components/ui/stage-indicator";
@@ -15,7 +16,7 @@ export default function App() {
   useLenis();
 
   return (
-    <>
+    <AppErrorBoundary>
       <Routes>
         <Route path="/" element={<LandingRoute />} />
         <Route path="/transition" element={<CrumpleBridgeRoute />} />
@@ -29,6 +30,6 @@ export default function App() {
       <CommandMenuMount />
       <StageIndicator />
       <MockModeChip />
-    </>
+    </AppErrorBoundary>
   );
 }
