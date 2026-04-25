@@ -8,11 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import agent as agent_service
 from . import decompose as decompose_service
@@ -31,13 +33,23 @@ from .provider import (
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="sceneos-backend-py")
+
+# CORS — allow any origin in dev. Hackathon scope; tighten post-deploy.
+_origins_raw = env("ALLOWED_ORIGIN", "*") or "*"
+_allow_origins = [o.strip() for o in _origins_raw.split(",")] if _origins_raw != "*" else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[env("ALLOWED_ORIGIN", "http://localhost:5173") or "http://localhost:5173"],
+    allow_origins=_allow_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["content-type"],
 )
+
+
+# ── /mock — serves mock_frontend/ for same-origin agent visualization ───────
+_MOCK_FRONTEND = Path(__file__).resolve().parents[2] / "mock_frontend"
+if _MOCK_FRONTEND.is_dir():
+    app.mount("/mock", StaticFiles(directory=str(_MOCK_FRONTEND), html=True), name="mock_frontend")
 
 
 @app.exception_handler(HTTPException)

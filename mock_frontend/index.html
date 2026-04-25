@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SceneOS — Agent Loop Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    @keyframes pulse-ring {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.45); }
+      50%      { box-shadow: 0 0 0 10px rgba(251, 191, 36, 0); }
+    }
+    .active-node { animation: pulse-ring 2s infinite ease-out; }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-up { animation: fade-up 0.32s ease-out both; }
+    @keyframes blink { 50% { opacity: 0.25; } }
+    .blink { animation: blink 1s infinite ease-in-out; }
+    .chip {
+      transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+    }
+    .chip:hover { transform: translateY(-1px); }
+    /* scrollbar minimalism */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <header class="border-b border-zinc-900 px-6 py-4 flex items-baseline justify-between">
+    <div>
+      <h1 class="text-xl font-light tracking-tight">SceneOS <span class="text-amber-400 font-medium">·</span> Agent Loop Visualizer</h1>
+      <p class="text-[11px] text-zinc-500 mt-1">mock_frontend — standalone — verifies <code class="text-amber-400/80">/api/agent</code> end-to-end</p>
+    </div>
+    <div class="flex items-center gap-2 text-[11px] text-zinc-500">
+      <span>backend:</span>
+      <input id="apiBase" class="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[11px] w-56 text-zinc-300" />
+      <span id="connDot" class="w-2 h-2 rounded-full bg-zinc-700"></span>
+    </div>
+  </header>
+
+  <!-- BOOT — master prompt input ──────────────────────────────────────── -->
+  <section id="boot" class="px-6 py-16 max-w-3xl mx-auto">
+    <p class="text-[11px] uppercase tracking-widest text-zinc-500 mb-3">step 0 of 7</p>
+    <label class="block text-2xl font-light text-zinc-200 mb-3 leading-tight">
+      Tell me about your movie. One line is fine.
+    </label>
+    <textarea
+      id="masterPrompt"
+      rows="3"
+      class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-4 text-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
+      placeholder="A monkey steals a banana from the zoo"
+    ></textarea>
+    <div class="flex items-center gap-3 mt-4">
+      <button
+        id="beginBtn"
+        class="bg-amber-500 hover:bg-amber-400 text-zinc-900 font-medium px-6 py-2.5 rounded-lg text-sm transition-colors"
+      >Begin</button>
+      <select id="videoType" class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300">
+        <option value="story" selected>story · 7 beats (canonical)</option>
+        <option value="trailer">trailer · 5 beats</option>
+        <option value="short">short · 3 beats</option>
+      </select>
+      <span class="text-[11px] text-zinc-600 ml-auto">cmd+enter to begin</span>
+    </div>
+    <p class="mt-6 text-xs text-zinc-600 leading-relaxed">
+      The agent runs at <code class="text-amber-400/70">/api/agent</code>. In <code>MOCK_MODE=true</code> it returns
+      pre-baked story.* questions with three suggested answers each. With <code>ANTHROPIC_API_KEY</code> or Vertex SA configured, the
+      real Claude agent kicks in — same shape, voice-spec system prompt encoded.
+    </p>
+  </section>
+
+  <!-- LOOP ──────────────────────────────────────────────────────────────── -->
+  <section id="loop" class="hidden px-6 py-6 max-w-7xl mx-auto">
+    <!-- Beat strip -->
+    <div id="beatStrip" class="flex gap-2 mb-6"></div>
+
+    <div class="grid grid-cols-12 gap-6">
+      <!-- Left: conversation -->
+      <div class="col-span-8 bg-zinc-900/40 border border-zinc-800 rounded-xl p-6 flex flex-col" style="min-height: 60vh;">
+        <div class="flex items-baseline justify-between mb-4">
+          <h2 id="activeBeatHeader" class="text-sm font-medium text-zinc-300"></h2>
+          <span id="turnCounter" class="text-[10px] uppercase tracking-widest text-zinc-600"></span>
+        </div>
+        <div id="conversation" class="flex-1 overflow-y-auto pr-2 space-y-4 mb-4"></div>
+        <div id="answerArea"></div>
+      </div>
+
+      <!-- Right rail: extracted facts -->
+      <div class="col-span-4 space-y-4">
+        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
+          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">master idea</h3>
+          <p id="masterPromptDisplay" class="text-sm text-zinc-200 leading-relaxed"></p>
+        </div>
+        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
+          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">active beat</h3>
+          <p id="activeBeatName" class="text-base font-medium text-amber-400"></p>
+          <p id="activeBeatIntent" class="text-xs text-zinc-500 mt-1 leading-relaxed"></p>
+          <p id="activeBeatMood" class="text-[10px] uppercase tracking-widest text-zinc-600 mt-2"></p>
+        </div>
+        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
+          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">extracted beatFacts</h3>
+          <div id="beatFacts" class="text-[11px] font-mono text-zinc-300 leading-relaxed">
+            <p class="text-zinc-600 italic">empty until markSufficient</p>
+          </div>
+        </div>
+        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
+          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">internal reasoning <span class="text-zinc-700">(debug)</span></h3>
+          <p id="reasoningDisplay" class="text-[11px] text-zinc-500 leading-relaxed">—</p>
+        </div>
+        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
+          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">manifest snapshot</h3>
+          <button id="dumpBtn" class="text-[11px] text-amber-400/80 hover:text-amber-300 underline">dump full manifest to console</button>
+        </div>
+        <button id="resetBtn" class="w-full text-[11px] text-zinc-500 hover:text-zinc-300 py-2 border border-zinc-800 rounded-lg transition-colors">↻ reset</button>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    /* ── Beat templates (mirror of backend_py/sceneos_py/beat_templates.py) ───── */
+    const TEMPLATES = {
+      story: [
+        { template: "story.hook",        beatName: "Hook",              intent: "Establish the false equilibrium. Stop the audience from looking away.", mood: "intimate-hook",  suggestedDuration: 5, directorNotes: "Open on the false equilibrium." },
+        { template: "story.exposition",  beatName: "Exposition",        intent: "Establish the world, the protagonist, and what they want.",            mood: "wide-establish", suggestedDuration: 8, directorNotes: "Show the everyday." },
+        { template: "story.inciting",    beatName: "Inciting Incident", intent: "The disruption. The protagonist must act.",                            mood: "intimate-hook",  suggestedDuration: 6, directorNotes: "The break." },
+        { template: "story.rising",      beatName: "Rising Action",     intent: "Stakes escalate. Obstacles compound. The protagonist commits.",         mood: "kinetic-rising", suggestedDuration: 10, directorNotes: "Variety." },
+        { template: "story.climax",      beatName: "Climax",            intent: "The apex. The dramatic question is answered.",                          mood: "tense-climax",   suggestedDuration: 8, directorNotes: "Maximum stakes." },
+        { template: "story.falling",     beatName: "Falling Action",    intent: "The aftermath. Consequences land.",                                    mood: "still-resolve",  suggestedDuration: 6, directorNotes: "Echo." },
+        { template: "story.resolution",  beatName: "Resolution",        intent: "The new normal. The last frame is the emotional register.",           mood: "still-resolve",  suggestedDuration: 5, directorNotes: "Final image." },
+      ],
+      trailer: [
+        { template: "trailer.establishing", beatName: "Establishing", intent: "Place the viewer in the world. Stakes implied, not stated.",  mood: "wide-establish", suggestedDuration: 8,  directorNotes: "Wide and atmospheric." },
+        { template: "trailer.hook",         beatName: "Hook",         intent: "First close-up of the protagonist. Make us care in three seconds.", mood: "intimate-hook", suggestedDuration: 12, directorNotes: "Intimate close-up." },
+        { template: "trailer.rising",       beatName: "Rising",       intent: "Stakes escalate. Pace quickens. Conflict reveals itself.", mood: "kinetic-rising", suggestedDuration: 18, directorNotes: "Variety." },
+        { template: "trailer.climax-tease", beatName: "Climax Tease", intent: "Promise the apex without delivering it.",                  mood: "tense-climax",   suggestedDuration: 14, directorNotes: "One held image." },
+        { template: "trailer.sting",        beatName: "Sting",        intent: "One image. One line. The audience exhales and remembers.",  mood: "punchy-sting",   suggestedDuration: 8,  directorNotes: "Title card or single iconic frame." },
+      ],
+      short: [
+        { template: "short.hook",   beatName: "Hook",   intent: "Stop the scroll in 1.5 seconds.",                                   mood: "intimate-hook", suggestedDuration: 5,  directorNotes: "Instantly readable." },
+        { template: "short.turn",   beatName: "Turn",   intent: "Subvert the expectation set in the hook.",                          mood: "kinetic-rising", suggestedDuration: 10, directorNotes: "Recontextualize." },
+        { template: "short.payoff", beatName: "Payoff", intent: "Land the emotion or punchline in under 5 seconds.",                mood: "punchy-sting",   suggestedDuration: 5,  directorNotes: "Tighter than the hook." },
+      ],
+    };
+
+    /* ── State ─────────────────────────────────────────────────────────────── */
+    let manifest = null;
+    let currentBeatIndex = 0;
+    let inFlight = false;
+
+    /* ── DOM helpers ───────────────────────────────────────────────────────── */
+    const $ = (id) => document.getElementById(id);
+
+    function defaultApiBase() {
+      const origin = (window.location && window.location.origin) || "";
+      if (origin.startsWith("http")) return origin;
+      return "http://localhost:8787";
+    }
+
+    function apiBase() {
+      return ($("apiBase").value || defaultApiBase()).replace(/\/$/, "");
+    }
+
+    function uuid() {
+      if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+      return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function nowIso() { return new Date().toISOString(); }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+    }
+
+    /* ── API ───────────────────────────────────────────────────────────────── */
+    async function callAgent(userMessage) {
+      const beat = manifest.beats[currentBeatIndex];
+      const body = { manifest, beatId: beat.beatId };
+      if (typeof userMessage === "string" && userMessage.trim()) body.userMessage = userMessage;
+      const res = await fetch(`${apiBase()}/api/agent`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`/api/agent ${res.status}: ${text.slice(0, 240)}`);
+      }
+      return res.json();
+    }
+
+    async function pingHealth() {
+      try {
+        const res = await fetch(`${apiBase()}/api/health`, { method: "GET" });
+        $("connDot").className = "w-2 h-2 rounded-full " + (res.ok ? "bg-emerald-500" : "bg-rose-500");
+      } catch {
+        $("connDot").className = "w-2 h-2 rounded-full bg-rose-500";
+      }
+    }
+
+    /* ── Render ────────────────────────────────────────────────────────────── */
+    function renderBeatStrip() {
+      const strip = $("beatStrip");
+      strip.innerHTML = manifest.beats.map((beat, i) => {
+        const status = i < currentBeatIndex ? "done" : i === currentBeatIndex ? "active" : "pending";
+        const cls =
+          status === "done"   ? "bg-emerald-900/30 border-emerald-700 text-emerald-300" :
+          status === "active" ? "bg-amber-900/40 border-amber-500 text-amber-200 active-node" :
+                                "bg-zinc-900/40 border-zinc-800 text-zinc-600";
+        const tick = status === "done" ? "✓ " : "";
+        return `
+          <div class="flex-1 border ${cls} rounded-lg px-3 py-2 text-[11px] text-center transition-colors">
+            <div class="opacity-50 text-[9px] uppercase tracking-widest">${i + 1}</div>
+            <div class="font-medium">${tick}${escapeHtml(beat.beatName)}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function renderConversation() {
+      const beat = manifest.beats[currentBeatIndex];
+      const turns = (beat.scenes[0] && beat.scenes[0].conversation) || [];
+      const html = turns.map((t) => {
+        const isAgent = t.role === "agent";
+        if (isAgent) {
+          return `
+            <div class="fade-up">
+              <div class="text-[9px] uppercase tracking-widest text-amber-500 mb-1">sceneos</div>
+              <div class="text-[15px] leading-relaxed text-zinc-100">${escapeHtml(t.content)}</div>
+            </div>
+          `;
+        }
+        return `
+          <div class="fade-up flex justify-end">
+            <div class="max-w-[80%]">
+              <div class="text-[9px] uppercase tracking-widest text-zinc-500 mb-1 text-right">you</div>
+              <div class="text-[14px] leading-relaxed text-zinc-200 bg-zinc-800/70 rounded-xl rounded-tr-sm px-4 py-2">${escapeHtml(t.content)}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+      $("conversation").innerHTML = html || `<p class="text-zinc-600 text-sm italic">starting conversation…</p>`;
+      const c = $("conversation");
+      c.scrollTop = c.scrollHeight;
+    }
+
+    function renderAnswerArea(suggestions, opts = {}) {
+      if (opts.thinking) {
+        $("answerArea").innerHTML = `<p class="text-[12px] text-zinc-500 blink py-3">thinking…</p>`;
+        return;
+      }
+      if (opts.done) {
+        $("answerArea").innerHTML = `
+          <div class="text-emerald-400 text-sm border border-emerald-900/60 bg-emerald-950/30 rounded-lg px-4 py-3">
+            All ${manifest.beats.length} beats characterized. The deterministic pipeline (orchestrator → motion preset → reference images → video gen) takes over from here.
+          </div>
+        `;
+        return;
+      }
+      if (opts.error) {
+        $("answerArea").innerHTML = `
+          <div class="text-rose-400 text-sm border border-rose-900/60 bg-rose-950/30 rounded-lg px-4 py-3">
+            ${escapeHtml(opts.error)}
+            <button id="retryBtn" class="ml-3 text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded">retry</button>
+          </div>
+        `;
+        $("retryBtn") && $("retryBtn").addEventListener("click", () => advance(undefined));
+        return;
+      }
+      const sList = (suggestions && suggestions.length) ? suggestions : [];
+      const chips = sList.map((s, i) => `
+        <button data-suggestion="${i}" class="chip text-[12px] text-left bg-zinc-800/80 hover:bg-amber-900/30 border border-zinc-800 hover:border-amber-700 rounded-xl px-4 py-2.5 text-zinc-200 leading-snug max-w-md flex-1 min-w-[200px]">
+          ${escapeHtml(s)}
+        </button>
+      `).join("");
+      $("answerArea").innerHTML = `
+        ${chips ? `
+          <div class="mb-3">
+            <p class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">suggested · click to send · or type your own below</p>
+            <div class="flex flex-wrap gap-2">${chips}</div>
+          </div>
+        ` : ""}
+        <div class="flex gap-2">
+          <input id="answerInput" autofocus placeholder="Or type your own answer…" class="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500/50" />
+          <button id="sendBtn" class="bg-amber-500 hover:bg-amber-400 text-zinc-900 font-medium px-5 py-2.5 rounded-lg text-sm transition-colors">Send</button>
+        </div>
+      `;
+      // Wire suggestions
+      document.querySelectorAll("[data-suggestion]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = parseInt(btn.getAttribute("data-suggestion"), 10);
+          sendAnswer(sList[idx]);
+        });
+      });
+      $("sendBtn").addEventListener("click", () => {
+        const text = $("answerInput").value.trim();
+        if (text) sendAnswer(text);
+      });
+      $("answerInput").addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          const text = e.target.value.trim();
+          if (text) sendAnswer(text);
+        }
+      });
+    }
+
+    function renderActiveBeat() {
+      const beat = manifest.beats[currentBeatIndex];
+      $("activeBeatName").textContent = beat.beatName;
+      $("activeBeatIntent").textContent = beat.archetype.intent;
+      $("activeBeatMood").textContent = `mood · ${beat.archetype.mood} · ${beat.archetype.suggestedDuration}s`;
+      $("activeBeatHeader").textContent = `${currentBeatIndex + 1} / ${manifest.beats.length} · ${beat.beatName}`;
+      const turnCount = (beat.scenes[0].conversation || []).filter(t => t.role === "user").length;
+      $("turnCounter").textContent = `${turnCount} ${turnCount === 1 ? "answer" : "answers"} so far`;
+    }
+
+    function renderBeatFacts(facts) {
+      if (!facts) {
+        $("beatFacts").innerHTML = `<p class="text-zinc-600 italic">empty until markSufficient</p>`;
+        return;
+      }
+      const order = ["subject", "action", "setting", "framing", "mood", "characterDescription", "locationDescription"];
+      const html = order
+        .filter((k) => facts[k] != null && facts[k] !== "")
+        .map((k) => `
+          <div class="mb-2">
+            <div class="text-[9px] uppercase tracking-widest text-amber-500/70">${k}</div>
+            <div class="text-[11px] text-zinc-200">${escapeHtml(facts[k])}</div>
+          </div>
+        `).join("");
+      $("beatFacts").innerHTML = html || `<p class="text-zinc-600 italic">empty</p>`;
+    }
+
+    /* ── Logic ─────────────────────────────────────────────────────────────── */
+    function buildManifest(masterPrompt, videoType) {
+      const tmpls = TEMPLATES[videoType] || TEMPLATES.story;
+      return {
+        projectId: uuid(),
+        videoType,
+        masterPrompt,
+        createdAt: nowIso(),
+        beats: tmpls.map((t, i) => ({
+          beatId: `beat-${i + 1}`,
+          beatName: t.beatName,
+          template: t.template,
+          status: i === 0 ? "questioning" : "pending",
+          archetype: {
+            intent: t.intent,
+            mood: t.mood,
+            suggestedDuration: t.suggestedDuration,
+            directorNotes: t.directorNotes,
+          },
+          scenes: [{
+            sceneId: `${`beat-${i + 1}`}-scene-1`,
+            conversation: [],
+            approved: false,
+          }],
+        })),
+      };
+    }
+
+    async function begin() {
+      const masterPrompt = $("masterPrompt").value.trim();
+      if (!masterPrompt) {
+        $("masterPrompt").focus();
+        return;
+      }
+      const videoType = $("videoType").value;
+      manifest = buildManifest(masterPrompt, videoType);
+      currentBeatIndex = 0;
+
+      $("boot").classList.add("hidden");
+      $("loop").classList.remove("hidden");
+      $("masterPromptDisplay").textContent = masterPrompt;
+
+      renderBeatStrip();
+      renderActiveBeat();
+      renderConversation();
+      renderBeatFacts(null);
+
+      await advance(undefined);
+    }
+
+    async function sendAnswer(text) {
+      if (inFlight) return;
+      const beat = manifest.beats[currentBeatIndex];
+      beat.scenes[0].conversation.push({ role: "user", content: text, timestamp: nowIso() });
+      renderConversation();
+      renderActiveBeat();
+      renderAnswerArea([], { thinking: true });
+      await advance(text);
+    }
+
+    async function advance(userMessage) {
+      inFlight = true;
+      try {
+        const res = await callAgent(userMessage);
+        const beat = manifest.beats[currentBeatIndex];
+
+        if (res.kind === "question") {
+          beat.scenes[0].conversation.push({ role: "agent", content: res.question, timestamp: nowIso() });
+          renderConversation();
+          renderActiveBeat();
+          $("reasoningDisplay").textContent = res.reasoning || "—";
+          renderAnswerArea(res.suggestedAnswers || []);
+        } else if (res.kind === "sufficient") {
+          beat.status = "ready-to-generate";
+          beat.scenes[0].refinedPrompt = res.refinedPrompt;
+          beat.scenes[0].sceneSummary = res.sceneSummary;
+          beat.scenes[0].durationSeconds = res.suggestedDuration;
+          beat.scenes[0].beatFacts = res.beatFacts || null;
+          beat.scenes[0].conversation.push({
+            role: "agent",
+            content: `Got it. ${res.sceneSummary}`,
+            timestamp: nowIso(),
+          });
+          renderConversation();
+          renderBeatFacts(res.beatFacts);
+          $("reasoningDisplay").textContent = "markSufficient — handoff to deterministic pipeline.";
+          renderAnswerArea([], { thinking: false });
+          // Brief pause so the user can read the handoff state.
+          await new Promise((r) => setTimeout(r, 1400));
+          if (currentBeatIndex < manifest.beats.length - 1) {
+            currentBeatIndex++;
+            const next = manifest.beats[currentBeatIndex];
+            next.status = "questioning";
+            renderBeatStrip();
+            renderActiveBeat();
+            renderConversation();
+            renderBeatFacts(null);
+            $("reasoningDisplay").textContent = "—";
+            await advance(undefined);
+          } else {
+            renderAnswerArea([], { done: true });
+          }
+        } else {
+          throw new Error(`Unknown response kind: ${JSON.stringify(res).slice(0, 200)}`);
+        }
+      } catch (err) {
+        renderAnswerArea([], { error: err.message });
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    function reset() {
+      manifest = null;
+      currentBeatIndex = 0;
+      $("loop").classList.add("hidden");
+      $("boot").classList.remove("hidden");
+      $("masterPrompt").focus();
+    }
+
+    /* ── Boot wiring ───────────────────────────────────────────────────────── */
+    $("apiBase").value = defaultApiBase();
+    pingHealth();
+    setInterval(pingHealth, 5000);
+
+    $("beginBtn").addEventListener("click", begin);
+    $("masterPrompt").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) begin();
+    });
+    $("resetBtn") && $("resetBtn").addEventListener("click", reset);
+    $("dumpBtn") && $("dumpBtn").addEventListener("click", () => {
+      console.log("─── SceneOS manifest ───");
+      console.log(JSON.parse(JSON.stringify(manifest)));
+    });
+
+    // Expose for console hacking.
+    window.SceneOS = { get manifest() { return manifest; }, get currentBeatIndex() { return currentBeatIndex; }, reset };
+  </script>
+</body>
+</html>

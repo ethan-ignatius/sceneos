@@ -204,7 +204,109 @@ FEATURE: list[BeatTemplateDef] = [
 ]
 
 
-_ALL: list[BeatTemplateDef] = [*TRAILER, *SHORT, *FEATURE]
+STORY: list[BeatTemplateDef] = [
+    {
+        "template": "story.hook",
+        "beatName": "Hook",
+        "intent": "Establish the false equilibrium. Stop the audience from looking away.",
+        "mood": "intimate-hook",
+        "suggestedDuration": 5,
+        "directorNotes": _notes(
+            "FRAME: One image that contains the premise.",
+            "LENS: 35mm or 50mm. Close enough to read intent.",
+            "MOVEMENT: Static or breath-only handheld.",
+            "LIGHT: Single motivated source. Catch the eyes.",
+            "PACE: Hold one moment that tells us what kind of movie this is.",
+        ),
+    },
+    {
+        "template": "story.exposition",
+        "beatName": "Exposition",
+        "intent": "Establish the world, the protagonist, and what they want.",
+        "mood": "wide-establish",
+        "suggestedDuration": 8,
+        "directorNotes": _notes(
+            "FRAME: Wider. Show the protagonist in their world.",
+            "LENS: 24mm scale OR 85mm compression to isolate them in it.",
+            "MOVEMENT: Slow push-in or composed static. Patient.",
+            "LIGHT: Soft, motivated, normal. The everyday.",
+            "PACE: Breathing. One or two shots, no cut frenzy.",
+        ),
+    },
+    {
+        "template": "story.inciting",
+        "beatName": "Inciting Incident",
+        "intent": "The disruption. The protagonist must act.",
+        "mood": "intimate-hook",
+        "suggestedDuration": 6,
+        "directorNotes": _notes(
+            "FRAME: The break. A specific physical moment.",
+            "LENS: Switch focal length from exposition.",
+            "MOVEMENT: Camera reacts. Tilt, jolt, follow.",
+            "LIGHT: Palette shifts. Something is wrong.",
+            "PACE: Faster cuts begin here. The world changes.",
+        ),
+    },
+    {
+        "template": "story.rising",
+        "beatName": "Rising Action",
+        "intent": "Stakes escalate. Obstacles compound. The protagonist commits.",
+        "mood": "kinetic-rising",
+        "suggestedDuration": 10,
+        "directorNotes": _notes(
+            "FRAME: Variety. Avoid eye-level for too long.",
+            "LENS: Mix focal lengths.",
+            "MOVEMENT: Camera is alive. Dolly, drone, handheld, crane.",
+            "LIGHT: Hard light, rising contrast.",
+            "PACE: 1-2 second cuts. Build velocity.",
+        ),
+    },
+    {
+        "template": "story.climax",
+        "beatName": "Climax",
+        "intent": "The apex. The dramatic question is answered.",
+        "mood": "tense-climax",
+        "suggestedDuration": 8,
+        "directorNotes": _notes(
+            "FRAME: One held image of the highest stakes OR maximum motion.",
+            "LENS: Wide for scale OR ECU for emotional impact.",
+            "MOVEMENT: One enormous move OR total stillness.",
+            "LIGHT: Backlit silhouette permitted. High contrast.",
+            "PACE: Held moment, then a hard cut.",
+        ),
+    },
+    {
+        "template": "story.falling",
+        "beatName": "Falling Action",
+        "intent": "The aftermath. Consequences land.",
+        "mood": "still-resolve",
+        "suggestedDuration": 6,
+        "directorNotes": _notes(
+            "FRAME: The world after. Echo the exposition.",
+            "LENS: Match or mirror exposition lens.",
+            "MOVEMENT: Slowed. Often static.",
+            "LIGHT: Settled. Soft.",
+            "PACE: Long takes. Let the audience exhale.",
+        ),
+    },
+    {
+        "template": "story.resolution",
+        "beatName": "Resolution",
+        "intent": "The new normal. The last frame is the emotional register.",
+        "mood": "still-resolve",
+        "suggestedDuration": 5,
+        "directorNotes": _notes(
+            "FRAME: Final image. The thing they remember.",
+            "LENS: Match the emotional center.",
+            "MOVEMENT: Locked-off, OR a slow pull-back to god view.",
+            "LIGHT: Negative space is the canvas.",
+            "PACE: One held moment. End.",
+        ),
+    },
+]
+
+
+_ALL: list[BeatTemplateDef] = [*TRAILER, *SHORT, *FEATURE, *STORY]
 
 
 def find_template(template: str) -> BeatTemplateDef | None:

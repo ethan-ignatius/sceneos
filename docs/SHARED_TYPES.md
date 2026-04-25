@@ -143,15 +143,31 @@ export type AgentResponse =
       kind: "question";
       question: string;
       reasoning: string;
-      estimatedRemaining: number; // soft hint, never exact
+      estimatedRemaining: number;     // soft hint, never exact
+      suggestedAnswers?: [string, string, string];  // 3 different-direction options
     }
   | {
       kind: "sufficient";
       refinedPrompt: string;
-      sceneSummary: string;       // human-readable summary for the UI
+      sceneSummary: string;            // human-readable summary for the UI
       suggestedDuration: number;
+      beatFacts?: BeatFacts;           // structured extraction → orchestrator input
     };
-```
+
+/**
+ * Structured facts extracted by the agent at markSufficient.
+ * The deterministic pipeline (orchestrator) reads this — never the raw conversation.
+ * Without beatFacts, the orchestrator has nothing to dispatch on.
+ */
+export interface BeatFacts {
+  subject: string;                 // who/what is in frame
+  action: string;                  // what they do
+  setting: string;                 // where it happens
+  framing?: string;                // lens / camera distance / movement
+  mood: string;                    // emotional register
+  characterDescription?: string;   // appearance, costume, identifying details — for ref-image gen
+  locationDescription?: string;    // place visual details — for ref-image gen
+}
 
 ### `POST /api/generate`
 
