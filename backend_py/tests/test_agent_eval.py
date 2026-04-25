@@ -12,17 +12,21 @@ def _run(req: dict) -> dict:
     return asyncio.run(run_agent_turn(req))
 
 
+def _disable_llm(monkeypatch):
+    """Strip any LLM credentials so run_agent_turn falls back to the deterministic stub."""
+    for key in ("ANTHROPIC_API_KEY", "GOOGLE_PROJECT_ID", "GCP_PROJECT_ID", "GOOGLE_APPLICATION_CREDENTIALS"):
+        monkeypatch.delenv(key, raising=False)
+
+
 def test_sparse_node_asks_question(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("ANTHROPIC_USE_VERTEX", "false")
+    _disable_llm(monkeypatch)
     response = _run(request_with_turns([], "An astronaut is alone."))
     assert response["kind"] == "question"
     assert response["question"]
 
 
 def test_one_answer_cannot_mark_sufficient(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("ANTHROPIC_USE_VERTEX", "false")
+    _disable_llm(monkeypatch)
     turns = [
         {
             "role": "user",
@@ -34,8 +38,7 @@ def test_one_answer_cannot_mark_sufficient(monkeypatch):
 
 
 def test_complete_node_marks_sufficient(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("ANTHROPIC_USE_VERTEX", "false")
+    _disable_llm(monkeypatch)
     turns = [
         {
             "role": "user",
@@ -62,8 +65,7 @@ def test_complete_node_marks_sufficient(monkeypatch):
 
 
 def test_question_includes_three_suggested_answers(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setenv("ANTHROPIC_USE_VERTEX", "false")
+    _disable_llm(monkeypatch)
     response = _run(request_with_turns([], "An astronaut is alone."))
     assert response["kind"] == "question"
     assert "suggestedAnswers" in response

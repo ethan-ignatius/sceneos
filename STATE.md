@@ -38,6 +38,10 @@ The 7 clips render — sequential where chained, parallel where not. They stitch
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ STAGE 1  AGENT — AI Q&A LOOP   ← THE CORE. Owns: agent.py.              │
 │                                                                          │
+│  LLM: Gemini 2.5 Flash via Vertex AI (genai_client.py).                 │
+│  Auth: GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS. No keys to   │
+│        juggle — same GCP service account as Veo and Imagen.             │
+│                                                                          │
 │  For each beat, repeat:                                                  │
 │   POST /api/agent { manifest, beatId, userMessage? }                    │
 │     → askQuestion(question, suggestedAnswers[3], reasoning, est)        │
@@ -282,7 +286,7 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 
 - **`STATE.md` rewritten** to reflect the canonical 7-beat / deterministic-pipeline architecture.
 - **`beat_templates.STORY`** — 7-beat dramatic arc added alongside trailer/short/feature.
-- **`agent.py` rewritten** with the framework voice spec, suggestedAnswers, and beatFacts extraction.
+- **`agent.py` rewritten** with the framework voice spec, suggestedAnswers, and beatFacts extraction. **LLM is Gemini 2.5 Flash via Vertex AI** (`genai_client.py`) — uses the same GCP creds as Veo/Imagen. No Anthropic key required for the agent.
 - **`mock.py`** updated with story.* questions + suggested-answer mocks.
 - **`mock_frontend/index.html`** — single-file standalone visualization. Open in a browser, point at localhost:8787, watch the agent ask questions with chip-style suggested answers.
 - **`SHARED_TYPES.md`** updated (additive) for suggestedAnswers + beatFacts.
@@ -344,7 +348,8 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 | Layer | File | Owns | Status |
 |---|---|---|---|
 | **Routes** | `app.py` | HTTP surface, error envelope, mock-mode branching. | ✅ |
-| **Agent** | `agent.py` | Per-turn askQuestion / markSufficient with suggestedAnswers + beatFacts. The voice. | ✅ this turn |
+| **Agent** | `agent.py` | Per-turn askQuestion / markSufficient with suggestedAnswers + beatFacts. The voice. **Gemini via Vertex.** | ✅ this turn |
+| | `genai_client.py` | `make_genai_client()` for Gemini via Vertex AI. Defaults: `gemini-2.5-flash` for agent, `gemini-2.5-pro` for decompose. | ✅ this turn |
 | | `sufficiency.py` | Facet coverage scoring. MIN=3, MAX=5. | ✅ this turn |
 | | `beat_templates.py` | TRAILER + SHORT + FEATURE + **STORY** archetype lists. | ✅ this turn |
 | **Decompose** | `decompose.py` | Master → all-beats clipPrompts (one-shot LLM with stub fallback). Used as fallback path. | ✅ |

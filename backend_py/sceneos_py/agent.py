@@ -1,5 +1,5 @@
 """
-Questionnaire agent service.
+Questionnaire agent service — Gemini via Vertex AI.
 
 Encodes the SceneOS Agent Question Framework: a director-voice LLM that
 quietly fills in a 7-beat dramatic structure (hook, exposition, inciting
@@ -15,8 +15,8 @@ pipeline (orchestrator.py): subject, action, setting, framing, mood,
 characterDescription, locationDescription. The orchestrator reads this —
 never the raw conversation.
 
-Falls back to a deterministic stub when no Claude client is available
-(no ANTHROPIC_API_KEY, no Vertex SA).
+Falls back to a deterministic stub when no Vertex AI client is available
+(no GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS).
 """
 from __future__ import annotations
 
@@ -24,12 +24,13 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
-from .anthropic_client import default_model_for, make_claude_client
+from .genai_client import default_gemini_model_for, make_genai_client
 from .sufficiency import FACET_HINTS, MAX_QUESTIONS, MIN_USER_TURNS, REQUIRED_FACETS
 
 
 TARGET_CLIP_SECONDS = 5
 
+# Tool schemas — dict form, accepted by google.genai SDK and converted internally.
 _AGENT_TOOLS: list[dict[str, Any]] = [
     {
         "name": "askQuestion",
@@ -39,7 +40,7 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
             "suggestedAnswers covering meaningfully different directions — each must imply "
             "a different movie."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "required": ["question", "reasoning", "suggestedAnswers", "estimatedRemaining"],
             "properties": {
@@ -49,19 +50,17 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "Internal note: which facet of the beat this question targets. Not shown to the user verbatim but useful for debug.",
+                    "description": "Internal note: which facet of the beat this question targets. Useful for debug only.",
                 },
                 "suggestedAnswers": {
                     "type": "array",
-                    "minItems": 3,
-                    "maxItems": 3,
                     "items": {"type": "string"},
                     "description": "Exactly 3 first-person-adjacent answer options. Each implies a different movie if chosen. Not minor variations.",
+                    "min_items": 3,
+                    "max_items": 3,
                 },
                 "estimatedRemaining": {
                     "type": "integer",
-                    "minimum": 0,
-                    "maximum": MAX_QUESTIONS,
                     "description": "Soft hint to the UI for how many more questions you might ask in this beat.",
                 },
             },
@@ -74,7 +73,7 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
             "pipeline (motion preset → character ref → location ref → video gen). "
             "Must include beatFacts."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "required": ["refinedPrompt", "sceneSummary", "beatFacts", "suggestedDuration"],
             "properties": {
@@ -107,8 +106,6 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
                 },
                 "suggestedDuration": {
                     "type": "integer",
-                    "minimum": 3,
-                    "maximum": 10,
                     "description": "Clip length in seconds.",
                 },
             },
@@ -297,7 +294,7 @@ def _has_facet_coverage(conversation: list[dict]) -> bool:
     return all(any(kw in user_text for kw in FACET_HINTS[f]) for f in REQUIRED_FACETS)
 
 
-# ── stub fallback (no Claude client) ────────────────────────────────────────
+# ── stub fallback (no Vertex client) ────────────────────────────────────────
 
 
 _STUB_QUESTION_BANK: list[tuple[str, list[str]]] = [
@@ -350,7 +347,7 @@ def _stub_question_turn(beat: dict, master: str, idx: int) -> dict:
         "kind": "question",
         "question": question,
         "reasoning": (
-            f"Stub agent (no ANTHROPIC_API_KEY): walking through the {beat['beatName'].lower()} "
+            f"Stub agent (no Vertex AI client): walking through the {beat['beatName'].lower()} "
             f"beat for \"{_truncate(master, 80)}\"."
         ),
         "suggestedAnswers": suggestions,
@@ -416,7 +413,47 @@ def _forced_followup(beat: dict) -> dict:
     }
 
 
-# ── live agent ──────────────────────────────────────────────────────────────
+# ── live agent (Gemini via Vertex AI) ──────────────────────────────────────
+
+
+def _to_gemini_contents(conversation: list[dict], opening_master_prompt: str) -> list[dict]:
+    """Anthropic-style 'agent'/'user' turns → Gemini 'model'/'user' contents."""
+    if not conversation:
+        return [
+            {
+                "role": "user",
+                "parts": [{
+                    "text": (
+                        f"My idea: {opening_master_prompt}. "
+                        f"Ask me your first question about this part of the story."
+                    )
+                }],
+            }
+        ]
+    contents: list[dict] = []
+    for t in conversation:
+        role = "model" if t.get("role") == "agent" else "user"
+        text = t.get("content", "") or ""
+        contents.append({"role": role, "parts": [{"text": text}]})
+    return contents
+
+
+def _normalize_args(value: Any) -> Any:
+    """Recursively turn google.genai's MapComposite/RepeatedComposite into plain dicts/lists."""
+    if isinstance(value, dict):
+        return {k: _normalize_args(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_args(v) for v in value]
+    # MapComposite / RepeatedComposite expose iter; coerce via dict()/list().
+    try:
+        from collections.abc import Mapping, Sequence
+        if isinstance(value, Mapping):
+            return {k: _normalize_args(v) for k, v in value.items()}
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+            return [_normalize_args(v) for v in value]
+    except Exception:
+        pass
+    return value
 
 
 async def run_agent_turn(req: dict) -> dict:
@@ -428,79 +465,77 @@ async def run_agent_turn(req: dict) -> dict:
     conversation = _collect_conversation(beat, req.get("userMessage"))
     user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
 
-    client = make_claude_client()
+    client = make_genai_client()
     if client is None:
         return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
 
-    if conversation:
-        messages = [
-            {
-                "role": "assistant" if t.get("role") == "agent" else "user",
-                "content": t.get("content", ""),
-            }
-            for t in conversation
-        ]
-    else:
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    f"My idea: {manifest['masterPrompt']}. "
-                    f"Ask me your first question about this part of the story."
-                ),
-            }
-        ]
+    from google.genai import types
 
     system = _system_prompt(beat, manifest) + "\n\n" + _turn_budget_reminder(user_turn_count)
+    contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
+
+    tool = types.Tool(function_declarations=_AGENT_TOOLS)
+    config = types.GenerateContentConfig(
+        system_instruction=system,
+        tools=[tool],
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.ANY,
+                allowed_function_names=["askQuestion", "markSufficient"],
+            )
+        ),
+        temperature=0.7,
+        max_output_tokens=2048,
+    )
 
     def _call_sync() -> Any:
-        return client.messages.create(
-            model=default_model_for("agent"),
-            max_tokens=2048,
-            system=system,
-            tools=_AGENT_TOOLS,
-            tool_choice={"type": "any"},
-            messages=messages,
+        return client.models.generate_content(
+            model=default_gemini_model_for("agent"),
+            contents=contents,
+            config=config,
         )
 
     response = await asyncio.to_thread(_call_sync)
-    tool_use = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
-    if tool_use is None:
-        raise RuntimeError(
-            f"runAgentTurn: model did not call a tool (stop_reason={getattr(response, 'stop_reason', '?')})"
-        )
 
-    if tool_use.name == "askQuestion":
-        args = dict(tool_use.input)
+    candidates = getattr(response, "candidates", None) or []
+    if not candidates:
+        raise RuntimeError(f"runAgentTurn: Gemini returned no candidates ({response!r})")
+    parts = getattr(candidates[0].content, "parts", None) or []
+    function_call = next((getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)), None)
+    if function_call is None:
+        finish_reason = getattr(candidates[0], "finish_reason", "?")
+        raise RuntimeError(f"runAgentTurn: Gemini did not call a tool (finish_reason={finish_reason})")
+
+    name = function_call.name
+    args = _normalize_args(function_call.args)
+
+    if name == "askQuestion":
         suggestions = list(args.get("suggestedAnswers") or [])
-        # Pad / trim defensively — the schema enforces exactly 3 but be safe.
         while len(suggestions) < 3:
             suggestions.append("Tell me more in your own words.")
         suggestions = [str(s) for s in suggestions[:3]]
         return {
             "kind": "question",
-            "question": str(args["question"]),
+            "question": str(args.get("question", "")),
             "reasoning": str(args.get("reasoning", "")),
             "suggestedAnswers": suggestions,
             "estimatedRemaining": int(args.get("estimatedRemaining", 1)),
         }
 
-    if tool_use.name == "markSufficient":
+    if name == "markSufficient":
         if user_turn_count < MIN_USER_TURNS:
             return _forced_followup(beat)
-        args = dict(tool_use.input)
         beat_facts = dict(args.get("beatFacts") or {})
-        # Defensive defaults — pipeline downstream expects these keys present.
         beat_facts.setdefault("subject", "the protagonist")
         beat_facts.setdefault("action", "the action of this beat")
         beat_facts.setdefault("setting", "the established location")
         beat_facts.setdefault("mood", beat["archetype"]["mood"])
         return {
             "kind": "sufficient",
-            "refinedPrompt": str(args["refinedPrompt"]),
+            "refinedPrompt": str(args.get("refinedPrompt", "")),
             "sceneSummary": str(args.get("sceneSummary", beat["beatName"])),
             "suggestedDuration": int(args.get("suggestedDuration", TARGET_CLIP_SECONDS)),
             "beatFacts": beat_facts,
         }
 
-    raise RuntimeError(f"runAgentTurn: unknown tool {tool_use.name}")
+    raise RuntimeError(f"runAgentTurn: unknown tool {name}")
