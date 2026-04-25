@@ -1,7 +1,7 @@
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { X, Copy, Sparkles, Loader2 } from "lucide-react";
+import { X, Copy, Sparkles, Loader2, ArrowUpRight, Check } from "lucide-react";
 import {
   useBeatGraphStore,
   selectApprovedClipPublicIds,
@@ -26,18 +26,20 @@ interface StitchTrayProps {
 }
 
 /**
- * The Cloudinary moment. The third — and most quietly devastating — of the
- * three demo-winning moments.
+ * The Cloudinary moment, redesigned for editorial weight.
  *
- * As beats approve, a new `l_video:<id>,fl_splice/` segment types itself
- * into the live URL with a brief ember afterglow. The thumbnail row
- * mood-tints each beat and lights approved ones; the Render CTA pulses
- * when every beat is in.
+ * Structure (top → bottom):
+ *   1. Eyebrow caption ("STITCH · CLOUDINARY · fl_splice")
+ *   2. Display headline showing approval state (e.g. "Three of seven, ready.")
+ *   3. Thumbnail strip — numbered cards, mood-tinted, ember halo when approved
+ *   4. Live URL card — head/middle/tail/base with typewriter on the new tail
+ *   5. Render CTA — primary, ember pulse when allReady
  *
- * URL diff strategy (see docs/STITCH_TRAY.md §2): each new approval inserts
- * exactly one segment in a known position. We track approvedIds.length and
- * render head/middle/tail/base separately — only `tail` runs through
- * the sequential TextSplitter.
+ * Premium goals (vs. the old generic panel):
+ *   - Display serif title carries the gravitas
+ *   - Thumbnails framed like film slates, numbered + named, breathing room
+ *   - URL block treated as the showpiece (numbered segments, larger type)
+ *   - Tray is wider (40rem) and taller — the demo viewer is meant to read it
  */
 export function StitchTray({ onClose }: StitchTrayProps) {
   const navigate = useNavigate();
@@ -49,8 +51,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const allReady = approvedCount === totalCount && totalCount > 0;
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
-  // Tracks mount status so the in-flight stitchUrl call can't setState on
-  // an unmounted tray (e.g., user clicks Close mid-render).
+
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -61,17 +62,13 @@ export function StitchTray({ onClose }: StitchTrayProps) {
 
   const segments = buildSpliceUrlSegments(approvedIds);
 
-  // Track approval count to detect *which* render added the new tail —
-  // only that render gets the ember afterglow + typewriter.
   const prevCountRef = useRef(0);
   const [revealKey, setRevealKey] = useState(0);
   const [shouldType, setShouldType] = useState(false);
   useEffect(() => {
     if (approvedCount > prevCountRef.current && approvedCount >= 2) {
-      // A new tail appeared (and isn't the first ever segment).
       setRevealKey((k) => k + 1);
       setShouldType(true);
-      // Settle to non-glow steady state after 1s.
       const t = window.setTimeout(() => setShouldType(false), 1000);
       prevCountRef.current = approvedCount;
       return () => window.clearTimeout(t);
@@ -87,14 +84,9 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   };
 
   const handleRender = async () => {
-    // Early returns before the audio cue — a double-click during in-flight
-    // would otherwise stack two whooshes on top of each other.
     if (!manifest || !allReady || rendering) return;
     setRendering(true);
     setRenderError(null);
-    // Whoosh fires at click-time (after the early-return); the navigate
-    // happens after stitchUrl resolves. The cue's tail (200ms) carries
-    // into the /final mount.
     playRenderWhoosh();
     try {
       const res = await api.stitchUrl({ manifest });
@@ -112,170 +104,248 @@ export function StitchTray({ onClose }: StitchTrayProps) {
     }
   };
 
-  // Drag-to-pan thumbnail row. The hook handles register + cleanup inside
-  // its own useEffect — listeners attach exactly once per mount.
   const thumbsRef = useRef<HTMLDivElement>(null);
   usePointerDrag(thumbsRef);
 
+  // Headline copy: "Three of seven, ready." reads better than "3 / 7 ready"
+  // when the numbers are <10. Full-spelled and italic for editorial weight.
+  const numberWord = (n: number): string => {
+    const words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+    return words[n] ?? n.toString();
+  };
+  const headline = totalCount === 0
+    ? "Compose to begin."
+    : approvedCount === 0
+      ? `${numberWord(totalCount)} beats, awaiting approval.`
+      : approvedCount === totalCount
+        ? "All beats ready. Compose the cut."
+        : `${numberWord(approvedCount)} of ${numberWord(totalCount)}, ready.`;
+
   return (
     <motion.aside
-      initial={{ x: "100%", opacity: 0 }}
+      initial={{ x: "calc(100% + 2rem)", opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      exit={{ x: "100%", opacity: 0 }}
+      exit={{ x: "calc(100% + 2rem)", opacity: 0 }}
       transition={SPRING.drawer}
-      className="absolute right-6 top-20 z-40 w-[32rem] overflow-hidden rounded-xl border border-fg-tertiary/30 bg-bg-elev-2/95 shadow-[0_24px_64px_-16px_rgba(0,0,0,0.6)] backdrop-blur-xl"
+      className={cn(
+        "absolute right-6 top-20 bottom-6 z-40 flex w-[40rem] max-w-[calc(100vw-3rem)] flex-col",
+        "overflow-hidden rounded-2xl",
+        "border border-brand-ember-dim/30",
+        "bg-bg-elev-1/85 backdrop-blur-2xl",
+        "shadow-[0_40px_80px_-24px_rgba(0,0,0,0.7),_0_0_0_1px_rgba(240,168,104,0.06)]",
+      )}
     >
-      <header className="flex items-center justify-between border-b border-fg-tertiary/20 px-5 py-4">
-        <div>
-          <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-fg-tertiary">
-            Stitch tray
+      {/* Header — caption + display headline + close */}
+      <header className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-7 pb-5 pt-6">
+        <div className="space-y-2">
+          <div className="caption-track text-[10px] text-fg-tertiary">
+            Stitch · Cloudinary · fl_splice
           </div>
-          <div className="mt-1 font-display text-lg italic text-fg-primary">
-            {approvedCount} / {totalCount} ready
-          </div>
+          <h2 className="font-display text-3xl italic leading-tight text-fg-primary">
+            {headline}
+          </h2>
         </div>
         <button
           onClick={onClose}
-          className="text-fg-tertiary transition-colors hover:text-fg-primary"
+          className="mt-1 grid h-8 w-8 flex-shrink-0 place-items-center rounded-full border border-fg-tertiary/30 text-fg-tertiary transition-colors hover:border-fg-secondary hover:text-fg-primary"
           aria-label="Close stitch tray"
           title="Close"
         >
-          <X size={18} strokeWidth={1.5} />
+          <X size={14} strokeWidth={1.5} />
         </button>
       </header>
 
-      <div className="space-y-4 p-5">
-        {/* Thumbnail row — mood-tinted, ember on approved, dim on pending.
-            Drag-to-pan with inertial decay; native overflow-x stays intact. */}
-        <div
-          ref={thumbsRef}
-          tabIndex={0}
-          aria-label="Beat thumbnails — drag or scroll horizontally"
-          // touch-action: pan-y → vertical page scroll starting from this
-          // row is preserved on touch devices; only horizontal pan/drag
-          // is captured by usePointerDrag.
-          style={{ touchAction: "pan-y" }}
-          className="flex cursor-grab gap-2 overflow-x-auto pb-1 select-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[dragging=true]:cursor-grabbing focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember-dim/60 rounded-md"
-        >
-          {manifest?.beats.map((b) => {
-            const scene = b.scenes[0];
-            const isApproved = b.status === "approved" || scene.approved;
-            const tint = moodAccentColor(b.archetype.mood);
-            return (
-              <div
-                key={b.beatId}
-                title={`${b.beatName} · ${b.archetype.mood}`}
-                className={cn(
-                  "relative aspect-video w-28 flex-shrink-0 overflow-hidden rounded-md border transition-all duration-300",
-                  isApproved
-                    ? "border-brand-ember/60 shadow-[0_0_18px_-4px_rgba(240,168,104,0.55)]"
-                    : "border-fg-tertiary/30 opacity-50",
-                )}
-              >
-                {scene.clipPublicId ? (
-                  <img
-                    src={buildThumbnailUrl(scene.clipPublicId, { mood: b.archetype.mood })}
-                    alt=""
-                    draggable={false}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="h-full w-full bg-bg-base" />
-                )}
-                {/* Mood tint — bottom-edge gradient hint, low opacity. */}
+      {/* Scrolling content body */}
+      <div className="flex-1 space-y-6 overflow-y-auto px-7 py-6">
+        {/* Thumbnail strip — numbered film slates */}
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <span className="caption-track text-[10px]">Beat strip</span>
+            <span className="font-mono text-[10px] tabular-nums text-fg-tertiary">
+              {approvedCount.toString().padStart(2, "0")}/{totalCount.toString().padStart(2, "0")}
+            </span>
+          </div>
+          <div
+            ref={thumbsRef}
+            tabIndex={0}
+            aria-label="Beat strip — drag or scroll horizontally"
+            style={{ touchAction: "pan-y" }}
+            className={cn(
+              "flex cursor-grab gap-3 overflow-x-auto pb-2 select-none",
+              "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              "data-[dragging=true]:cursor-grabbing",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember-dim/60 rounded-lg",
+            )}
+          >
+            {manifest?.beats.map((b, i) => {
+              const scene = b.scenes[0];
+              const isApproved = b.status === "approved" || scene.approved;
+              const tint = moodAccentColor(b.archetype.mood);
+              const beatNumber = (i + 1).toString().padStart(2, "0");
+              return (
                 <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 bottom-0 h-1/2"
-                  style={{
-                    background: `linear-gradient(to top, ${tint}66, transparent)`,
-                  }}
-                />
-                <div className="pointer-events-none absolute inset-x-1.5 bottom-1.5 font-mono text-[8px] uppercase tracking-[0.2em] text-fg-primary mix-blend-difference">
-                  {b.beatName}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                  key={b.beatId}
+                  title={`${b.beatName} · ${b.archetype.mood}`}
+                  className={cn(
+                    "relative aspect-[4/5] w-[7.5rem] flex-shrink-0 overflow-hidden rounded-lg border",
+                    "transition-[border-color,opacity,box-shadow] duration-300 ease-out",
+                    isApproved
+                      ? "border-brand-ember/60 shadow-[0_0_24px_-6px_rgba(240,168,104,0.6)]"
+                      : "border-fg-tertiary/25 opacity-70 hover:opacity-100",
+                  )}
+                >
+                  {/* Backdrop image (when approved) or mood-gradient placeholder */}
+                  {scene.clipPublicId ? (
+                    <img
+                      src={buildThumbnailUrl(scene.clipPublicId, { mood: b.archetype.mood })}
+                      alt=""
+                      draggable={false}
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        background: `linear-gradient(140deg, ${tint}30 0%, #14110f 60%)`,
+                      }}
+                    />
+                  )}
 
-        {/* Live URL block. Renders the first URL as a fade-in; subsequent
-            approvals typewriter the new tail with an ember afterglow. */}
-        <motion.div
-          initial={false}
-          animate={{ opacity: segments ? 1 : 0.6 }}
-          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-          className="rounded-md border border-fg-tertiary/30 bg-bg-base/80 p-3"
-        >
-          <div className="mb-2 flex items-center justify-between">
-            <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-fg-tertiary">
-              Live URL · fl_splice
-            </div>
+                  {/* Bottom mood-tint gradient for legibility of the caption */}
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5"
+                    style={{
+                      background: `linear-gradient(to top, rgba(10,9,8,0.92), transparent)`,
+                    }}
+                  />
+
+                  {/* Beat number — top-left, mono, slate-style */}
+                  <div className="absolute left-2 top-2 flex items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums",
+                        isApproved
+                          ? "bg-brand-ember/20 text-brand-ember"
+                          : "bg-bg-base/70 text-fg-secondary",
+                      )}
+                    >
+                      {beatNumber}
+                    </span>
+                    {isApproved ? (
+                      <span className="grid h-4 w-4 place-items-center rounded-full bg-brand-ember text-bg-base">
+                        <Check size={10} strokeWidth={3} />
+                      </span>
+                    ) : null}
+                  </div>
+
+                  {/* Beat name — bottom, display italic */}
+                  <div className="absolute inset-x-2.5 bottom-2.5 space-y-0.5">
+                    <div className="font-display text-base italic leading-tight text-fg-primary">
+                      {b.beatName}
+                    </div>
+                    <div
+                      className="font-mono text-[9px] uppercase tracking-[0.18em]"
+                      style={{ color: tint }}
+                    >
+                      {b.archetype.mood.replace(/-/g, " ")}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Live URL — the punchline, treated like a code editor card */}
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <span className="caption-track text-[10px]">Live cut · {approvedCount} clip{approvedCount === 1 ? "" : "s"}</span>
             <button
               onClick={copy}
               disabled={!fullUrl}
-              className="text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
               aria-label="Copy Cloudinary URL"
-              title="Copy URL"
             >
-              <Copy size={13} strokeWidth={1.5} />
+              <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
+              Copy
             </button>
           </div>
 
-          {!segments ? (
-            <div className="font-mono text-[10px] leading-relaxed text-fg-tertiary">
-              Approve clips to see the URL build.
-            </div>
-          ) : (
-            <div className="break-all font-mono text-[10px] leading-relaxed text-fg-secondary">
-              <span>{segments.head}</span>
-              <span>{segments.middle}</span>
-              {segments.tail ? (
-                shouldType ? (
-                  <span key={revealKey} className="url-segment-glow">
-                    <TextSplitter
-                      text={segments.tail}
-                      className="reveal-chars"
-                      delayStrategy="sequential"
-                      perCharStep={0.03}
-                      maxTotalDelay={1.4}
-                      ariaLabel={segments.tail}
-                    />
-                  </span>
-                ) : (
-                  <span>{segments.tail}</span>
-                )
-              ) : null}
-              <span>{segments.base}</span>
-            </div>
-          )}
-        </motion.div>
-
-        <div className="flex flex-col gap-2">
-          {renderError ? (
-            <div
-              role="alert"
-              className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error"
-            >
-              {renderError}
-            </div>
-          ) : null}
-          <Button
-            size="md"
-            variant="primary"
-            disabled={!allReady || rendering}
-            onClick={handleRender}
-            className={cn("w-full", allReady && !rendering && "ember-pulse")}
-            aria-label="Render the final cinematic"
-          >
-            {rendering ? (
-              <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
-            ) : (
-              <Sparkles size={14} strokeWidth={1.5} aria-hidden="true" />
+          <motion.div
+            initial={false}
+            animate={{ opacity: segments ? 1 : 0.55 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+            className={cn(
+              "rounded-xl border border-fg-tertiary/20 bg-bg-base/60 p-4",
+              "shadow-[inset_0_0_0_1px_rgba(240,168,104,0.04)]",
             )}
-            {rendering ? "Stitching…" : "Render final cinematic"}
-          </Button>
-        </div>
+          >
+            {!segments ? (
+              <div className="font-mono text-[11px] leading-relaxed text-fg-tertiary">
+                Approve a clip to see the URL build itself, segment by segment.
+              </div>
+            ) : (
+              <div className="break-all font-mono text-[11px] leading-[1.65] text-fg-secondary">
+                <span className="text-fg-tertiary/80">{segments.head}</span>
+                <span>{segments.middle}</span>
+                {segments.tail ? (
+                  shouldType ? (
+                    <span key={revealKey} className="url-segment-glow">
+                      <TextSplitter
+                        text={segments.tail}
+                        className="reveal-chars"
+                        delayStrategy="sequential"
+                        perCharStep={0.03}
+                        maxTotalDelay={1.4}
+                        ariaLabel={segments.tail}
+                      />
+                    </span>
+                  ) : (
+                    <span>{segments.tail}</span>
+                  )
+                ) : null}
+                <span className="text-brand-ember">{segments.base}</span>
+              </div>
+            )}
+          </motion.div>
+        </section>
       </div>
+
+      {/* Footer — render CTA */}
+      <footer className="space-y-3 border-t border-fg-tertiary/15 px-7 pb-6 pt-5">
+        {renderError ? (
+          <div
+            role="alert"
+            className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error"
+          >
+            {renderError}
+          </div>
+        ) : null}
+        <Button
+          size="lg"
+          variant="primary"
+          disabled={!allReady || rendering}
+          onClick={handleRender}
+          className={cn("w-full justify-between", allReady && !rendering && "ember-pulse")}
+          aria-label="Render the final cinematic"
+        >
+          <span className="inline-flex items-center gap-2">
+            {rendering ? (
+              <Loader2 size={16} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles size={16} strokeWidth={1.5} aria-hidden="true" />
+            )}
+            {rendering ? "Stitching the cut…" : allReady ? "Compose the cinematic" : "Render"}
+          </span>
+          <ArrowUpRight
+            size={18}
+            strokeWidth={1.5}
+            aria-hidden="true"
+            className="opacity-80 transition-transform duration-200 group-hover:translate-x-0.5"
+          />
+        </Button>
+      </footer>
     </motion.aside>
   );
 }

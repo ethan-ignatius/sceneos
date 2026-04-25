@@ -49,22 +49,24 @@ export function CanvasRoute() {
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
         className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-6"
       >
-        <div className="pointer-events-auto max-w-md rounded-md border border-fg-tertiary/30 bg-bg-elev-1/70 px-3 py-2 backdrop-blur-md">
-          <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-fg-tertiary">
+        <div className="pointer-events-auto max-w-md rounded-xl border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]">
+          <div className="caption-track text-[10px] text-fg-tertiary">
             Master prompt · {manifest.videoType}
           </div>
-          <div className="mt-1 truncate font-mono text-xs text-fg-secondary">{masterPrompt}</div>
+          <p className="mt-1.5 line-clamp-2 max-w-prose font-display text-base italic leading-snug text-fg-primary">
+            {masterPrompt}
+          </p>
         </div>
 
         <button
           onClick={() => setStitchOpen((s) => !s)}
-          className="pointer-events-auto rounded-md border border-fg-tertiary/30 bg-bg-elev-1/70 px-3 py-2 backdrop-blur-md transition-colors hover:border-brand-ember/60"
+          className="pointer-events-auto group rounded-xl border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl transition-colors hover:border-brand-ember/60 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]"
         >
-          <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-fg-tertiary">
+          <div className="caption-track text-[10px] text-fg-tertiary group-hover:text-brand-ember/80 transition-colors">
             Stitch tray
           </div>
-          <div className="mt-1 font-mono text-xs text-fg-primary">
-            {approvedCount} / {totalCount} ready
+          <div className="mt-1.5 font-display text-base italic text-fg-primary tabular-nums">
+            {approvedCount} of {totalCount} ready
           </div>
         </button>
       </motion.div>

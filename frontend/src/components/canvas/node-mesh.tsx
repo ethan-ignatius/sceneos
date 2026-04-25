@@ -1,10 +1,11 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
+import { Html, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { useAtmosphereMaterial } from "./atmosphere-material";
 
 interface NodeMeshProps {
   beat: Beat;
@@ -14,25 +15,27 @@ interface NodeMeshProps {
 }
 
 /**
- * One node in the beat map. Five visual states, all derived from beat.status:
- *   - idle (pending)         → subtle scale breath, low emissive
- *   - hover                  → +6% scale, halo grows, emissive 0.25
- *   - active (selected)      → +15% scale, group +0.4z forward, ember saturated
- *   - approved               → ember-saturated steady, no breath
- *   - ready-to-generate      → ember-pulse on emissiveIntensity (1.6s loop)
+ * One glowing planet-orb in the beat map. Three concentric layers per the
+ * planetary research (docs/RESEARCH_PLANETARY.md):
  *
- * Implementation notes (see docs/CANVAS_3D.md §3):
- *   - We animate groupRef.position.z, not meshRef, so the <Html> label
- *     tracks the active offset cleanly.
- *   - Halo is its own additive-blended mesh slightly larger than the main
- *     sphere — composes naturally with the bloom postprocess pass.
- *   - Click toggles: clicking the active node deselects (returns to overview).
+ *   1. Core sphere — `meshStandardMaterial` with strong emissive baseline
+ *      so the orb is unconditionally legible, plus mild metalness for a
+ *      reflective sheen when an Environment preset is in scope.
+ *   2. Atmosphere shell — back-side-rendered slightly larger sphere using
+ *      the lifted FakeGlowMaterial fresnel shader (see
+ *      `atmosphere-material.tsx`). This is the single biggest visual upgrade
+ *      from the previous flat halo.
+ *   3. Active accent — drei `<Sparkles>` only when this node is selected;
+ *      replaces a static decorative halo with depth-cued particles around
+ *      the focused planet.
+ *
+ * State machine still derives from beat.status: pending → questioning →
+ * ready-to-generate → generating → preview → approved.
  */
 export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
-  const haloRef = useRef<THREE.Mesh>(null);
-  const haloMatRef = useRef<THREE.MeshBasicMaterial>(null);
+  const atmosphereMatRef = useRef<THREE.ShaderMaterial>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const [hover, setHover] = useState(false);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
@@ -44,23 +47,60 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
 
   const [slotX, slotY, slotZ] = position;
 
+  // Per-state palette — pending nodes still glow warm bronze (visible), not
+  // grey (invisible). Active/approved go full ember.
+  const palette = useMemo(() => {
+    if (isApproved) {
+      return {
+        core: "#f0a868",
+        emissive: "#ffb874",
+        atmosphere: "#f0a868",
+      };
+    }
+    if (isActive) {
+      return {
+        core: "#f0a868",
+        emissive: "#ffc080",
+        atmosphere: "#ffb874",
+      };
+    }
+    if (isReady) {
+      return {
+        core: "#d4a373",
+        emissive: "#f0a868",
+        atmosphere: "#f0a868",
+      };
+    }
+    return {
+      // pending — warm bronze, *not* the old grey-blue
+      core: "#a87447",
+      emissive: "#c5895a",
+      atmosphere: "#a87447",
+    };
+  }, [isActive, isApproved, isReady]);
+
+  // Stable atmosphere material — uniforms mutated each frame for color/opacity.
+  const atmosphereMat = useAtmosphereMaterial({
+    glowColor: palette.atmosphere,
+    falloff: 0.1,
+    glowInternalRadius: 4.5,
+    glowSharpness: 0.5,
+    opacity: 1.0,
+  });
+
   useFrame((state) => {
     const t = state.clock.elapsedTime;
 
-    // ── Scale on the inner mesh ──
-    // Under reduced-motion: skip the breathing sine and the dramatic
-    // active +15% boost. Hover still scales subtly so the affordance
-    // is preserved for keyboard/pointer users.
-    const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.02 : 1;
-    const hoverBoost = hover ? 1.06 : 1;
-    const activeBoost = isActive ? (reducedMotion ? 1.06 : 1.15) : 1;
+    // ── Core scale (subtle breath; dampened under reduced-motion) ──
+    const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.025 : 1;
+    const hoverBoost = hover ? 1.07 : 1;
+    const activeBoost = isActive ? (reducedMotion ? 1.06 : 1.18) : 1;
     const approvedScale = isApproved ? 1.12 : 1;
     const target = breath * hoverBoost * activeBoost * approvedScale;
     if (meshRef.current) meshRef.current.scale.setScalar(target);
 
-    // ── Group z-offset: active steps forward toward camera (+0.4 on top of slotZ) ──
+    // ── Group z-offset: active steps forward toward camera ──
     if (groupRef.current) {
-      // Under reduced-motion, hold the node at its slot — no z drift.
       const desiredZ = slotZ + (isActive && !reducedMotion ? 0.4 : 0);
       groupRef.current.position.z = THREE.MathUtils.lerp(
         groupRef.current.position.z,
@@ -69,48 +109,41 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
       );
     }
 
-    // ── Emissive intensity ──
+    // ── Core emissive intensity: high baseline so the orb is always visible ──
     let baseEmissive: number;
-    if (isApproved) baseEmissive = 0.5;
-    else if (isActive) baseEmissive = 0.6;
-    else if (hover) baseEmissive = 0.25;
-    else baseEmissive = 0.08;
+    if (isApproved) baseEmissive = 1.0;
+    else if (isActive) baseEmissive = 1.3;
+    else if (isReady) baseEmissive = 0.85;
+    else if (hover) baseEmissive = 0.7;
+    else baseEmissive = 0.55;
 
-    // ready-to-generate beats pulse — guidance cue ("the next click is hot").
-    const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.18 + 0.18 : 0;
+    const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.25 + 0.25 : 0;
     if (materialRef.current) {
       materialRef.current.emissiveIntensity = baseEmissive + pulse;
+      materialRef.current.color.set(palette.core);
+      materialRef.current.emissive.set(palette.emissive);
     }
 
-    // ── Halo (additive, grows with hover/active, pulses on ready) ──
-    const haloScale = isActive ? 1.55 : hover ? 1.32 : 1.18;
-    const haloOpacity =
-      (isActive ? 0.22 : hover ? 0.14 : 0.05) +
-      (isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.06 + 0.06 : 0);
-    if (haloRef.current) haloRef.current.scale.setScalar(haloScale);
-    if (haloMatRef.current) haloMatRef.current.opacity = haloOpacity;
+    // ── Atmosphere uniforms (mutate, never recreate) ──
+    if (atmosphereMatRef.current) {
+      const uniforms = atmosphereMatRef.current.uniforms;
+      const baseOpacity =
+        isActive ? 0.95 : isReady ? 0.8 : hover ? 0.7 : 0.5;
+      const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.15 + 0.15 : 0;
+      uniforms.opacity.value = baseOpacity + readyPulse;
+      (uniforms.glowColor.value as THREE.Color).set(palette.atmosphere);
+    }
   });
-
-  const baseColor = isApproved || isActive ? "#f0a868" : "#9aa6ad";
-  const emissiveColor = isApproved ? "#f0a868" : isActive ? "#ffb470" : "#5e7080";
 
   return (
     <group ref={groupRef} position={[slotX, slotY, slotZ]}>
-      {/* Halo — additive blending, larger than main sphere, no depth-write
-          so it composes cleanly with bloom. */}
-      <mesh ref={haloRef}>
-        <sphereGeometry args={[0.42, 24, 24]} />
-        <meshBasicMaterial
-          ref={haloMatRef}
-          color="#f0a868"
-          transparent
-          opacity={0.05}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
+      {/* ── Atmosphere shell (FakeGlowMaterial; BackSide; additive) ── */}
+      <mesh scale={1.18}>
+        <sphereGeometry args={[0.55, 48, 48]} />
+        <primitive object={atmosphereMat} ref={atmosphereMatRef} attach="material" />
       </mesh>
 
-      {/* Main node sphere. */}
+      {/* ── Solid glowing core (handles pointer events) ── */}
       <mesh
         ref={meshRef}
         onPointerOver={(e) => {
@@ -126,27 +159,33 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
         }}
         onClick={(e) => {
           e.stopPropagation();
-          // Toggle: clicking the active node returns to overview.
           setActiveBeat(isActive ? null : beat.beatId);
         }}
       >
-        <sphereGeometry args={[0.42, 48, 48]} />
+        <sphereGeometry args={[0.55, 64, 64]} />
         <meshStandardMaterial
           ref={materialRef}
-          color={baseColor}
-          emissive={emissiveColor}
-          emissiveIntensity={0.15}
-          roughness={0.3}
-          metalness={0.1}
+          color={palette.core}
+          emissive={palette.emissive}
+          emissiveIntensity={0.6}
+          roughness={0.45}
+          metalness={0.4}
+          envMapIntensity={0.7}
         />
       </mesh>
 
-      <Html center position={[0, 0.95, 0]} style={{ pointerEvents: "none" }}>
+      {/* ── Active-only sparkles for focal accent ── */}
+      {isActive ? (
+        <Sparkles count={20} scale={1.6} size={3} speed={0.4} opacity={0.7} color="#f0a868" noise={0.4} />
+      ) : null}
+
+      {/* Floating italic label above the orb. */}
+      <Html center position={[0, 1.05, 0]} style={{ pointerEvents: "none" }}>
         <div
-          className="whitespace-nowrap font-display text-sm italic"
+          className="whitespace-nowrap font-display text-base italic"
           style={{
-            color: isActive || isApproved ? "#f0a868" : "#c5b9a8",
-            textShadow: "0 1px 8px rgba(0,0,0,0.6)",
+            color: isActive || isApproved ? "#f0a868" : "#e6dfd2",
+            textShadow: "0 1px 12px rgba(0,0,0,0.85), 0 0 24px rgba(240,168,104,0.18)",
             transition: "color 200ms ease",
           }}
         >

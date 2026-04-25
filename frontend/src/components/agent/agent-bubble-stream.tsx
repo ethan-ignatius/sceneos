@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Send, Loader2, RotateCcw } from "lucide-react";
+import { Send, Loader2, RotateCcw, Mic, MicOff } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
 import { AgentBubble } from "./agent-bubble";
 import { Button } from "@/components/ui/button";
 import { api, ApiError } from "@/lib/api";
+import { useSpeechRecognition } from "@/lib/use-speech-recognition";
+import { useSpeechSynthesis } from "@/lib/use-speech-synthesis";
+import { isAudioMuted } from "@/lib/audio-cues";
 import { nowISO } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 interface AgentBubbleStreamProps {
   beat: Beat;
@@ -36,9 +40,46 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const [error, setError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Tracks the last user message that failed to receive a reply, so the
-  // Retry button can re-fire api.agent without the user re-typing it.
   const [pendingRetryMessage, setPendingRetryMessage] = useState<string | null>(null);
+
+  // Voice input — Web Speech API. While recording, transcript replaces draft;
+  // user can edit before submitting. Falls back gracefully if unsupported.
+  const speech = useSpeechRecognition({ lang: "en-US" });
+  useEffect(() => {
+    if (speech.listening && speech.transcript) {
+      setDraft(speech.transcript);
+    }
+  }, [speech.listening, speech.transcript]);
+
+  // Voice OUTPUT — speak the agent's reply back when the last user submission
+  // was via voice. This gives a true voice-chat feel; typed submissions stay
+  // silent (the visual char reveal is the right affordance for type-mode).
+  // Respects the global mute toggle.
+  const tts = useSpeechSynthesis({ muted: isAudioMuted() });
+  const lastSubmitWasVoiceRef = useRef(false);
+  const lastSpokenIndexRef = useRef(-1);
+  useEffect(() => {
+    if (!lastSubmitWasVoiceRef.current) return;
+    const turns = scene.conversation;
+    const lastIdx = turns.length - 1;
+    if (lastIdx < 0) return;
+    const last = turns[lastIdx];
+    if (last.role !== "agent") return;
+    if (lastSpokenIndexRef.current >= lastIdx) return;
+    lastSpokenIndexRef.current = lastIdx;
+    tts.speak(last.content);
+    // After the agent speaks, reset — user must submit via voice again to
+    // re-engage TTS. Avoids surprising the user later with unexpected speech.
+    lastSubmitWasVoiceRef.current = false;
+  }, [scene.conversation, tts]);
+
+  const toggleVoice = () => {
+    if (speech.listening) {
+      speech.stop();
+    } else {
+      speech.start();
+    }
+  };
 
   // Auto-scroll to bottom on new turn.
   useEffect(() => {
@@ -140,7 +181,12 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     const trimmed = draft.trim();
     if (!trimmed || inFlight || !manifest) return;
 
-    // Optimistic append — UI updates before the network round-trip.
+    // If the user dictated this reply via voice (was listening when we
+    // captured the transcript), flag the next agent turn for TTS playback.
+    if (speech.transcript && trimmed === speech.transcript.trim()) {
+      lastSubmitWasVoiceRef.current = true;
+    }
+
     appendAgentTurn(beat.beatId, scene.sceneId, {
       role: "user",
       content: trimmed,
@@ -202,9 +248,38 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           disabled={inFlight}
-          placeholder={inFlight ? "Director is replying…" : "Type your reply…"}
-          className="flex-1 bg-transparent px-1 py-2 font-mono text-sm text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
+          placeholder={
+            inFlight
+              ? "Director is replying…"
+              : speech.listening
+                ? "Listening…"
+                : "Type or speak your reply…"
+          }
+          className="flex-1 bg-transparent px-1 py-2 font-body text-sm text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
         />
+        {speech.supported ? (
+          <button
+            type="button"
+            onClick={toggleVoice}
+            disabled={inFlight}
+            aria-label={speech.listening ? "Stop recording" : "Speak your reply"}
+            title={speech.listening ? "Stop recording" : "Speak your reply"}
+            className={cn(
+              "grid h-9 w-9 place-items-center rounded-full border",
+              "transition-[border-color,background-color,color,opacity] duration-200 ease-out",
+              speech.listening
+                ? "border-brand-ember bg-brand-ember/15 text-brand-ember ember-pulse"
+                : "border-fg-tertiary/40 text-fg-tertiary hover:border-fg-secondary hover:text-fg-primary",
+              inFlight && "opacity-40 pointer-events-none",
+            )}
+          >
+            {speech.listening ? (
+              <MicOff size={14} strokeWidth={1.5} aria-hidden="true" />
+            ) : (
+              <Mic size={14} strokeWidth={1.5} aria-hidden="true" />
+            )}
+          </button>
+        ) : null}
         <Button
           type="submit"
           size="sm"

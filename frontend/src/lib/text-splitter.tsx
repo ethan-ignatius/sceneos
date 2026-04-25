@@ -1,23 +1,17 @@
 import { useMemo, type CSSProperties, type ReactNode } from "react";
 
 /**
- * Renders a string as a sequence of <span data-index> elements so each
- * character can be animated independently — typically via CSS keyframes
- * with randomised animation-delays for the flicker reveal.
+ * Renders a string as inline-block word groups, each containing per-character
+ * spans that can animate independently — typically via CSS keyframes with
+ * randomised animation-delays for the flicker reveal.
  *
- * Reference: alexportfolio's components/Common/TextSplitter/TextSplitter.tsx.
+ * Critical detail: the WORD-level grouping prevents the browser from breaking
+ * lines inside a word. Without it, every char is its own inline-block and the
+ * browser splits "into" mid-word as "in / to" once the line wraps. With the
+ * word-group wrapper, the line break can only happen between words.
  *
- * Usage:
- *   <TextSplitter text="DIRECT YOUR IDEA" className="flicker-on-mount" />
- *
- *   And in CSS:
- *     .flicker-on-mount span {
- *       opacity: 0;
- *       animation: flicker 0.64s ease-out forwards;
- *     }
- *
- * The `delaySeed` lets you control timing variance. Each character's
- * delay is `baseDelay + (deterministicRandom(index) * jitter)`.
+ * Reference: alexportfolio's components/Common/TextSplitter/TextSplitter.tsx,
+ * extended with the word-group fix.
  */
 interface TextSplitterProps {
   text: string;
@@ -49,6 +43,13 @@ function pseudoRandom(i: number, seed: number): number {
   return x - Math.floor(x);
 }
 
+/** Splits a string into a flat list of word/space tokens, preserving spaces. */
+function tokenize(text: string): string[] {
+  // The regex captures runs of whitespace OR runs of non-whitespace.
+  // The split keeps empties around delimiters, so we drop those.
+  return text.split(/(\s+)/).filter((t) => t.length > 0);
+}
+
 export function TextSplitter({
   text,
   className,
@@ -61,37 +62,65 @@ export function TextSplitter({
   perCharStep = 0.025,
   maxTotalDelay = 1.6,
 }: TextSplitterProps): ReactNode {
-  const chars = useMemo(() => Array.from(text), [text]);
+  // Tokenize into words + whitespace runs. Each word becomes a non-breaking
+  // inline-block group; whitespace stays as-is so the browser can break there.
+  const tokens = useMemo(() => tokenize(text), [text]);
+  const totalChars = useMemo(
+    () => tokens.reduce((sum, t) => sum + (/^\s+$/.test(t) ? 0 : t.length), 0),
+    [tokens],
+  );
 
   // Sequential mode: scale per-char step down so total ≤ maxTotalDelay.
-  // Long answers therefore reveal faster, keeping the read time bounded.
   const sequentialStep =
-    chars.length > 0 ? Math.min(perCharStep, maxTotalDelay / chars.length) : perCharStep;
+    totalChars > 0 ? Math.min(perCharStep, maxTotalDelay / totalChars) : perCharStep;
 
+  let charIndex = 0;
   return (
-    <span
-      className={className}
-      style={style}
-      aria-label={ariaLabel ?? text}
-    >
-      {chars.map((char, i) => {
-        const delay =
-          delayStrategy === "sequential"
-            ? baseDelay + i * sequentialStep
-            : baseDelay + pseudoRandom(i, seed) * jitter;
-        const isSpace = char === " ";
+    <span className={className} style={style} aria-label={ariaLabel ?? text}>
+      {tokens.map((token, ti) => {
+        // Whitespace token — render as-is so the browser can break on it.
+        if (/^\s+$/.test(token)) {
+          return (
+            <span
+              key={`ws-${ti}`}
+              aria-hidden="true"
+              style={{ whiteSpace: "pre" }}
+            >
+              {token}
+            </span>
+          );
+        }
+        // Word token — non-breaking inline-block container, with per-char
+        // inline-block spans inside. The browser cannot break inside this group.
+        const chars = Array.from(token);
         return (
           <span
-            key={i}
-            data-index={i}
+            key={`w-${ti}`}
             aria-hidden="true"
             style={{
-              animationDelay: `${delay}s`,
               display: "inline-block",
-              whiteSpace: isSpace ? "pre" : "normal",
+              whiteSpace: "nowrap",
             }}
           >
-            {isSpace ? " " : char}
+            {chars.map((ch) => {
+              const i = charIndex++;
+              const delay =
+                delayStrategy === "sequential"
+                  ? baseDelay + i * sequentialStep
+                  : baseDelay + pseudoRandom(i, seed) * jitter;
+              return (
+                <span
+                  key={i}
+                  data-index={i}
+                  style={{
+                    animationDelay: `${delay}s`,
+                    display: "inline-block",
+                  }}
+                >
+                  {ch}
+                </span>
+              );
+            })}
           </span>
         );
       })}

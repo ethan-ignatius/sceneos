@@ -1,3 +1,8 @@
+/* Instrument Serif (display, italic-friendly) + Geist (body, variable)
+   + Geist Mono (caption mono) — the 2025-26 awwwards-tier free pairing.
+   Replaces Italiana + Inter + JetBrains Mono. See docs/RESEARCH_DESIGN.md. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&family=Instrument+Serif:ital@0;1&display=swap");
+
 @import "tailwindcss";
 
 @theme {
@@ -25,10 +30,12 @@
   --color-glow-ember: #ffb47080;
   --color-glow-cool: #7090a080;
 
-  /* Typography */
-  --font-display: "Italiana", "PP Editorial New", serif;
-  --font-body: "Inter", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* Typography — Instrument Serif (display, ital-friendly), Geist (body,
+     variable), Geist Mono (caption / code). Family DNA shared between
+     Geist Sans + Mono so captions and body align without per-element tuning. */
+  --font-display: "Instrument Serif", "PP Editorial New", "Times New Roman", serif;
+  --font-body: "Geist", "Inter", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
 }
 
 @layer base {
@@ -37,12 +44,34 @@
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    /* Geist body tuning — single-storey `a` (cv11), contextual alts, kerning,
+       tabular nums for any UI showing numbers. */
+    font-feature-settings: "ss01", "cv11", "calt", "kern";
+    font-variant-numeric: tabular-nums;
+    font-optical-sizing: auto;
+    letter-spacing: -0.011em;
   }
 
   body {
     background: var(--color-bg-base);
     color: var(--color-fg-primary);
     overflow-x: hidden;
+  }
+
+  /* Display block — italic-friendly, balanced wrap, optical-sized. The
+     `text-wrap: balance` is what fixes the headline orphan-word wrap bug
+     ("into" splitting across lines on Italiana). */
+  .font-display,
+  [class*="text-display-"] {
+    font-family: var(--font-display);
+    font-feature-settings: "kern", "liga", "dlig";
+    font-optical-sizing: auto;
+    text-wrap: balance;
+  }
+
+  /* Long-form paragraphs get pretty wrap to kill orphans on the last line. */
+  p {
+    text-wrap: pretty;
   }
 
   ::selection {
@@ -149,7 +178,10 @@
    * randomised animation-delay set on the span (via TextSplitter) gives
    * the staggered chaos that reads as "powering up."
    * ────────────────────────────────────────────────────────────────── */
-  .flicker-on-mount > span > span {
+  /* Char spans inside TextSplitter live two levels deep (root → word group →
+     char). Use data-index attribute so the selector survives any structural
+     change inside the splitter. */
+  .flicker-on-mount [data-index] {
     opacity: 0;
     animation-name: flicker-reveal;
     animation-duration: 0.64s;
@@ -250,7 +282,7 @@
    * <TextSplitter delayStrategy="sequential" /> — each <span> gets an
    * inline animation-delay computed from its index.
    * ────────────────────────────────────────────────────────────────── */
-  .reveal-chars > span > span {
+  .reveal-chars [data-index] {
     opacity: 0;
     animation-name: reveal-char;
     animation-duration: 0.18s;
@@ -313,8 +345,8 @@
 
   /* Reduced-motion overrides — always last to win cascade. */
   @media (prefers-reduced-motion: reduce) {
-    .flicker-on-mount > span > span,
-    .reveal-chars > span > span,
+    .flicker-on-mount [data-index],
+    .reveal-chars [data-index],
     .ember-pulse,
     .magnetic-button[data-ready="true"],
     .magnetic-button:hover .magnetic-button-tick,
@@ -322,8 +354,8 @@
     .film-grain::before {
       animation: none !important;
     }
-    .flicker-on-mount > span > span,
-    .reveal-chars > span > span {
+    .flicker-on-mount [data-index],
+    .reveal-chars [data-index] {
       opacity: 1 !important;
     }
     .underline-draw {

@@ -57,12 +57,18 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       >
         <color attach="background" args={["#0a0908"]} />
 
-        <ambientLight intensity={0.25} />
-        <pointLight position={[2.5, 3, 5]} intensity={1.6} color="#f0a868" />
-        <pointLight position={[-3, -1, 2]} intensity={0.6} color="#5e7080" />
+        {/* Brighter ambient + warm key + cool fill so the PBR core sphere
+            has something to bounce off. Higher intensity than the previous
+            setup because emissive carries most of the visual; this just
+            adds form. */}
+        <ambientLight intensity={0.6} />
+        <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
+        <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
-        <Environment preset="night" />
-        <Stars radius={28} depth={48} count={1800} factor={3} fade speed={0.4} />
+        {/* `background={false}` keeps the HDR for reflections only — we keep
+            our explicit warm-near-black `<color>` background. */}
+        <Environment preset="night" background={false} />
+        <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} fade speed={0.3} />
 
         <ConnectingPath positions={positions} />
 
@@ -84,9 +90,12 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           hoveredBeatId={hoveredBeatId}
         />
 
+        {/* Bloom intensity dropped from 0.9 → 0.55 because the atmosphere
+            shells now carry most of the glow. Keeping bloom at the previous
+            level over-blooms the halos. See RESEARCH_PLANETARY.md §5. */}
         <EffectComposer>
-          <Bloom intensity={0.9} luminanceThreshold={0.25} luminanceSmoothing={0.3} mipmapBlur />
-          <Vignette eskil={false} offset={0.2} darkness={0.85} />
+          <Bloom intensity={0.55} luminanceThreshold={0.18} luminanceSmoothing={0.3} mipmapBlur />
+          <Vignette eskil={false} offset={0.25} darkness={0.7} />
         </EffectComposer>
       </Canvas>
     </div>
