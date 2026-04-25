@@ -537,6 +537,42 @@ def _fallback_questions(beat: dict) -> list[dict]:
     ]
 
 
+async def run_mock_agent_streaming(req: dict):
+    """
+    Mock streaming agent. Yields synthetic thinking events for the visualizer
+    demo path, then the canned result. Mirrors the live streaming shape so the
+    frontend has a single consumer.
+    """
+    import asyncio as _asyncio
+
+    yield {"type": "ready"}
+
+    beat = next((b for b in req["manifest"]["beats"] if b["beatId"] == req["beatId"]), None)
+    if beat is None:
+        yield {"type": "error", "message": f"Mock: unknown beatId {req['beatId']}"}
+        return
+
+    user_turn_count = _user_turn_count(req, beat)
+    thoughts = [
+        f"working on the {beat['beatName'].lower()} beat for \"{req['manifest']['masterPrompt']}\". ",
+        f"the user has answered {user_turn_count} time(s) so far. ",
+        "tracing the facets that are still unclear: ",
+        "subject, action, setting, framing, mood, character, location. ",
+        "deciding whether to ask another question or hand off to the deterministic pipeline. ",
+    ]
+    for chunk in thoughts:
+        yield {"type": "thought", "chunk": chunk}
+        await _asyncio.sleep(0.15)
+
+    result = run_mock_agent_turn(req)
+    yield {
+        "type": "tool_call",
+        "name": "markSufficient" if result["kind"] == "sufficient" else "askQuestion",
+        "args": result,
+    }
+    yield {"type": "result", **result}
+
+
 def run_mock_agent_turn(req: dict) -> dict:
     beat = next((b for b in req["manifest"]["beats"] if b["beatId"] == req["beatId"]), None)
     if beat is None:

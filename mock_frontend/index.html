@@ -5,301 +5,513 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>SceneOS — Agent Loop Visualizer</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
   <style>
-    :root { color-scheme: dark; }
-    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    @keyframes pulse-ring {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.45); }
-      50%      { box-shadow: 0 0 0 10px rgba(251, 191, 36, 0); }
+    :root {
+      color-scheme: dark;
+      --bg: #08090c;
+      --panel: rgba(20, 22, 30, 0.6);
+      --line: rgba(255, 255, 255, 0.06);
+      --line-strong: rgba(255, 255, 255, 0.12);
+      --ink: #f4f4f5;
+      --ink-dim: #a1a1aa;
+      --ink-faint: #52525b;
+      --accent: #fbbf24;       /* amber */
+      --neural: #67e8f9;        /* cyan */
+      --done: #34d399;          /* emerald */
+      --rose: #fb7185;
     }
-    .active-node { animation: pulse-ring 2s infinite ease-out; }
-    @keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-    .fade-up { animation: fade-up 0.32s ease-out both; }
-    @keyframes blink { 50% { opacity: 0.25; } }
-    .blink { animation: blink 1s infinite ease-in-out; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+      font-feature-settings: "ss01", "cv11";
+      letter-spacing: -0.005em;
+      min-height: 100vh;
+    }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-feature-settings: "calt"; }
+
+    /* ── Background sheen — a subtle aurora that pulses while thinking ──── */
+    .aurora {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background:
+        radial-gradient(circle at 20% -10%, rgba(103, 232, 249, 0.06), transparent 50%),
+        radial-gradient(circle at 80% 110%, rgba(251, 191, 36, 0.05), transparent 50%);
+      transition: opacity 0.8s ease;
+    }
+    body.thinking .aurora {
+      animation: aurora-pulse 4s ease-in-out infinite;
+    }
+    @keyframes aurora-pulse {
+      0%, 100% { opacity: 0.6; }
+      50%      { opacity: 1; }
+    }
+
+    /* ── Beat strip ────────────────────────────────────────────────────── */
+    .beat-pill {
+      transition: all 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.015);
+    }
+    .beat-pill.done {
+      border-color: rgba(52, 211, 153, 0.4);
+      background: rgba(52, 211, 153, 0.08);
+      color: rgba(167, 243, 208, 0.85);
+    }
+    .beat-pill.active {
+      border-color: rgba(251, 191, 36, 0.55);
+      background: linear-gradient(135deg, rgba(251, 191, 36, 0.14), rgba(251, 191, 36, 0.04));
+      color: rgba(254, 240, 138, 0.95);
+      box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.3);
+      animation: beat-glow 2.4s ease-in-out infinite;
+    }
+    @keyframes beat-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.30), 0 8px 24px -8px rgba(251, 191, 36, 0.20); }
+      50%      { box-shadow: 0 0 0 6px rgba(251, 191, 36, 0), 0 12px 32px -8px rgba(251, 191, 36, 0.32); }
+    }
+
+    /* ── Bubbles ──────────────────────────────────────────────────────── */
+    @keyframes fade-up {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-up { animation: fade-up 0.4s cubic-bezier(0.22, 0.61, 0.36, 1) both; }
+
+    .agent-bubble .text { line-height: 1.55; font-size: 18px; font-weight: 300; }
+    .user-bubble .text {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line);
+      border-radius: 14px 14px 4px 14px;
+      padding: 10px 14px;
+      font-size: 14.5px;
+      font-weight: 300;
+      line-height: 1.5;
+    }
+
+    /* ── Typewriter cursor ───────────────────────────────────────────── */
+    .typing::after {
+      content: '▌';
+      color: var(--accent);
+      margin-left: 2px;
+      animation: blink 0.9s steps(1) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    /* ── Thinking panel ─────────────────────────────────────────────── */
+    .thinking-frame {
+      position: relative;
+      overflow: hidden;
+    }
+    .thinking-frame::before {
+      content: '';
+      position: absolute; inset: -1px;
+      border-radius: 14px;
+      padding: 1px;
+      background: linear-gradient(120deg, transparent 0%, rgba(103, 232, 249, 0) 30%, rgba(103, 232, 249, 0.5) 50%, rgba(103, 232, 249, 0) 70%, transparent 100%);
+      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    body.thinking .thinking-frame::before {
+      opacity: 0.7;
+      animation: thinking-sweep 3.2s linear infinite;
+    }
+    @keyframes thinking-sweep {
+      0%   { background-position:   0% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .thought-chunk {
+      animation: thought-in 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+    }
+    @keyframes thought-in {
+      from { opacity: 0; filter: blur(2px); transform: translateX(-2px); }
+      to   { opacity: 1; filter: blur(0);    transform: translateX(0); }
+    }
+
+    /* Live "thinking dots" indicator */
+    .dots span {
+      display: inline-block; width: 4px; height: 4px; border-radius: 50%;
+      background: var(--neural); margin-right: 4px; opacity: 0.4;
+      animation: dot-pulse 1.4s ease-in-out infinite;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 0.3; transform: scale(0.85); }
+      50%      { opacity: 1;   transform: scale(1.1); }
+    }
+
+    /* ── Suggestion chips ─────────────────────────────────────────── */
     .chip {
-      transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+      transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+      animation: chip-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
     }
-    .chip:hover { transform: translateY(-1px); }
-    /* scrollbar minimalism */
+    .chip:hover {
+      transform: translateY(-2px);
+      background: rgba(251, 191, 36, 0.08);
+      border-color: rgba(251, 191, 36, 0.4);
+      box-shadow: 0 8px 24px -12px rgba(251, 191, 36, 0.4);
+    }
+    @keyframes chip-in {
+      from { opacity: 0; transform: translateY(12px); filter: blur(3px); }
+      to   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+    }
+
+    /* ── beatFacts cards ─────────────────────────────────────────── */
+    .fact-card {
+      animation: fact-in 0.5s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+      border-left: 2px solid rgba(251, 191, 36, 0.5);
+    }
+    @keyframes fact-in {
+      from { opacity: 0; transform: translateX(-6px); border-left-color: rgba(251, 191, 36, 1); }
+      to   { opacity: 1; transform: translateX(0);    border-left-color: rgba(251, 191, 36, 0.4); }
+    }
+
+    /* ── Scroll cleanups ─────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.16); }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.06); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.12); }
+
+    /* ── Hero "begin" screen ─────────────────────────────────────── */
+    .hero-input {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--line);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .hero-input:focus {
+      border-color: rgba(251, 191, 36, 0.5);
+      box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.08);
+      outline: none;
+    }
+
+    /* misc */
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(6px); }
+    .label { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); }
+    .label-accent { color: var(--accent); }
+    .label-neural { color: var(--neural); }
   </style>
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen">
-  <header class="border-b border-zinc-900 px-6 py-4 flex items-baseline justify-between">
-    <div>
-      <h1 class="text-xl font-light tracking-tight">SceneOS <span class="text-amber-400 font-medium">·</span> Agent Loop Visualizer</h1>
-      <p class="text-[11px] text-zinc-500 mt-1">mock_frontend — standalone — verifies <code class="text-amber-400/80">/api/agent</code> end-to-end</p>
+<body class="relative">
+  <div class="aurora"></div>
+
+  <header class="relative z-10 border-b border-white/5 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-baseline gap-3">
+      <h1 class="text-lg font-light tracking-tight">SceneOS</h1>
+      <span class="text-zinc-700">·</span>
+      <span class="label label-accent">agent loop visualizer</span>
     </div>
-    <div class="flex items-center gap-2 text-[11px] text-zinc-500">
-      <span>backend:</span>
-      <input id="apiBase" class="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-[11px] w-56 text-zinc-300" />
-      <span id="connDot" class="w-2 h-2 rounded-full bg-zinc-700"></span>
+    <div class="flex items-center gap-3 text-[11px] text-zinc-500">
+      <span>backend</span>
+      <input id="apiBase" class="bg-white/[.02] border border-white/[.08] rounded px-2 py-1 text-[11px] w-56 text-zinc-300 mono" />
+      <span id="connDot" class="w-2 h-2 rounded-full bg-zinc-700 transition-colors"></span>
+      <button id="resetBtn" class="hidden text-[11px] text-zinc-500 hover:text-zinc-300 px-2 py-1 border border-white/[.08] rounded transition-colors">↻ reset</button>
     </div>
   </header>
 
   <!-- BOOT — master prompt input ──────────────────────────────────────── -->
-  <section id="boot" class="px-6 py-16 max-w-3xl mx-auto">
-    <p class="text-[11px] uppercase tracking-widest text-zinc-500 mb-3">step 0 of 7</p>
-    <label class="block text-2xl font-light text-zinc-200 mb-3 leading-tight">
-      Tell me about your movie. One line is fine.
+  <section id="boot" class="relative z-10 px-6 py-20 max-w-3xl mx-auto">
+    <p class="label label-accent mb-4">step 0 of 7 · the master idea</p>
+    <label class="block text-3xl font-extralight text-zinc-100 mb-4 leading-tight">
+      Tell me about your movie.<br/>
+      <span class="text-zinc-500">One line is fine.</span>
     </label>
     <textarea
       id="masterPrompt"
       rows="3"
-      class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-4 text-lg text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/50"
+      class="hero-input w-full rounded-xl px-5 py-4 text-lg text-zinc-100 placeholder-zinc-700 font-light"
       placeholder="A monkey steals a banana from the zoo"
     ></textarea>
-    <div class="flex items-center gap-3 mt-4">
+    <div class="flex items-center gap-3 mt-5">
       <button
         id="beginBtn"
-        class="bg-amber-500 hover:bg-amber-400 text-zinc-900 font-medium px-6 py-2.5 rounded-lg text-sm transition-colors"
+        class="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-medium px-7 py-2.5 rounded-lg text-sm transition-all hover:shadow-[0_8px_24px_-8px_rgba(251,191,36,0.5)]"
       >Begin</button>
-      <select id="videoType" class="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-300">
+      <select id="videoType" class="bg-white/[.02] border border-white/[.08] rounded-lg px-3 py-2 text-sm text-zinc-300">
         <option value="story" selected>story · 7 beats (canonical)</option>
         <option value="trailer">trailer · 5 beats</option>
         <option value="short">short · 3 beats</option>
       </select>
-      <span class="text-[11px] text-zinc-600 ml-auto">cmd+enter to begin</span>
+      <span class="ml-auto text-[11px] text-zinc-700 mono">cmd+enter</span>
     </div>
-    <p class="mt-6 text-xs text-zinc-600 leading-relaxed">
-      The agent runs at <code class="text-amber-400/70">/api/agent</code>. In <code>MOCK_MODE=true</code> it returns
-      pre-baked story.* questions with three suggested answers each. With <code>ANTHROPIC_API_KEY</code> or Vertex SA configured, the
-      real Claude agent kicks in — same shape, voice-spec system prompt encoded.
+    <p class="mt-8 text-[12px] text-zinc-600 leading-relaxed">
+      Hits <code class="text-amber-500/80 mono">/api/agent/stream</code>. With Vertex creds, you'll see Gemini 2.5 Flash's thinking
+      tokens stream live alongside the question. With <code class="mono">MOCK_MODE=true</code>, synthetic thoughts demo the same flow.
     </p>
   </section>
 
   <!-- LOOP ──────────────────────────────────────────────────────────────── -->
-  <section id="loop" class="hidden px-6 py-6 max-w-7xl mx-auto">
+  <section id="loop" class="hidden relative z-10 px-6 py-6 max-w-7xl mx-auto">
     <!-- Beat strip -->
-    <div id="beatStrip" class="flex gap-2 mb-6"></div>
+    <div id="beatStrip" class="grid grid-flow-col auto-cols-fr gap-2 mb-5"></div>
 
-    <div class="grid grid-cols-12 gap-6">
-      <!-- Left: conversation -->
-      <div class="col-span-8 bg-zinc-900/40 border border-zinc-800 rounded-xl p-6 flex flex-col" style="min-height: 60vh;">
-        <div class="flex items-baseline justify-between mb-4">
-          <h2 id="activeBeatHeader" class="text-sm font-medium text-zinc-300"></h2>
-          <span id="turnCounter" class="text-[10px] uppercase tracking-widest text-zinc-600"></span>
-        </div>
-        <div id="conversation" class="flex-1 overflow-y-auto pr-2 space-y-4 mb-4"></div>
-        <div id="answerArea"></div>
+    <!-- Active-beat caption -->
+    <div class="flex items-baseline justify-between mb-3 px-1">
+      <div>
+        <span class="label label-accent">active beat</span>
+        <span id="activeBeatName" class="ml-3 text-base font-medium text-amber-400"></span>
+        <span id="activeBeatIntent" class="ml-3 text-xs text-zinc-500"></span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="thinkingIndicator" class="hidden flex items-center gap-2 text-[11px] text-cyan-300">
+          <span class="dots"><span></span><span></span><span></span></span>
+          <span class="mono">thinking</span>
+        </span>
+        <span id="turnCounter" class="label"></span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-12 gap-5">
+      <!-- Conversation -->
+      <div class="col-span-7 panel p-6 flex flex-col" style="min-height: 64vh;">
+        <div id="conversation" class="flex-1 overflow-y-auto pr-2 space-y-5 mb-4"></div>
+        <div id="answerArea" class="border-t border-white/[.06] pt-4"></div>
       </div>
 
-      <!-- Right rail: extracted facts -->
-      <div class="col-span-4 space-y-4">
-        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
-          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">master idea</h3>
-          <p id="masterPromptDisplay" class="text-sm text-zinc-200 leading-relaxed"></p>
-        </div>
-        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
-          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">active beat</h3>
-          <p id="activeBeatName" class="text-base font-medium text-amber-400"></p>
-          <p id="activeBeatIntent" class="text-xs text-zinc-500 mt-1 leading-relaxed"></p>
-          <p id="activeBeatMood" class="text-[10px] uppercase tracking-widest text-zinc-600 mt-2"></p>
-        </div>
-        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
-          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">extracted beatFacts</h3>
-          <div id="beatFacts" class="text-[11px] font-mono text-zinc-300 leading-relaxed">
-            <p class="text-zinc-600 italic">empty until markSufficient</p>
+      <!-- Right rail: thinking + facts -->
+      <div class="col-span-5 flex flex-col gap-5">
+        <div class="panel thinking-frame p-5 flex-1" style="min-height: 30vh;">
+          <div class="flex items-center justify-between mb-3">
+            <span class="label label-neural">agent thinking</span>
+            <button id="clearThinkingBtn" class="text-[10px] text-zinc-600 hover:text-zinc-400 mono">clear</button>
+          </div>
+          <div id="thinking" class="mono text-[12px] leading-relaxed text-cyan-200/80 max-h-[36vh] overflow-y-auto whitespace-pre-wrap">
+            <p class="text-zinc-700 italic">silent — waiting for the agent to begin</p>
           </div>
         </div>
-        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
-          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">internal reasoning <span class="text-zinc-700">(debug)</span></h3>
-          <p id="reasoningDisplay" class="text-[11px] text-zinc-500 leading-relaxed">—</p>
+
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-3">
+            <span class="label label-accent">extracted beatFacts</span>
+            <button id="dumpBtn" class="text-[10px] text-zinc-600 hover:text-zinc-400 mono">log manifest</button>
+          </div>
+          <div id="beatFacts" class="space-y-2.5">
+            <p class="text-zinc-700 italic text-[11px]">empty — populates when the agent calls markSufficient</p>
+          </div>
         </div>
-        <div class="bg-zinc-900/40 border border-zinc-800 rounded-xl p-4">
-          <h3 class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">manifest snapshot</h3>
-          <button id="dumpBtn" class="text-[11px] text-amber-400/80 hover:text-amber-300 underline">dump full manifest to console</button>
-        </div>
-        <button id="resetBtn" class="w-full text-[11px] text-zinc-500 hover:text-zinc-300 py-2 border border-zinc-800 rounded-lg transition-colors">↻ reset</button>
       </div>
     </div>
   </section>
 
   <script>
-    /* ── Beat templates (mirror of backend_py/sceneos_py/beat_templates.py) ───── */
+    /* ── Beat templates (mirror of backend_py/sceneos_py/beat_templates.py) ─ */
     const TEMPLATES = {
       story: [
-        { template: "story.hook",        beatName: "Hook",              intent: "Establish the false equilibrium. Stop the audience from looking away.", mood: "intimate-hook",  suggestedDuration: 5, directorNotes: "Open on the false equilibrium." },
-        { template: "story.exposition",  beatName: "Exposition",        intent: "Establish the world, the protagonist, and what they want.",            mood: "wide-establish", suggestedDuration: 8, directorNotes: "Show the everyday." },
-        { template: "story.inciting",    beatName: "Inciting Incident", intent: "The disruption. The protagonist must act.",                            mood: "intimate-hook",  suggestedDuration: 6, directorNotes: "The break." },
-        { template: "story.rising",      beatName: "Rising Action",     intent: "Stakes escalate. Obstacles compound. The protagonist commits.",         mood: "kinetic-rising", suggestedDuration: 10, directorNotes: "Variety." },
-        { template: "story.climax",      beatName: "Climax",            intent: "The apex. The dramatic question is answered.",                          mood: "tense-climax",   suggestedDuration: 8, directorNotes: "Maximum stakes." },
-        { template: "story.falling",     beatName: "Falling Action",    intent: "The aftermath. Consequences land.",                                    mood: "still-resolve",  suggestedDuration: 6, directorNotes: "Echo." },
-        { template: "story.resolution",  beatName: "Resolution",        intent: "The new normal. The last frame is the emotional register.",           mood: "still-resolve",  suggestedDuration: 5, directorNotes: "Final image." },
+        { template: 'story.hook',        beatName: 'Hook',              intent: 'Establish the false equilibrium.', mood: 'intimate-hook',  suggestedDuration: 5 },
+        { template: 'story.exposition',  beatName: 'Exposition',        intent: 'The world and what they want.',    mood: 'wide-establish', suggestedDuration: 8 },
+        { template: 'story.inciting',    beatName: 'Inciting Incident', intent: 'The disruption.',                  mood: 'intimate-hook',  suggestedDuration: 6 },
+        { template: 'story.rising',      beatName: 'Rising Action',     intent: 'Stakes escalate.',                  mood: 'kinetic-rising', suggestedDuration: 10 },
+        { template: 'story.climax',      beatName: 'Climax',            intent: 'The apex.',                         mood: 'tense-climax',   suggestedDuration: 8 },
+        { template: 'story.falling',     beatName: 'Falling Action',    intent: 'The aftermath.',                   mood: 'still-resolve',  suggestedDuration: 6 },
+        { template: 'story.resolution',  beatName: 'Resolution',        intent: 'The new normal.',                   mood: 'still-resolve',  suggestedDuration: 5 },
       ],
       trailer: [
-        { template: "trailer.establishing", beatName: "Establishing", intent: "Place the viewer in the world. Stakes implied, not stated.",  mood: "wide-establish", suggestedDuration: 8,  directorNotes: "Wide and atmospheric." },
-        { template: "trailer.hook",         beatName: "Hook",         intent: "First close-up of the protagonist. Make us care in three seconds.", mood: "intimate-hook", suggestedDuration: 12, directorNotes: "Intimate close-up." },
-        { template: "trailer.rising",       beatName: "Rising",       intent: "Stakes escalate. Pace quickens. Conflict reveals itself.", mood: "kinetic-rising", suggestedDuration: 18, directorNotes: "Variety." },
-        { template: "trailer.climax-tease", beatName: "Climax Tease", intent: "Promise the apex without delivering it.",                  mood: "tense-climax",   suggestedDuration: 14, directorNotes: "One held image." },
-        { template: "trailer.sting",        beatName: "Sting",        intent: "One image. One line. The audience exhales and remembers.",  mood: "punchy-sting",   suggestedDuration: 8,  directorNotes: "Title card or single iconic frame." },
+        { template: 'trailer.establishing', beatName: 'Establishing', intent: 'Place the viewer in the world.',                 mood: 'wide-establish', suggestedDuration: 8 },
+        { template: 'trailer.hook',         beatName: 'Hook',         intent: 'First close-up of the protagonist.',             mood: 'intimate-hook',  suggestedDuration: 12 },
+        { template: 'trailer.rising',       beatName: 'Rising',       intent: 'Stakes escalate. Pace quickens.',                 mood: 'kinetic-rising', suggestedDuration: 18 },
+        { template: 'trailer.climax-tease', beatName: 'Climax Tease', intent: 'Promise the apex without delivering it.',         mood: 'tense-climax',   suggestedDuration: 14 },
+        { template: 'trailer.sting',        beatName: 'Sting',        intent: 'One image. One line. The audience remembers.',    mood: 'punchy-sting',   suggestedDuration: 8 },
       ],
       short: [
-        { template: "short.hook",   beatName: "Hook",   intent: "Stop the scroll in 1.5 seconds.",                                   mood: "intimate-hook", suggestedDuration: 5,  directorNotes: "Instantly readable." },
-        { template: "short.turn",   beatName: "Turn",   intent: "Subvert the expectation set in the hook.",                          mood: "kinetic-rising", suggestedDuration: 10, directorNotes: "Recontextualize." },
-        { template: "short.payoff", beatName: "Payoff", intent: "Land the emotion or punchline in under 5 seconds.",                mood: "punchy-sting",   suggestedDuration: 5,  directorNotes: "Tighter than the hook." },
+        { template: 'short.hook',   beatName: 'Hook',   intent: 'Stop the scroll in 1.5 seconds.',         mood: 'intimate-hook',  suggestedDuration: 5 },
+        { template: 'short.turn',   beatName: 'Turn',   intent: 'Subvert the expectation set in the hook.', mood: 'kinetic-rising', suggestedDuration: 10 },
+        { template: 'short.payoff', beatName: 'Payoff', intent: 'Land it in under 5 seconds.',              mood: 'punchy-sting',   suggestedDuration: 5 },
       ],
     };
 
-    /* ── State ─────────────────────────────────────────────────────────────── */
+    /* ── State ─────────────────────────────────────────────────────────── */
     let manifest = null;
     let currentBeatIndex = 0;
     let inFlight = false;
 
-    /* ── DOM helpers ───────────────────────────────────────────────────────── */
     const $ = (id) => document.getElementById(id);
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
     function defaultApiBase() {
-      const origin = (window.location && window.location.origin) || "";
-      if (origin.startsWith("http")) return origin;
-      return "http://localhost:8787";
+      const o = (window.location && window.location.origin) || '';
+      return o.startsWith('http') ? o : 'http://localhost:8787';
     }
-
-    function apiBase() {
-      return ($("apiBase").value || defaultApiBase()).replace(/\/$/, "");
-    }
-
-    function uuid() {
-      if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
-      return "id-" + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    }
-
+    function apiBase() { return ($('apiBase').value || defaultApiBase()).replace(/\/$/, ''); }
+    function uuid() { return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
     function nowIso() { return new Date().toISOString(); }
-
     function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+      return String(s ?? '').replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
     }
 
-    /* ── API ───────────────────────────────────────────────────────────────── */
-    async function callAgent(userMessage) {
-      const beat = manifest.beats[currentBeatIndex];
-      const body = { manifest, beatId: beat.beatId };
-      if (typeof userMessage === "string" && userMessage.trim()) body.userMessage = userMessage;
-      const res = await fetch(`${apiBase()}/api/agent`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`/api/agent ${res.status}: ${text.slice(0, 240)}`);
-      }
-      return res.json();
-    }
-
+    /* ── Health ping ───────────────────────────────────────────────────── */
     async function pingHealth() {
       try {
-        const res = await fetch(`${apiBase()}/api/health`, { method: "GET" });
-        $("connDot").className = "w-2 h-2 rounded-full " + (res.ok ? "bg-emerald-500" : "bg-rose-500");
+        const res = await fetch(`${apiBase()}/api/health`);
+        $('connDot').className = 'w-2 h-2 rounded-full transition-colors ' + (res.ok ? 'bg-emerald-500' : 'bg-rose-500');
       } catch {
-        $("connDot").className = "w-2 h-2 rounded-full bg-rose-500";
+        $('connDot').className = 'w-2 h-2 rounded-full bg-rose-500 transition-colors';
       }
     }
 
-    /* ── Render ────────────────────────────────────────────────────────────── */
-    function renderBeatStrip() {
-      const strip = $("beatStrip");
-      strip.innerHTML = manifest.beats.map((beat, i) => {
-        const status = i < currentBeatIndex ? "done" : i === currentBeatIndex ? "active" : "pending";
-        const cls =
-          status === "done"   ? "bg-emerald-900/30 border-emerald-700 text-emerald-300" :
-          status === "active" ? "bg-amber-900/40 border-amber-500 text-amber-200 active-node" :
-                                "bg-zinc-900/40 border-zinc-800 text-zinc-600";
-        const tick = status === "done" ? "✓ " : "";
-        return `
-          <div class="flex-1 border ${cls} rounded-lg px-3 py-2 text-[11px] text-center transition-colors">
-            <div class="opacity-50 text-[9px] uppercase tracking-widest">${i + 1}</div>
-            <div class="font-medium">${tick}${escapeHtml(beat.beatName)}</div>
-          </div>
-        `;
-      }).join("");
+    /* ── SSE consumer ──────────────────────────────────────────────────── */
+    async function streamAgent(body, onEvent) {
+      const res = await fetch(`${apiBase()}/api/agent/stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`/api/agent/stream ${res.status}: ${text.slice(0, 240)}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || '';
+        for (const ev of events) {
+          const line = ev.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(line.indexOf(':') + 1).trim();
+          if (!payload) continue;
+          try { onEvent(JSON.parse(payload)); }
+          catch (err) { console.error('SSE parse error', err, payload); }
+        }
+      }
     }
 
+    /* ── Render: beat strip ────────────────────────────────────────────── */
+    function renderBeatStrip() {
+      $('beatStrip').innerHTML = manifest.beats.map((beat, i) => {
+        const status = i < currentBeatIndex ? 'done' : i === currentBeatIndex ? 'active' : 'pending';
+        const tick = status === 'done' ? '✓ ' : '';
+        return `
+          <div class="beat-pill ${status} rounded-lg px-3 py-2 text-center">
+            <div class="text-[9px] tracking-widest text-zinc-600 uppercase">${i + 1}</div>
+            <div class="text-[12px] font-medium mt-0.5">${tick}${escapeHtml(beat.beatName)}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    /* ── Render: conversation ──────────────────────────────────────────── */
     function renderConversation() {
       const beat = manifest.beats[currentBeatIndex];
       const turns = (beat.scenes[0] && beat.scenes[0].conversation) || [];
       const html = turns.map((t) => {
-        const isAgent = t.role === "agent";
-        if (isAgent) {
+        if (t.role === 'agent') {
           return `
-            <div class="fade-up">
-              <div class="text-[9px] uppercase tracking-widest text-amber-500 mb-1">sceneos</div>
-              <div class="text-[15px] leading-relaxed text-zinc-100">${escapeHtml(t.content)}</div>
+            <div class="agent-bubble fade-up">
+              <div class="label label-accent mb-1">sceneos</div>
+              <div class="text text-zinc-100">${escapeHtml(t.content)}</div>
             </div>
           `;
         }
         return `
-          <div class="fade-up flex justify-end">
+          <div class="user-bubble fade-up flex justify-end">
             <div class="max-w-[80%]">
-              <div class="text-[9px] uppercase tracking-widest text-zinc-500 mb-1 text-right">you</div>
-              <div class="text-[14px] leading-relaxed text-zinc-200 bg-zinc-800/70 rounded-xl rounded-tr-sm px-4 py-2">${escapeHtml(t.content)}</div>
+              <div class="label text-right mb-1">you</div>
+              <div class="text text-zinc-200">${escapeHtml(t.content)}</div>
             </div>
           </div>
         `;
-      }).join("");
-      $("conversation").innerHTML = html || `<p class="text-zinc-600 text-sm italic">starting conversation…</p>`;
-      const c = $("conversation");
-      c.scrollTop = c.scrollHeight;
+      }).join('');
+      $('conversation').innerHTML = html || `<p class="text-zinc-700 italic text-sm">starting conversation…</p>`;
+      const c = $('conversation'); c.scrollTop = c.scrollHeight;
     }
 
+    /* Append a question with a typewriter effect, returning when finished. */
+    async function appendAgentQuestionTypewriter(text, speed = 22) {
+      const beat = manifest.beats[currentBeatIndex];
+      // Add the bubble to the manifest model immediately so re-renders don't lose it,
+      // but render the text incrementally for the visual effect.
+      const conv = beat.scenes[0].conversation;
+      const idx = conv.length;
+      conv.push({ role: 'agent', content: '', timestamp: nowIso() });
+      renderConversation();
+      const c = $('conversation');
+      const lastBubble = c.querySelectorAll('.agent-bubble .text');
+      const target = lastBubble[lastBubble.length - 1];
+      if (!target) return;
+      target.classList.add('typing');
+      let acc = '';
+      for (const ch of text) {
+        acc += ch;
+        target.textContent = acc;
+        // Update the underlying conversation entry too so future renders match.
+        conv[idx].content = acc;
+        c.scrollTop = c.scrollHeight;
+        await sleep(speed);
+      }
+      target.classList.remove('typing');
+    }
+
+    /* ── Render: answer area ──────────────────────────────────────────── */
     function renderAnswerArea(suggestions, opts = {}) {
       if (opts.thinking) {
-        $("answerArea").innerHTML = `<p class="text-[12px] text-zinc-500 blink py-3">thinking…</p>`;
+        $('answerArea').innerHTML = `
+          <div class="flex items-center gap-3 text-[12px] text-zinc-500">
+            <span class="dots"><span></span><span></span><span></span></span>
+            <span class="mono">working</span>
+          </div>
+        `;
         return;
       }
       if (opts.done) {
-        $("answerArea").innerHTML = `
-          <div class="text-emerald-400 text-sm border border-emerald-900/60 bg-emerald-950/30 rounded-lg px-4 py-3">
+        $('answerArea').innerHTML = `
+          <div class="text-emerald-300 text-sm border border-emerald-700/40 bg-emerald-900/15 rounded-lg px-4 py-3 fade-up">
             All ${manifest.beats.length} beats characterized. The deterministic pipeline (orchestrator → motion preset → reference images → video gen) takes over from here.
           </div>
         `;
         return;
       }
       if (opts.error) {
-        $("answerArea").innerHTML = `
-          <div class="text-rose-400 text-sm border border-rose-900/60 bg-rose-950/30 rounded-lg px-4 py-3">
+        $('answerArea').innerHTML = `
+          <div class="text-rose-300 text-sm border border-rose-800/50 bg-rose-950/20 rounded-lg px-4 py-3">
             ${escapeHtml(opts.error)}
-            <button id="retryBtn" class="ml-3 text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1 rounded">retry</button>
+            <button id="retryBtn" class="ml-3 text-xs bg-white/[.04] hover:bg-white/[.08] border border-white/[.08] px-3 py-1 rounded mono">retry</button>
           </div>
         `;
-        $("retryBtn") && $("retryBtn").addEventListener("click", () => advance(undefined));
+        $('retryBtn') && $('retryBtn').addEventListener('click', () => advance(undefined));
         return;
       }
-      const sList = (suggestions && suggestions.length) ? suggestions : [];
+      const sList = suggestions || [];
       const chips = sList.map((s, i) => `
-        <button data-suggestion="${i}" class="chip text-[12px] text-left bg-zinc-800/80 hover:bg-amber-900/30 border border-zinc-800 hover:border-amber-700 rounded-xl px-4 py-2.5 text-zinc-200 leading-snug max-w-md flex-1 min-w-[200px]">
+        <button data-suggestion="${i}" style="animation-delay: ${i * 70}ms"
+                class="chip text-[12.5px] text-left bg-white/[.02] border border-white/[.08] rounded-xl px-4 py-2.5 text-zinc-200 leading-snug flex-1 min-w-[200px] max-w-md font-light">
           ${escapeHtml(s)}
         </button>
-      `).join("");
-      $("answerArea").innerHTML = `
+      `).join('');
+      $('answerArea').innerHTML = `
         ${chips ? `
           <div class="mb-3">
-            <p class="text-[10px] uppercase tracking-widest text-zinc-600 mb-2">suggested · click to send · or type your own below</p>
+            <p class="label mb-2">suggested · click to send · or write your own below</p>
             <div class="flex flex-wrap gap-2">${chips}</div>
           </div>
-        ` : ""}
+        ` : ''}
         <div class="flex gap-2">
-          <input id="answerInput" autofocus placeholder="Or type your own answer…" class="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-2.5 text-sm text-zinc-100 focus:outline-none focus:border-amber-500/50" />
-          <button id="sendBtn" class="bg-amber-500 hover:bg-amber-400 text-zinc-900 font-medium px-5 py-2.5 rounded-lg text-sm transition-colors">Send</button>
+          <input id="answerInput" autofocus placeholder="Or write your own answer…"
+                 class="hero-input flex-1 rounded-lg px-4 py-2.5 text-sm text-zinc-100 font-light" />
+          <button id="sendBtn" class="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-medium px-5 py-2.5 rounded-lg text-sm transition-all">Send</button>
         </div>
       `;
-      // Wire suggestions
-      document.querySelectorAll("[data-suggestion]").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const idx = parseInt(btn.getAttribute("data-suggestion"), 10);
+      document.querySelectorAll('[data-suggestion]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = parseInt(btn.getAttribute('data-suggestion'), 10);
           sendAnswer(sList[idx]);
         });
       });
-      $("sendBtn").addEventListener("click", () => {
-        const text = $("answerInput").value.trim();
+      $('sendBtn').addEventListener('click', () => {
+        const text = $('answerInput').value.trim();
         if (text) sendAnswer(text);
       });
-      $("answerInput").addEventListener("keydown", (e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
+      $('answerInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           const text = e.target.value.trim();
           if (text) sendAnswer(text);
@@ -307,34 +519,56 @@
       });
     }
 
+    /* ── Render: active beat header ───────────────────────────────────── */
     function renderActiveBeat() {
       const beat = manifest.beats[currentBeatIndex];
-      $("activeBeatName").textContent = beat.beatName;
-      $("activeBeatIntent").textContent = beat.archetype.intent;
-      $("activeBeatMood").textContent = `mood · ${beat.archetype.mood} · ${beat.archetype.suggestedDuration}s`;
-      $("activeBeatHeader").textContent = `${currentBeatIndex + 1} / ${manifest.beats.length} · ${beat.beatName}`;
-      const turnCount = (beat.scenes[0].conversation || []).filter(t => t.role === "user").length;
-      $("turnCounter").textContent = `${turnCount} ${turnCount === 1 ? "answer" : "answers"} so far`;
+      $('activeBeatName').textContent = beat.beatName;
+      $('activeBeatIntent').textContent = `· ${beat.archetype.intent} · ${beat.archetype.mood} · ${beat.archetype.suggestedDuration}s`;
+      const turnCount = (beat.scenes[0].conversation || []).filter(t => t.role === 'user').length;
+      $('turnCounter').textContent = `${turnCount} ${turnCount === 1 ? 'answer' : 'answers'} · beat ${currentBeatIndex + 1}/${manifest.beats.length}`;
     }
 
-    function renderBeatFacts(facts) {
-      if (!facts) {
-        $("beatFacts").innerHTML = `<p class="text-zinc-600 italic">empty until markSufficient</p>`;
-        return;
+    /* ── Render: thinking stream ──────────────────────────────────────── */
+    function clearThinking() {
+      $('thinking').innerHTML = `<p class="text-zinc-700 italic">silent — waiting for the agent to begin</p>`;
+    }
+    function appendThinkingChunk(chunk) {
+      const el = $('thinking');
+      if (el.querySelector('.italic')) el.innerHTML = '';
+      const span = document.createElement('span');
+      span.className = 'thought-chunk';
+      span.textContent = chunk;
+      el.appendChild(span);
+      el.scrollTop = el.scrollHeight;
+    }
+    function setThinkingActive(active) {
+      document.body.classList.toggle('thinking', active);
+      $('thinkingIndicator').classList.toggle('hidden', !active);
+    }
+
+    /* ── Render: beatFacts (animated) ─────────────────────────────────── */
+    async function populateBeatFacts(facts) {
+      const order = ['subject', 'action', 'setting', 'framing', 'mood', 'characterDescription', 'locationDescription'];
+      const target = $('beatFacts');
+      target.innerHTML = '';
+      for (const key of order) {
+        const v = facts && facts[key];
+        if (!v) continue;
+        const card = document.createElement('div');
+        card.className = 'fact-card pl-3 py-1';
+        card.innerHTML = `
+          <div class="label label-accent text-[9px]">${escapeHtml(key)}</div>
+          <div class="text-[12px] text-zinc-200 mt-0.5 leading-snug">${escapeHtml(v)}</div>
+        `;
+        target.appendChild(card);
+        await sleep(180);
       }
-      const order = ["subject", "action", "setting", "framing", "mood", "characterDescription", "locationDescription"];
-      const html = order
-        .filter((k) => facts[k] != null && facts[k] !== "")
-        .map((k) => `
-          <div class="mb-2">
-            <div class="text-[9px] uppercase tracking-widest text-amber-500/70">${k}</div>
-            <div class="text-[11px] text-zinc-200">${escapeHtml(facts[k])}</div>
-          </div>
-        `).join("");
-      $("beatFacts").innerHTML = html || `<p class="text-zinc-600 italic">empty</p>`;
+    }
+    function clearBeatFacts() {
+      $('beatFacts').innerHTML = `<p class="text-zinc-700 italic text-[11px]">empty — populates when the agent calls markSufficient</p>`;
     }
 
-    /* ── Logic ─────────────────────────────────────────────────────────────── */
+    /* ── Build manifest from chosen template ──────────────────────────── */
     function buildManifest(masterPrompt, videoType) {
       const tmpls = TEMPLATES[videoType] || TEMPLATES.story;
       return {
@@ -346,40 +580,35 @@
           beatId: `beat-${i + 1}`,
           beatName: t.beatName,
           template: t.template,
-          status: i === 0 ? "questioning" : "pending",
+          status: i === 0 ? 'questioning' : 'pending',
           archetype: {
             intent: t.intent,
             mood: t.mood,
             suggestedDuration: t.suggestedDuration,
-            directorNotes: t.directorNotes,
+            directorNotes: '',
           },
-          scenes: [{
-            sceneId: `${`beat-${i + 1}`}-scene-1`,
-            conversation: [],
-            approved: false,
-          }],
+          scenes: [{ sceneId: `beat-${i + 1}-scene-1`, conversation: [], approved: false }],
         })),
       };
     }
 
+    /* ── Logic ────────────────────────────────────────────────────────── */
     async function begin() {
-      const masterPrompt = $("masterPrompt").value.trim();
-      if (!masterPrompt) {
-        $("masterPrompt").focus();
-        return;
-      }
-      const videoType = $("videoType").value;
+      const masterPrompt = $('masterPrompt').value.trim();
+      if (!masterPrompt) { $('masterPrompt').focus(); return; }
+      const videoType = $('videoType').value;
       manifest = buildManifest(masterPrompt, videoType);
       currentBeatIndex = 0;
 
-      $("boot").classList.add("hidden");
-      $("loop").classList.remove("hidden");
-      $("masterPromptDisplay").textContent = masterPrompt;
+      $('boot').classList.add('hidden');
+      $('loop').classList.remove('hidden');
+      $('resetBtn').classList.remove('hidden');
 
       renderBeatStrip();
       renderActiveBeat();
       renderConversation();
-      renderBeatFacts(null);
+      clearThinking();
+      clearBeatFacts();
 
       await advance(undefined);
     }
@@ -387,7 +616,7 @@
     async function sendAnswer(text) {
       if (inFlight) return;
       const beat = manifest.beats[currentBeatIndex];
-      beat.scenes[0].conversation.push({ role: "user", content: text, timestamp: nowIso() });
+      beat.scenes[0].conversation.push({ role: 'user', content: text, timestamp: nowIso() });
       renderConversation();
       renderActiveBeat();
       renderAnswerArea([], { thinking: true });
@@ -396,81 +625,122 @@
 
     async function advance(userMessage) {
       inFlight = true;
+      setThinkingActive(true);
+      clearThinking();
       try {
-        const res = await callAgent(userMessage);
         const beat = manifest.beats[currentBeatIndex];
+        const body = { manifest, beatId: beat.beatId };
+        if (typeof userMessage === 'string' && userMessage.trim()) body.userMessage = userMessage;
 
-        if (res.kind === "question") {
-          beat.scenes[0].conversation.push({ role: "agent", content: res.question, timestamp: nowIso() });
-          renderConversation();
-          renderActiveBeat();
-          $("reasoningDisplay").textContent = res.reasoning || "—";
-          renderAnswerArea(res.suggestedAnswers || []);
-        } else if (res.kind === "sufficient") {
-          beat.status = "ready-to-generate";
-          beat.scenes[0].refinedPrompt = res.refinedPrompt;
-          beat.scenes[0].sceneSummary = res.sceneSummary;
-          beat.scenes[0].durationSeconds = res.suggestedDuration;
-          beat.scenes[0].beatFacts = res.beatFacts || null;
-          beat.scenes[0].conversation.push({
-            role: "agent",
-            content: `Got it. ${res.sceneSummary}`,
-            timestamp: nowIso(),
-          });
-          renderConversation();
-          renderBeatFacts(res.beatFacts);
-          $("reasoningDisplay").textContent = "markSufficient — handoff to deterministic pipeline.";
-          renderAnswerArea([], { thinking: false });
-          // Brief pause so the user can read the handoff state.
-          await new Promise((r) => setTimeout(r, 1400));
-          if (currentBeatIndex < manifest.beats.length - 1) {
-            currentBeatIndex++;
-            const next = manifest.beats[currentBeatIndex];
-            next.status = "questioning";
-            renderBeatStrip();
-            renderActiveBeat();
-            renderConversation();
-            renderBeatFacts(null);
-            $("reasoningDisplay").textContent = "—";
-            await advance(undefined);
-          } else {
-            renderAnswerArea([], { done: true });
+        let result = null;
+        await streamAgent(body, (event) => {
+          switch (event.type) {
+            case 'ready':
+              break;
+            case 'thought':
+            case 'text':
+              appendThinkingChunk(event.chunk);
+              break;
+            case 'tool_call':
+              // The model has decided. We could highlight the tool name briefly.
+              break;
+            case 'result':
+              result = event;
+              break;
+            case 'error':
+              throw new Error(event.message || 'agent stream error');
+            case 'done':
+              break;
           }
-        } else {
-          throw new Error(`Unknown response kind: ${JSON.stringify(res).slice(0, 200)}`);
-        }
+        });
+
+        setThinkingActive(false);
+        if (!result) throw new Error('agent stream finished without a result');
+        await handleResult(result);
       } catch (err) {
+        setThinkingActive(false);
         renderAnswerArea([], { error: err.message });
       } finally {
         inFlight = false;
       }
     }
 
+    async function handleResult(result) {
+      const beat = manifest.beats[currentBeatIndex];
+      if (result.kind === 'question') {
+        // Typewriter the question into the conversation.
+        renderAnswerArea([], { thinking: true });
+        await appendAgentQuestionTypewriter(result.question, 22);
+        renderActiveBeat();
+        await sleep(120);
+        renderAnswerArea(result.suggestedAnswers || []);
+      } else if (result.kind === 'sufficient') {
+        beat.status = 'ready-to-generate';
+        beat.scenes[0].refinedPrompt = result.refinedPrompt;
+        beat.scenes[0].sceneSummary = result.sceneSummary;
+        beat.scenes[0].durationSeconds = result.suggestedDuration;
+        beat.scenes[0].beatFacts = result.beatFacts || null;
+        beat.scenes[0].conversation.push({
+          role: 'agent',
+          content: `Got it. ${result.sceneSummary}`,
+          timestamp: nowIso(),
+        });
+        renderConversation();
+        await populateBeatFacts(result.beatFacts);
+        renderAnswerArea([], { thinking: true });
+
+        await sleep(1700);
+
+        if (currentBeatIndex < manifest.beats.length - 1) {
+          currentBeatIndex++;
+          const next = manifest.beats[currentBeatIndex];
+          next.status = 'questioning';
+          renderBeatStrip();
+          renderActiveBeat();
+          renderConversation();
+          clearThinking();
+          clearBeatFacts();
+          await advance(undefined);
+        } else {
+          renderAnswerArea([], { done: true });
+        }
+      } else {
+        throw new Error(`Unknown result kind: ${JSON.stringify(result).slice(0, 200)}`);
+      }
+    }
+
     function reset() {
       manifest = null;
       currentBeatIndex = 0;
-      $("loop").classList.add("hidden");
-      $("boot").classList.remove("hidden");
-      $("masterPrompt").focus();
+      inFlight = false;
+      setThinkingActive(false);
+      $('loop').classList.add('hidden');
+      $('boot').classList.remove('hidden');
+      $('resetBtn').classList.add('hidden');
+      $('masterPrompt').focus();
     }
 
-    /* ── Boot wiring ───────────────────────────────────────────────────────── */
-    $("apiBase").value = defaultApiBase();
+    /* ── Boot wiring ──────────────────────────────────────────────────── */
+    $('apiBase').value = defaultApiBase();
     pingHealth();
-    setInterval(pingHealth, 5000);
+    setInterval(pingHealth, 6000);
 
-    $("beginBtn").addEventListener("click", begin);
-    $("masterPrompt").addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) begin();
+    $('beginBtn').addEventListener('click', begin);
+    $('masterPrompt').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) begin();
     });
-    $("resetBtn") && $("resetBtn").addEventListener("click", reset);
-    $("dumpBtn") && $("dumpBtn").addEventListener("click", () => {
-      console.log("─── SceneOS manifest ───");
+    $('resetBtn').addEventListener('click', reset);
+    $('clearThinkingBtn').addEventListener('click', clearThinking);
+    $('dumpBtn').addEventListener('click', () => {
+      console.log('─── SceneOS manifest ───');
       console.log(JSON.parse(JSON.stringify(manifest)));
     });
 
-    // Expose for console hacking.
-    window.SceneOS = { get manifest() { return manifest; }, get currentBeatIndex() { return currentBeatIndex; }, reset };
+    window.SceneOS = {
+      get manifest() { return manifest; },
+      get currentBeatIndex() { return currentBeatIndex; },
+      reset,
+    };
   </script>
 </body>
 </html>

@@ -6,6 +6,7 @@ agent + decomposer, Cloudinary fl_splice URL builder, CutOS handoff.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import agent as agent_service
@@ -94,6 +95,50 @@ async def agent(body: dict):
             status_code=502,
             detail={"error": "Agent turn failed", "details": str(exc)},
         ) from exc
+
+
+# ── /api/agent/stream — SSE: live thinking + tool call ─────────────────────
+
+
+@app.post("/api/agent/stream")
+async def agent_stream(body: dict):
+    """
+    Server-Sent Events stream of the agent's turn.
+
+    Emits incremental events:
+      data: {"type":"ready"}
+      data: {"type":"thought","chunk":"..."}    (live Gemini thinking tokens)
+      data: {"type":"tool_call","name":"...","args":{...}}
+      data: {"type":"result", ...AgentResponse}
+      data: {"type":"done"}
+      data: {"type":"error","message":"..."}    (on failure)
+
+    Frontend consumes via fetch + ReadableStream (POST → no EventSource).
+    """
+    if mock_mode():
+        events = mock_service.run_mock_agent_streaming(body)
+    else:
+        events = agent_service.run_agent_turn_streaming(body)
+
+    async def gen():
+        try:
+            async for event in events:
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            logger.exception("[agent/stream] failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': f'{type(exc).__name__}: {exc}'})}\n\n"
+        finally:
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ── /api/decompose ──────────────────────────────────────────────────────────

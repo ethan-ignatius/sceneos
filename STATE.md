@@ -292,9 +292,17 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 - **`SHARED_TYPES.md`** updated (additive) for suggestedAnswers + beatFacts.
 - `sufficiency.py` MIN_USER_TURNS bumped to 3, MAX_QUESTIONS to 5.
 
+### ✅ Done this turn (round 2 — true agentic loop + visualizer overhaul)
+
+- **Streaming agent.** New endpoint `POST /api/agent/stream` returns Server-Sent Events with Gemini 2.5's native thinking tokens. `agent.py:run_agent_turn_streaming()` runs `generate_content_stream` with `thinking_config(include_thoughts=True, thinking_budget=2048)` and yields `{type: "thought" | "text" | "tool_call" | "result" | "error" | "done"}` events. Real verified output: 4 substantive thinking chunks per turn, each visible to the user. (`run_agent_turn` non-streaming kept for tests + back-compat.)
+- **Soft caps replace hard gates.** Removed `_forced_followup` and Python-side MIN/MAX enforcement on the live path. The system prompt encodes a 3-5 default with explicit "go shorter if you have it, go to 7 if texture is rich, never exceed 8" guidance. The agent decides. `MAX_QUESTIONS=8` is now a safety ceiling, not a behavior gate.
+- **Thinking guidance in the system prompt.** Explicit `# Thinking` section tells the model to: trace facets → identify the most charged unresolved thing → draft and critique the question → decide on stop. Makes the thoughts substantive.
+- **mock_frontend overhaul.** Full rewrite. Streams SSE via `fetch + ReadableStream`. Live cyan thinking panel that streams character-by-character with thought-fade-in animation. Typewriter on the question (22ms/char). Suggestion chips slide up in stagger. beatFacts cards populate one-at-a-time when markSufficient fires. Aurora-pulse background while thinking. JetBrains Mono for thoughts. Inter for everything else. Beat-strip glow animation on active node.
+- **Mock-mode streaming parity.** `mock.run_mock_agent_streaming()` synthesizes thinking events around the canned result so the visualizer feels alive even without GCP creds.
+
 ### 🔴 Next up — module by module
 
-**Module A: Last-frame + chain wiring (~1 hr)**
+**Module A: Last-frame + chain wiring (~1 hr) — IMMEDIATE NEXT**
 - `cloudinary.py:last_frame_url(public_id)` returns `https://res.cloudinary.com/{CLOUD}/video/upload/so_-0.1/{public_id}.jpg`.
 - `app.py` /api/status: include `lastFrameUrl` in succeeded response.
 - `vertex_veo.py:generate()`: when `params["startImageUrl"]`, fetch URL → base64 → add to predict body's `instances[0].image`.

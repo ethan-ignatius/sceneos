@@ -5,8 +5,11 @@ from typing import Iterable
 
 
 REQUIRED_FACETS = ("subject", "action", "setting", "framing", "mood")
+# Soft target (the agent uses these as guidance via the system prompt; not
+# Python-enforced for the live path). Stub fallback still uses MIN as a
+# deterministic floor since it can't reason about coverage.
 MIN_USER_TURNS = 3
-MAX_QUESTIONS = 5
+MAX_QUESTIONS = 8  # safety cap — real agents almost never hit this
 
 FACET_HINTS: dict[str, tuple[str, ...]] = {
     "subject": (

@@ -1,5 +1,5 @@
 """
-Questionnaire agent service — Gemini via Vertex AI.
+Questionnaire agent service — Gemini 2.5 via Vertex AI with thinking + streaming.
 
 Encodes the SceneOS Agent Question Framework: a director-voice LLM that
 quietly fills in a 7-beat dramatic structure (hook, exposition, inciting
@@ -15,22 +15,31 @@ pipeline (orchestrator.py): subject, action, setting, framing, mood,
 characterDescription, locationDescription. The orchestrator reads this —
 never the raw conversation.
 
-Falls back to a deterministic stub when no Vertex AI client is available
-(no GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS).
+This module exposes TWO entry points:
+  - run_agent_turn(req)            — one-shot dict result. Used by /api/agent.
+  - run_agent_turn_streaming(req)  — async iterator of events. Used by
+                                     /api/agent/stream. Surfaces Gemini's
+                                     thinking tokens live as SSE.
+
+Stop conditions are SOFT — the model decides via the system prompt. No
+Python-side _forced_followup or hard turn-count gating in the live path.
+The stub fallback still uses MIN_USER_TURNS as a floor since it cannot reason.
 """
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncIterator
 
 from .genai_client import default_gemini_model_for, make_genai_client
 from .sufficiency import FACET_HINTS, MAX_QUESTIONS, MIN_USER_TURNS, REQUIRED_FACETS
 
 
 TARGET_CLIP_SECONDS = 5
+THINKING_BUDGET = 2048
 
-# Tool schemas — dict form, accepted by google.genai SDK and converted internally.
+# Tool schemas — dict form, accepted by google.genai SDK.
 _AGENT_TOOLS: list[dict[str, Any]] = [
     {
         "name": "askQuestion",
@@ -70,8 +79,7 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
         "name": "markSufficient",
         "description": (
             "Call when this beat is fully characterized. Hands off to the deterministic "
-            "pipeline (motion preset → character ref → location ref → video gen). "
-            "Must include beatFacts."
+            "pipeline. Must include beatFacts."
         ),
         "parameters": {
             "type": "object",
@@ -207,6 +215,14 @@ The master idea: "{manifest['masterPrompt']}"
 NEVER say "for the hook of your story" or "let us establish the inciting incident" or "for the climax."
 NEVER reveal the 7-beat structure. The user feels like they are just talking about their movie. Keep it that way.
 
+# Thinking
+Before you respond, think.
+- Trace which facets (subject, action, setting, framing, mood, characterDescription, locationDescription) are still unclear or thin.
+- Identify the most charged, naturally curious unresolved thing about the story so far.
+- Draft the question, then critique it: does it reflect the story back? Does it ask the most charged thing? Are the three suggestions meaningfully different (each implying a different movie)?
+- Decide whether you have enough to call markSufficient or whether to ask one more question.
+Your thinking is shown to the developer in a side panel — be substantive but not endless.
+
 # How to ask a good question
 Every question must:
 1. Reflect the story so far back to the user. Prove you were listening. Use details they actually said.
@@ -234,10 +250,13 @@ Good set:
    "He doesn't feel anything for them, he is just trapped by circumstances"]
   (each implies a different movie: tragedy, character study, thriller)
 
-# When to stop
-- Minimum {MIN_USER_TURNS} user answers before markSufficient.
-- Maximum {MAX_QUESTIONS} questions, hard cap. By question {MAX_QUESTIONS} you must call markSufficient.
+# When to stop — YOU decide
+Aim for 3 to 5 user answers per beat as a default.
+- If the user has clearly given you everything in their first one or two replies, lock it in. Do not pad with filler questions.
+- If the user is giving you rich, specific texture worth digging into, go to 6 or 7 questions.
+- Never exceed {MAX_QUESTIONS} questions in a single beat — at that point you have what you need.
 - Stop earlier than feels comfortable. The user should feel you got what you needed before they get tired.
+This is a soft target. You judge based on the texture in the conversation, not a counter.
 
 # beatFacts — what the deterministic pipeline reads
 When you call markSufficient, you also emit a structured beatFacts object. The downstream pipeline (motion preset selector, character image generator, location image generator, video generator) reads this — not the raw conversation. Be specific.
@@ -259,30 +278,6 @@ Carry forward character + world descriptors verbatim from earlier beats so the p
 
 You must call exactly one tool every turn. Never reply in plain text. Never break voice.
 """
-
-
-def _turn_budget_reminder(user_turn_count: int) -> str:
-    remaining = max(0, MAX_QUESTIONS - user_turn_count)
-    if user_turn_count < MIN_USER_TURNS:
-        suffix = (
-            f"You must askQuestion this turn — minimum {MIN_USER_TURNS} user answers "
-            f"before markSufficient is allowed."
-        )
-    elif user_turn_count >= MAX_QUESTIONS:
-        suffix = (
-            "Hard cap reached. You MUST call markSufficient this turn. "
-            "Do your best with what you have."
-        )
-    else:
-        suffix = (
-            "If every facet (subject/action/setting/framing/mood/character/location) is locked in, "
-            "prefer markSufficient. Otherwise askQuestion."
-        )
-    return (
-        f"TURN STATE: the user has answered {user_turn_count} time"
-        f"{'' if user_turn_count == 1 else 's'} so far. "
-        f"Hard cap is {MAX_QUESTIONS}; you have ~{remaining} questions left.\n{suffix}"
-    )
 
 
 def _has_facet_coverage(conversation: list[dict]) -> bool:
@@ -394,26 +389,7 @@ def _stub_agent_turn(beat: dict, master: str, conversation: list[dict], user_tur
     return _stub_question_turn(beat, master, user_turn_count)
 
 
-def _forced_followup(beat: dict) -> dict:
-    return {
-        "kind": "question",
-        "question": (
-            f"Before I lock this in, give me one concrete sensory detail from this moment. "
-            f"A sound, a color, a single object in frame."
-        ),
-        "reasoning": (
-            f"Below the minimum-turn floor for {beat['beatName'].lower()}; one more answer locks it in."
-        ),
-        "suggestedAnswers": [
-            "A specific sound — wind, breath, a distant siren",
-            "A specific color or light source — sodium street light, a candle, dawn blue",
-            "A specific object in the foreground that does emotional work",
-        ],
-        "estimatedRemaining": 1,
-    }
-
-
-# ── live agent (Gemini via Vertex AI) ──────────────────────────────────────
+# ── live agent: shared helpers ─────────────────────────────────────────────
 
 
 def _to_gemini_contents(conversation: list[dict], opening_master_prompt: str) -> list[dict]:
@@ -444,7 +420,6 @@ def _normalize_args(value: Any) -> Any:
         return {k: _normalize_args(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_normalize_args(v) for v in value]
-    # MapComposite / RepeatedComposite expose iter; coerce via dict()/list().
     try:
         from collections.abc import Mapping, Sequence
         if isinstance(value, Mapping):
@@ -456,7 +431,66 @@ def _normalize_args(value: Any) -> Any:
     return value
 
 
+def _build_request_config(beat: dict, manifest: dict, with_thinking: bool):
+    """Build (system_prompt, contents, GenerateContentConfig)."""
+    from google.genai import types
+
+    system = _system_prompt(beat, manifest)
+    config_kwargs: dict[str, Any] = dict(
+        system_instruction=system,
+        tools=[types.Tool(function_declarations=_AGENT_TOOLS)],
+        tool_config=types.ToolConfig(
+            function_calling_config=types.FunctionCallingConfig(
+                mode=types.FunctionCallingConfigMode.ANY,
+                allowed_function_names=["askQuestion", "markSufficient"],
+            )
+        ),
+        temperature=0.8,
+        max_output_tokens=4096,
+    )
+    if with_thinking:
+        config_kwargs["thinking_config"] = types.ThinkingConfig(
+            include_thoughts=True,
+            thinking_budget=THINKING_BUDGET,
+        )
+    return system, types.GenerateContentConfig(**config_kwargs)
+
+
+def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
+    """Convert a raw tool call into the public AgentResponse shape."""
+    if name == "askQuestion":
+        suggestions = list(args.get("suggestedAnswers") or [])
+        while len(suggestions) < 3:
+            suggestions.append("Tell me more in your own words.")
+        suggestions = [str(s) for s in suggestions[:3]]
+        return {
+            "kind": "question",
+            "question": str(args.get("question", "")),
+            "reasoning": str(args.get("reasoning", "")),
+            "suggestedAnswers": suggestions,
+            "estimatedRemaining": int(args.get("estimatedRemaining", 1)),
+        }
+    if name == "markSufficient":
+        beat_facts = dict(args.get("beatFacts") or {})
+        beat_facts.setdefault("subject", "the protagonist")
+        beat_facts.setdefault("action", "the action of this beat")
+        beat_facts.setdefault("setting", "the established location")
+        beat_facts.setdefault("mood", beat["archetype"]["mood"])
+        return {
+            "kind": "sufficient",
+            "refinedPrompt": str(args.get("refinedPrompt", "")),
+            "sceneSummary": str(args.get("sceneSummary", beat["beatName"])),
+            "suggestedDuration": int(args.get("suggestedDuration", TARGET_CLIP_SECONDS)),
+            "beatFacts": beat_facts,
+        }
+    raise RuntimeError(f"unknown tool {name}")
+
+
+# ── live agent: non-streaming entry point ──────────────────────────────────
+
+
 async def run_agent_turn(req: dict) -> dict:
+    """One-shot agent turn. Used by /api/agent for backwards compat + tests."""
     manifest = req["manifest"]
     beat = next((b for b in manifest["beats"] if b["beatId"] == req["beatId"]), None)
     if beat is None:
@@ -469,24 +503,8 @@ async def run_agent_turn(req: dict) -> dict:
     if client is None:
         return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
 
-    from google.genai import types
-
-    system = _system_prompt(beat, manifest) + "\n\n" + _turn_budget_reminder(user_turn_count)
+    _, config = _build_request_config(beat, manifest, with_thinking=False)
     contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
-
-    tool = types.Tool(function_declarations=_AGENT_TOOLS)
-    config = types.GenerateContentConfig(
-        system_instruction=system,
-        tools=[tool],
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(
-                mode=types.FunctionCallingConfigMode.ANY,
-                allowed_function_names=["askQuestion", "markSufficient"],
-            )
-        ),
-        temperature=0.7,
-        max_output_tokens=2048,
-    )
 
     def _call_sync() -> Any:
         return client.models.generate_content(
@@ -506,36 +524,119 @@ async def run_agent_turn(req: dict) -> dict:
         finish_reason = getattr(candidates[0], "finish_reason", "?")
         raise RuntimeError(f"runAgentTurn: Gemini did not call a tool (finish_reason={finish_reason})")
 
-    name = function_call.name
-    args = _normalize_args(function_call.args)
+    return _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat)
 
-    if name == "askQuestion":
-        suggestions = list(args.get("suggestedAnswers") or [])
-        while len(suggestions) < 3:
-            suggestions.append("Tell me more in your own words.")
-        suggestions = [str(s) for s in suggestions[:3]]
-        return {
-            "kind": "question",
-            "question": str(args.get("question", "")),
-            "reasoning": str(args.get("reasoning", "")),
-            "suggestedAnswers": suggestions,
-            "estimatedRemaining": int(args.get("estimatedRemaining", 1)),
-        }
 
-    if name == "markSufficient":
-        if user_turn_count < MIN_USER_TURNS:
-            return _forced_followup(beat)
-        beat_facts = dict(args.get("beatFacts") or {})
-        beat_facts.setdefault("subject", "the protagonist")
-        beat_facts.setdefault("action", "the action of this beat")
-        beat_facts.setdefault("setting", "the established location")
-        beat_facts.setdefault("mood", beat["archetype"]["mood"])
-        return {
-            "kind": "sufficient",
-            "refinedPrompt": str(args.get("refinedPrompt", "")),
-            "sceneSummary": str(args.get("sceneSummary", beat["beatName"])),
-            "suggestedDuration": int(args.get("suggestedDuration", TARGET_CLIP_SECONDS)),
-            "beatFacts": beat_facts,
-        }
+# ── live agent: streaming entry point ──────────────────────────────────────
 
-    raise RuntimeError(f"runAgentTurn: unknown tool {name}")
+
+async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
+    """
+    Streaming agent turn. Yields events:
+      {type: "ready"}
+      {type: "thought", chunk: "..."}    — incremental thinking text
+      {type: "text", chunk: "..."}       — incremental free text (rare; tool_choice=ANY)
+      {type: "tool_call", name, args}    — final tool invocation
+      {type: "result", ...AgentResponse} — normalized public shape
+      {type: "error", message}           — fatal
+      {type: "done"}                     — emitted by the route, not here
+    """
+    yield {"type": "ready"}
+
+    manifest = req["manifest"]
+    beat = next((b for b in manifest["beats"] if b["beatId"] == req["beatId"]), None)
+    if beat is None:
+        yield {"type": "error", "message": f"beatId not found in manifest ({req['beatId']})"}
+        return
+
+    conversation = _collect_conversation(beat, req.get("userMessage"))
+    user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
+
+    client = make_genai_client()
+    if client is None:
+        # Stub streaming: synthesize thinking events for the visualizer demo path.
+        for chunk in [
+            f"[stub mode — no Vertex client] working on the {beat['beatName'].lower()} beat. ",
+            f"checking what we know so far: {user_turn_count} user reply(ies). ",
+            "tracing facets: subject, action, setting, framing, mood. ",
+            "drafting the next question. ",
+        ]:
+            yield {"type": "thought", "chunk": chunk}
+            await asyncio.sleep(0.18)
+        result = _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
+        yield {"type": "tool_call", "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"), "args": result}
+        yield {"type": "result", **result}
+        return
+
+    _, config = _build_request_config(beat, manifest, with_thinking=True)
+    contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    SENTINEL = object()
+
+    def _producer():
+        try:
+            stream = client.models.generate_content_stream(
+                model=default_gemini_model_for("agent"),
+                contents=contents,
+                config=config,
+            )
+            for chunk in stream:
+                cands = getattr(chunk, "candidates", None) or []
+                if not cands:
+                    continue
+                content = getattr(cands[0], "content", None)
+                parts = getattr(content, "parts", None) if content else None
+                if not parts:
+                    continue
+                for part in parts:
+                    fc = getattr(part, "function_call", None)
+                    if fc is not None:
+                        loop.call_soon_threadsafe(queue.put_nowait, {
+                            "kind": "function_call",
+                            "name": fc.name,
+                            "args": _normalize_args(fc.args),
+                        })
+                        continue
+                    text = getattr(part, "text", None) or ""
+                    if not text:
+                        continue
+                    if getattr(part, "thought", False):
+                        loop.call_soon_threadsafe(queue.put_nowait, {"kind": "thought", "chunk": text})
+                    else:
+                        loop.call_soon_threadsafe(queue.put_nowait, {"kind": "text", "chunk": text})
+        except Exception as exc:
+            loop.call_soon_threadsafe(queue.put_nowait, {"kind": "error", "message": f"{type(exc).__name__}: {exc}"})
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+
+    threading.Thread(target=_producer, daemon=True).start()
+
+    final_call: dict | None = None
+    while True:
+        item = await queue.get()
+        if item is SENTINEL:
+            break
+        kind = item["kind"]
+        if kind == "thought":
+            yield {"type": "thought", "chunk": item["chunk"]}
+        elif kind == "text":
+            yield {"type": "text", "chunk": item["chunk"]}
+        elif kind == "function_call":
+            final_call = {"name": item["name"], "args": item["args"]}
+            yield {"type": "tool_call", "name": item["name"], "args": item["args"]}
+        elif kind == "error":
+            yield {"type": "error", "message": item["message"]}
+            return
+
+    if final_call is None:
+        yield {"type": "error", "message": "Agent stream completed without calling a tool."}
+        return
+
+    try:
+        result = _normalize_call_to_result(final_call["name"], final_call["args"], beat)
+    except Exception as exc:
+        yield {"type": "error", "message": f"Failed to normalize tool call: {exc}"}
+        return
+    yield {"type": "result", **result}
