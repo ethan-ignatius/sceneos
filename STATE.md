@@ -2,7 +2,15 @@
 
 > **The day-2 operational dashboard.** Single source of truth. Open it every morning. CONTEXT.md = vision; BACKEND_ARCHITECTURE.md = legacy design spec; **this file = "where am I right now and what do I do next."**
 >
-> Last updated: 2026-04-25 (evening) — demo/normal mode split, project-level shared refs, audio + auto-stitch wired end-to-end. Deadline: 2026-04-26 11:00am EDT.
+> Last updated: 2026-04-25 (late night) — real-mode boot audit + reliability pass shipped. Deadline: 2026-04-26 11:00am EDT.
+>
+> **What is true right now (verified end-to-end):**
+> - **Mock mode: 39 green tests** + clean end-to-end smoke (session/start → agent/stream → orchestrate → status → stitch). Confirmed via direct `curl` against the mock server.
+> - **Real mode bootability: confirmed.** With the existing `.env` (Vertex + Cloudinary, no Anthropic, no Higgsfield), the backend now self-resolves to `mockMode: false` and `GENERATION_PROVIDER=vertex`. `POST /api/session/start {mode:"normal"}` returns a fresh manifest with audio stamped, no provider calls fired (refs are lazy in normal mode).
+> - **Real-mode image pipeline: end-to-end verified.** A live `/api/references/generate` call against Vertex Imagen 3 produced a real PNG, uploaded to the user's Cloudinary cloud (`dghelx0al`), and returned a usable `imageUrl` + `publicId`. Path Vertex auth → Imagen → Cloudinary is hot.
+> - **Real-mode video pipeline (Veo): not yet smoke-tested live.** Plumbing is complete (project-id alias fixed, dispatch_with_fallback wraps it). One live demo-mode session-start would prove it; gated on user go-ahead because each kickoff burns 7 Veo calls.
+> - **Module D (cached.py demo bake): not started.** Single biggest demo-day risk. Live fallback path will kick in if Veo is slow/down, but only if at least one beat is baked.
+> - **Frontend (`/frontend`) modern surface: types + api client shipped.** `frontend/src/lib/api.ts` now exposes `sessionStart`, `sessionGet`, `agentStream`, `orchestrate`, `referenceGenerate`. `frontend/src/types/api.ts` carries the full modern shapes (`BeatFacts`, `OrchestrateResponse`, `SpeculativeJob`, `ProjectRefs`). The teammate can rebuild canvas screens against the same contract `mock_frontend` ships against. The actual screens are not yet wired (their work).
 
 ---
 
@@ -369,6 +377,35 @@ Items 1-8 are SHIPPED. Items 9-10 are wallclock-only (no engineering blockers). 
 
 **Bonus: visualizer extended**
 - `mock_frontend/index.html` now calls `/api/orchestrate` after `markSufficient` and renders a "pipeline dispatch" panel with: chain-or-cut tag, character + location reference image thumbnails, motion preset (lens/lighting/cameraMove/pace), provider jobId. Polls `/api/status` for up to 8 seconds to capture `lastFrameUrl` for the next beat (chain primitive). Watch the full pipeline live.
+
+### ✅ Done this turn (round 4 — real-mode boot audit + reliability)
+
+**Module H: Real-mode boot defects, fixed.** Three latent bugs were silently forcing the system into mock mode even when the user had every credential set:
+1. `config.mock_mode()` was Anthropic/Higgsfield-aware only. It now treats Vertex (`GOOGLE_PROJECT_ID` + `GOOGLE_APPLICATION_CREDENTIALS`) + Cloudinary as a complete real-mode auth path. Result: setting `GENERATION_PROVIDER=vertex` with the `.env` already in place lights up real mode automatically.
+2. `vertex_veo._read_config()` was reading `GCP_PROJECT_ID` only, but the `.env` ships `GOOGLE_PROJECT_ID`. Aliased both. Same fix on `GCP_VEO_LOCATION` ↔ `GOOGLE_CLOUD_LOCATION`. Same fix in `anthropic_client.py`.
+3. `provider.active_provider_name()` defaulted to `higgsfield`. Switched to a Vertex-preferring resolver: if `GENERATION_PROVIDER` is unset BUT GCP creds are present, default to `vertex`; otherwise `cached` (so unsupervised real-mode boots can never crash on the first generate call).
+
+**Module I: Resilience pass.**
+- **Provider auto-fallback to `cached`.** New `_dispatch_with_fallback()` in `provider.py`. When the active provider fails to submit, the orchestrator + `/api/generate` automatically swap in the cached tier (if any clip is baked) and surface `provider: "cached"` + `fallbackReason: <error>` to the frontend. Result: a 502 from Veo on stage = "instant replay clip" instead of "white screen."
+- **Speculative-kickoff timeout.** `session.kickoff_speculative_pipelines` now wraps the Imagen call + 7-way `asyncio.gather` in `asyncio.wait_for(timeout=90s)`. If anything hangs, `session/start` still returns within ~90s with whatever made it; the visualizer sees `error: timeout` on individual beats instead of a hung tab.
+- **Graceful Imagen safety filter.** `vertex_imagen.generate_reference()` catches the empty-images case and falls back to the Cloudinary stub asset (logged warning, never raises). Demo continues even when Imagen blocks the prompt.
+
+**Module J: Frontend handoff surface.**
+- `docs/SHARED_TYPES.md` updated: full session/start request/response, agent/stream SSE event shape, orchestrate response (sharedRefs + projectRefs), audioPublicId on stitch response.
+- `frontend/src/types/api.ts` extended with the modern types.
+- `frontend/src/lib/api.ts` extended with `session.start`, `agent.stream`, `orchestrate`, `references.generate` — the teammate can now rebuild the canvas screens against the same contract `mock_frontend` ships against.
+- `GET /api/session/{projectId}` added so a frontend refresh / late-joining client can reconcile its in-memory state with the backend's `_SESSIONS` cache without re-priming.
+
+**Tests: 39 green** (was 30). Net new coverage in `tests/test_resilience.py`:
+- pins the new `mock_mode()` Vertex-aware branch (3 cases: real-mode resolves, missing video provider stays mock, explicit override wins).
+- pins `active_provider_name()` Vertex-default fallback (3 cases: GCP creds present → `vertex`, no creds → `cached`, explicit env var still wins).
+- simulates a primary-provider failure and asserts `dispatch_with_fallback()` swaps in the cached tier with `originalProvider` + `fallbackReason` set.
+- pins `GET /api/session/{projectId}` happy path (cached manifest + projectRefs + speculativeJobs returned) and 404 path.
+
+**Real-mode end-to-end verification (live calls, all green this turn):**
+- `GET /api/health` → `{"mockMode":false}` with the existing `.env` (no MOCK_MODE override).
+- `POST /api/session/start {"mode":"normal"}` → 200, returns valid manifest, audio stamped, no provider calls fired.
+- `POST /api/references/generate {"kind":"character",...}` → 200 in 15s, real PNG generated by Imagen 3 and uploaded to user's Cloudinary cloud `dghelx0al`.
 
 ### 🔴 Next up
 

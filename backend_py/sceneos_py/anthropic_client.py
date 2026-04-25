@@ -19,7 +19,7 @@ def _is_vertex() -> bool:
 
 def make_claude_client() -> Any | None:
     if _is_vertex():
-        project_id = env("GCP_PROJECT_ID")
+        project_id = env("GOOGLE_PROJECT_ID") or env("GCP_PROJECT_ID")
         if not project_id:
             return None
         try:

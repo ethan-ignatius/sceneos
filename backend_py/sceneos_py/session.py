@@ -51,6 +51,15 @@ logger = logging.getLogger(__name__)
 SessionMode = Literal["demo", "normal"]
 
 
+# Hard ceiling on the speculative-kickoff phase of /api/session/start. Demo
+# mode fans out 7 video submissions in parallel; in real mode each
+# submission is a Veo predictLongRunning call (~3-10s each, so ~10s aggregate
+# expected). 90s gives 9x headroom for slow auth + Imagen + 7 submits, and
+# bounds the worst case so a hung provider can't strand the session/start
+# request indefinitely.
+_KICKOFF_TIMEOUT_SECONDS = 90
+
+
 # In-memory store: { projectId → { beatId → speculative job dict } }
 _SPECULATIVE: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -395,12 +404,35 @@ async def start_session(
             "videoType": video_type,
             "demoPromptId": demo["id"],
             "createdAt": _now_iso(),
+            "manifest": manifest,
         }
-        speculative, project_refs = await kickoff_speculative_pipelines(
-            manifest=manifest,
-            demo_prompt=demo,
-            aspect_ratio=aspect_ratio,
-        )
+        try:
+            speculative, project_refs = await asyncio.wait_for(
+                kickoff_speculative_pipelines(
+                    manifest=manifest,
+                    demo_prompt=demo,
+                    aspect_ratio=aspect_ratio,
+                ),
+                timeout=_KICKOFF_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            # Bound the worst case: return what we have (refs may be in
+            # flight, beats may be partially submitted). The visualizer
+            # gets a clean error per beat and the agent loop can still
+            # run; subsequent /api/orchestrate calls will retry per beat.
+            logger.warning(
+                "[session] speculative kickoff timed out after %ss for project %s",
+                _KICKOFF_TIMEOUT_SECONDS, project_id,
+            )
+            speculative = all_speculative_jobs(project_id)
+            for beat in manifest["beats"]:
+                speculative.setdefault(beat["beatId"], {
+                    "speculative": True,
+                    "beatId": beat["beatId"],
+                    "error": "timeout",
+                    "startedAt": _now_iso(),
+                })
+            project_refs = None
         # Cache project refs on the session so /api/orchestrate (when the
         # agent eventually calls markSufficient) and any retries pull
         # from the same character + location anchor.
@@ -439,6 +471,7 @@ async def start_session(
         "normalPromptId": nrm["id"],
         "createdAt": _now_iso(),
         "projectRefs": None,  # lazy
+        "manifest": manifest,
     }
     return {
         "projectId": project_id,

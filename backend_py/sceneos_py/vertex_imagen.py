@@ -171,9 +171,24 @@ async def generate_reference(
 
     images = getattr(response, "generated_images", None) or []
     if not images:
-        raise RuntimeError(
-            "Imagen returned no images. Possible safety filter; try softening the description."
+        # Imagen returned 0 images — almost always means the safety filter
+        # killed the prompt (Imagen 3 is aggressive about people prompts
+        # in particular). Log it and degrade gracefully to the stub
+        # instead of failing the whole project boot. The orchestrator
+        # will fall back to chaining or to the location ref alone.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "[imagen] 0 images returned for kind=%s prompt=%r — degrading to stub asset",
+            kind, prompt[:120],
         )
+        return {
+            "imageUrl": _stub_demo_url(kind),
+            "publicId": f"stub::{kind}",
+            "kind": kind,
+            "prompt": prompt,
+            "stub": True,
+            "degraded": "imagen_no_images",
+        }
 
     image_bytes = getattr(getattr(images[0], "image", None), "image_bytes", None)
     if not image_bytes:

@@ -35,7 +35,7 @@ from typing import Any
 
 from . import vertex_imagen
 from .motion_presets import pick_motion_preset
-from .provider import encode_job_id, get_provider, poll_after_ms_for
+from .provider import dispatch_with_fallback, encode_job_id, poll_after_ms_for
 
 
 # ── Decisions ──────────────────────────────────────────────────────────────
@@ -236,7 +236,6 @@ async def run_beat_pipeline(
     if not scene_id:
         scene_id = f"{beat_id}-scene-1"
 
-    provider_name, provider_impl = get_provider()
     gen_params: dict[str, Any] = {
         "projectId": manifest.get("projectId"),
         "beatId": beat_id,
@@ -249,10 +248,17 @@ async def run_beat_pipeline(
     if seed_image_url:
         gen_params["startImageUrl"] = seed_image_url
 
-    result = await provider_impl.generate(gen_params)
+    # Live-demo safety net: if the active provider rejects the request
+    # (quota, network, safety), auto-fall-back to the cached tier and
+    # surface fallbackReason to the frontend so the visualizer can show
+    # a clean "Veo unavailable, replaying baked clip" badge instead of
+    # a hard error.
+    provider_name, result, original_provider, fallback_reason = (
+        await dispatch_with_fallback(gen_params)
+    )
     provider_job_id = result["jobId"]
 
-    return {
+    response = {
         "sceneId": scene_id,
         "jobId": encode_job_id(provider_name, provider_job_id),
         "provider": provider_name,
@@ -266,3 +272,7 @@ async def run_beat_pipeline(
         "clipPrompt": clip_prompt,
         "refinedPrompt": refined_prompt,
     }
+    if original_provider:
+        response["originalProvider"] = original_provider
+        response["fallbackReason"] = fallback_reason
+    return response

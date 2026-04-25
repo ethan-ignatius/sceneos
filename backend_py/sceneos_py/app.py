@@ -202,6 +202,49 @@ async def session_start(body: dict | None = None):
         ) from exc
 
 
+# ── /api/session/{project_id} — reconcile state on refresh ─────────────────
+
+
+@app.get("/api/session/{project_id}")
+async def session_get(project_id: str):
+    """
+    Reconcile a frontend's in-memory state with the backend's session cache.
+
+    Returns the cached manifest, projectRefs, and speculative jobs for a
+    known projectId. The frontend uses this on refresh / late-join so it
+    can pick up the agent loop without re-priming /api/session/start
+    (which would burn another Imagen call + 7 video submissions in demo
+    mode).
+
+    Status codes:
+      200: { projectId, mode, masterPrompt, videoType, manifest,
+             projectRefs?, speculativeJobs? }
+      404: { error: "Unknown projectId" }
+    """
+    from . import session as session_service
+    sess = session_service.get_session(project_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail={"error": "Unknown projectId"})
+    response = {
+        "projectId": project_id,
+        "mode": sess.get("mode"),
+        "masterPrompt": sess.get("masterPrompt"),
+        "videoType": sess.get("videoType"),
+        "createdAt": sess.get("createdAt"),
+        "manifest": sess.get("manifest"),
+    }
+    if sess.get("demoPromptId"):
+        response["demoPromptId"] = sess["demoPromptId"]
+    if sess.get("normalPromptId"):
+        response["normalPromptId"] = sess["normalPromptId"]
+    if sess.get("projectRefs") is not None:
+        response["projectRefs"] = sess["projectRefs"]
+    spec = session_service.all_speculative_jobs(project_id)
+    if spec:
+        response["speculativeJobs"] = spec
+    return response
+
+
 # ── /api/orchestrate/{beat_id} — deterministic per-beat pipeline ──────────
 
 
@@ -443,23 +486,27 @@ async def generate(body: dict):
             "pollAfterMs": 800,
         }
 
-    name, impl = get_provider()
+    from .provider import dispatch_with_fallback
     try:
-        result = await impl.generate(body)
+        name, result, original, reason = await dispatch_with_fallback(body)
         provider_job_id = result["jobId"]
-        return {
+        response: dict = {
             "jobId": encode_job_id(name, provider_job_id),
             "provider": name,
             "pollAfterMs": poll_after_ms_for(name),
         }
+        if original:
+            response["originalProvider"] = original
+            response["fallbackReason"] = reason
+        return response
     except Exception as exc:
-        logger.exception("[generate] provider %s failed", name)
+        logger.exception("[generate] all providers failed")
         raise HTTPException(
             status_code=502,
             detail={
-                "error": f"Provider \"{name}\" submission failed",
+                "error": "Generation submission failed (primary + cached fallback)",
                 "details": str(exc),
-                "hint": "Set MOCK_MODE=true for instant canned data, or GENERATION_PROVIDER=cached.",
+                "hint": "Set MOCK_MODE=true for instant canned data, or populate cached.DEMO_TRAILER_CLIPS.",
             },
         ) from exc
 

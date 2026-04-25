@@ -53,16 +53,74 @@ def _registry() -> dict[GenerationProvider, ProviderModule]:
     }
 
 
+def _autodetect_default_provider() -> GenerationProvider:
+    """
+    Pick a sane default provider when GENERATION_PROVIDER is unset.
+
+    Preference order:
+      1. Vertex if GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS are
+         present (the user's setup as of 2026-04-25).
+      2. Higgsfield if HIGGSFIELD_API_KEY + HIGGSFIELD_API_SECRET are set.
+      3. cached as a no-credential fallback so unsupervised real-mode
+         boots can never crash on the first generate() call — the
+         orchestrator's provider-fallback logic will surface a clean
+         "fallbackReason" to the frontend.
+    """
+    project_id = env("GOOGLE_PROJECT_ID") or env("GCP_PROJECT_ID")
+    if project_id and env("GOOGLE_APPLICATION_CREDENTIALS"):
+        return "vertex"
+    if env("HIGGSFIELD_API_KEY") and env("HIGGSFIELD_API_SECRET"):
+        return "higgsfield"
+    return "cached"
+
+
 def active_provider_name() -> GenerationProvider:
-    raw = (env("GENERATION_PROVIDER", "higgsfield") or "higgsfield").strip().lower()
+    raw = (env("GENERATION_PROVIDER") or "").strip().lower()
+    if not raw:
+        return _autodetect_default_provider()
     if raw in {"higgsfield", "kling", "fal", "vertex", "replicate", "cached"}:
         return raw  # type: ignore[return-value]
-    return "higgsfield"
+    return _autodetect_default_provider()
 
 
 def get_provider() -> tuple[GenerationProvider, ProviderModule]:
     name = active_provider_name()
     return name, _registry()[name]
+
+
+def get_named_provider(name: GenerationProvider) -> ProviderModule:
+    return _registry()[name]
+
+
+async def dispatch_with_fallback(
+    params: GenerateClipParams,
+) -> tuple[GenerationProvider, dict, GenerationProvider | None, str | None]:
+    """
+    Try the active provider, fall back to `cached` on submission failure.
+
+    Returns (provider_name_used, generate_result, original_provider_or_None, fallback_reason_or_None).
+
+    Live demo guarantee: if Veo / Higgsfield rejects the request (quota,
+    safety, network), the orchestrator and `/api/generate` automatically
+    swap in the cached tier and surface the reason. The caller should
+    use the RETURNED provider name (not active_provider_name()) when
+    encoding the jobId so /api/status routes to the right tier.
+
+    No-op for an active provider that is already `cached`.
+    """
+    primary, primary_impl = get_provider()
+    try:
+        result = await primary_impl.generate(params)
+        return primary, result, None, None
+    except Exception as exc:
+        if primary == "cached":
+            raise
+        cached_impl = get_named_provider("cached")
+        try:
+            result = await cached_impl.generate(params)
+        except Exception:
+            raise exc
+        return "cached", result, primary, str(exc)
 
 
 def encode_job_id(provider: GenerationProvider, provider_job_id: str) -> str:

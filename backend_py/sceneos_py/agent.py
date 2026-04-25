@@ -245,6 +245,8 @@ Suggested clip duration: {archetype['suggestedDuration']}s.
 
 The master idea: "{manifest['masterPrompt']}"
 
+The user has not seen the structure. They think you are just curious. Stay that way.
+
 {earlier}
 NEVER say "for the hook of your story" or "let us establish the inciting incident" or "for the climax."
 NEVER reveal the 7-beat structure. The user feels like they are just talking about their movie. Keep it that way.
@@ -284,13 +286,22 @@ Good set:
    "He doesn't feel anything for them, he is just trapped by circumstances"]
   (each implies a different movie: tragedy, character study, thriller)
 
-# When to stop — YOU decide
-Aim for 3 to 5 user answers per beat as a default.
-- If the user has clearly given you everything in their first one or two replies, lock it in. Do not pad with filler questions.
-- If the user is giving you rich, specific texture worth digging into, go to 6 or 7 questions.
-- Never exceed {MAX_QUESTIONS} questions in a single beat — at that point you have what you need.
-- Stop earlier than feels comfortable. The user should feel you got what you needed before they get tired.
-This is a soft target. You judge based on the texture in the conversation, not a counter.
+# When to stop — YOU decide. There is no target number.
+The right number of questions for this beat is whatever the conversation needs. It can be one. It can be seven. It depends entirely on the texture of what the user gives you.
+
+- If the user's first answer already locks the beat (concrete subject, action, setting, mood, identity all readable), call markSufficient. Do not pad. Trust the user.
+- If they keep giving you rich specific texture worth digging into, keep going. Their interest > your structure.
+- If they get vague or short, narrow your question to the single most important unresolved thing and try once more. If still vague, lock in what you have and move on.
+- Hard ceiling: never exceed {MAX_QUESTIONS} questions in a single beat. By then you have everything that matters.
+
+Do NOT pace yourself toward a quota. Do NOT try to hit a number. Each turn ask yourself one question only: "given what they just said, is the next question genuinely interesting, or am I just running through a checklist?" If it is the second one, mark sufficient.
+
+# Anti-patterns — avoid these
+- Walking the facets in order (subject → action → setting → framing → mood). The facets are what you EXTRACT, not what you ASK. Ask the most charged thing — the structured object falls out as a byproduct.
+- Asking about the camera or framing as a standalone question. People do not think in lenses. Ask about what is happening; lens choice follows from emotion.
+- Asking the same shape of question twice in a row ("and how does X feel? ... and how does Y feel?"). Vary the angle each turn.
+- Asking the user to invent things they have not thought about ("what does the building look like?" when they never mentioned a building).
+- Recapping back the entire story so far. One specific detail to prove you were listening, not a synopsis.
 
 # beatFacts — what the deterministic pipeline reads
 When you call markSufficient, you also emit a structured beatFacts object. The downstream pipeline (motion preset selector, character image generator, location image generator, video generator) reads this — not the raw conversation. Be specific.
@@ -487,6 +498,11 @@ def _build_request_config(
     must_finalize = mode == "demo" and user_turn_count >= DEMO_MAX_QUESTIONS
     allowed = ["markSufficient"] if must_finalize else ["askQuestion", "markSufficient"]
 
+    # Normal mode runs hotter (1.0) so the question pool genuinely varies
+    # across sessions — the user explicitly does not want a deterministic
+    # script. Demo mode stays at 0.8 because the timer matters more than
+    # variety on stage, and the questions are short anyway.
+    temperature = 0.8 if mode == "demo" else 1.0
     config_kwargs: dict[str, Any] = dict(
         system_instruction=system,
         tools=[types.Tool(function_declarations=_AGENT_TOOLS)],
@@ -496,7 +512,7 @@ def _build_request_config(
                 allowed_function_names=allowed,
             )
         ),
-        temperature=0.8,
+        temperature=temperature,
         max_output_tokens=2048 if mode == "demo" else 4096,
     )
     if with_thinking:
