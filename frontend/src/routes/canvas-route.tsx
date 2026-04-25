@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
-import { motion, AnimatePresence } from "motion/react";
+import { MotionConfig, motion, AnimatePresence } from "motion/react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
@@ -32,6 +32,12 @@ export function CanvasRoute() {
   const totalCount = manifest.beats.length;
 
   return (
+    // MotionConfig auto-degrades transform animations to opacity under
+    // prefers-reduced-motion. The drawer slide, agent bubble enter,
+    // generation panel layoutId dot, and stitch-tray slide all benefit.
+    // R3F-driven animations (camera breath, sparkles drift) are gated
+    // separately inside their components via matchMedia.
+    <MotionConfig reducedMotion="user">
     <main className="relative h-screen w-screen overflow-hidden bg-bg-base">
       <Suspense fallback={<CanvasFallback />}>
         <BeatMap3D beats={manifest.beats} />
@@ -82,6 +88,7 @@ export function CanvasRoute() {
 
       <AnimatePresence>{stitchOpen ? <StitchTray onClose={() => setStitchOpen(false)} /> : null}</AnimatePresence>
     </main>
+    </MotionConfig>
   );
 }
 

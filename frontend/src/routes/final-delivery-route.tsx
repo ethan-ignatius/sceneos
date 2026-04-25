@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from "motion/react";
+import { MotionConfig, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Download, Link2, ExternalLink, ArrowRight, Loader2 } from "lucide-react";
@@ -74,6 +74,10 @@ export function FinalDeliveryRoute() {
     setOpeningCutOS(true);
     try {
       const res = await api.cutosImport({ manifest });
+      if (!res.editUrl) {
+        toast.error("CutOS returned no edit URL");
+        return;
+      }
       window.open(res.editUrl, "_blank", "noopener,noreferrer");
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "CutOS handoff failed.");
@@ -96,12 +100,20 @@ export function FinalDeliveryRoute() {
   }
 
   // Append fl_attachment for forced download. Cloudinary's transform tells
-  // its CDN to set Content-Disposition: attachment.
-  const downloadUrl = finalUrl.replace("/upload/", "/upload/fl_attachment/");
+  // its CDN to set Content-Disposition: attachment. Idempotent — if the URL
+  // already has the transform we don't double-stamp it.
+  const downloadUrl = finalUrl.includes("fl_attachment")
+    ? finalUrl
+    : finalUrl.replace("/upload/", "/upload/fl_attachment/");
 
   const beatList = manifest.beats;
 
   return (
+    // MotionConfig reducedMotion="user" makes every motion.X inside this
+    // route auto-degrade transform animations to opacity when the user
+    // prefers reduced motion. Opacity-only fades are WCAG-acceptable; the
+    // transforms (y: 24, scale: 0.985) are the parts we suppress.
+    <MotionConfig reducedMotion="user">
     <main className="film-grain relative min-h-screen overflow-x-hidden bg-bg-base px-6 py-16">
       <motion.section
         initial={{ opacity: 0 }}
@@ -135,7 +147,9 @@ export function FinalDeliveryRoute() {
           initial={{ opacity: 0, scale: 0.985 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn, delay: 0.35 }}
-          className="w-[70vw] max-w-[1200px]"
+          // 70vw at desktop; on narrow viewports the player stretches to
+          // 90vw so it doesn't shrink to a postage stamp on mobile.
+          className="w-[90vw] max-w-[1200px] sm:w-[70vw]"
           style={{ willChange: "transform" }}
         >
           <VideoPlayer
@@ -208,23 +222,27 @@ export function FinalDeliveryRoute() {
             Beat manifest
           </div>
           <ol className="divide-y divide-fg-tertiary/15 border-y border-fg-tertiary/15">
-            {beatList.map((b, i) => (
-              <li
-                key={b.beatId}
-                className="grid grid-cols-[3rem_1fr_auto] items-baseline gap-4 py-3 font-mono text-xs"
-              >
-                <span className="text-fg-tertiary tabular-nums">
-                  {(i + 1).toString().padStart(2, "0")}
-                </span>
-                <span>
-                  <span className="text-fg-primary">{b.beatName}</span>
-                  <span className="ml-2 text-fg-tertiary">· {b.archetype.mood}</span>
-                </span>
-                <span className="text-fg-tertiary tabular-nums">
-                  {b.archetype.suggestedDuration}s
-                </span>
-              </li>
-            ))}
+            {beatList.map((b, i) => {
+              // Prefer the scene's actual refined duration; fall back to
+              // the archetype's suggested length only if the agent didn't
+              // refine it.
+              const dur = b.scenes[0]?.durationSeconds ?? b.archetype.suggestedDuration;
+              return (
+                <li
+                  key={b.beatId}
+                  className="grid grid-cols-[3rem_1fr_auto] items-baseline gap-4 py-3 font-mono text-xs"
+                >
+                  <span className="text-fg-tertiary tabular-nums">
+                    {(i + 1).toString().padStart(2, "0")}
+                  </span>
+                  <span>
+                    <span className="text-fg-primary">{b.beatName}</span>
+                    <span className="ml-2 text-fg-tertiary">· {b.archetype.mood}</span>
+                  </span>
+                  <span className="text-fg-tertiary tabular-nums">{dur}s</span>
+                </li>
+              );
+            })}
           </ol>
         </div>
       </motion.section>
@@ -251,6 +269,7 @@ export function FinalDeliveryRoute() {
         />
       </motion.button>
     </main>
+    </MotionConfig>
   );
 }
 

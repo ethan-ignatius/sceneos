@@ -2,6 +2,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useRef } from "react";
 import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 interface CameraRigProps {
   beats: Beat[];
@@ -34,6 +35,7 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId }: Cam
   const { camera } = useThree();
   const targetPos = useRef(OVERVIEW_POS.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
+  const reducedMotion = usePrefersReducedMotion();
 
   const findPosition = (beatId: string | null) => {
     if (!beatId) return null;
@@ -63,9 +65,12 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId }: Cam
     }
 
     // Idle breath — sin wave on z, 8s period, ±0.04. Stays subtle but
-    // reads as "the scene is breathing."
-    const t = state.clock.elapsedTime;
-    targetPos.current.z += Math.sin((t / 8) * Math.PI * 2) * 0.04;
+    // reads as "the scene is breathing." Skipped under reduced-motion;
+    // for vestibular-sensitive users the camera should hold still.
+    if (!reducedMotion) {
+      const t = state.clock.elapsedTime;
+      targetPos.current.z += Math.sin((t / 8) * Math.PI * 2) * 0.04;
+    }
 
     camera.position.lerp(targetPos.current, 0.06);
     // Lerp the lookAt direction so it doesn't snap when active changes.

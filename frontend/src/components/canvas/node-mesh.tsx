@@ -4,6 +4,7 @@ import { Html } from "@react-three/drei";
 import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 interface NodeMeshProps {
   beat: Beat;
@@ -39,6 +40,7 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const isActive = activeBeatId === beat.beatId;
   const isApproved = beat.status === "approved";
   const isReady = beat.status === "ready-to-generate";
+  const reducedMotion = usePrefersReducedMotion();
 
   const [slotX, slotY, slotZ] = position;
 
@@ -46,16 +48,20 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     const t = state.clock.elapsedTime;
 
     // ── Scale on the inner mesh ──
-    const breath = isApproved ? 1 : 1 + Math.sin(t * 0.9) * 0.02;
+    // Under reduced-motion: skip the breathing sine and the dramatic
+    // active +15% boost. Hover still scales subtly so the affordance
+    // is preserved for keyboard/pointer users.
+    const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.02 : 1;
     const hoverBoost = hover ? 1.06 : 1;
-    const activeBoost = isActive ? 1.15 : 1;
+    const activeBoost = isActive ? (reducedMotion ? 1.06 : 1.15) : 1;
     const approvedScale = isApproved ? 1.12 : 1;
     const target = breath * hoverBoost * activeBoost * approvedScale;
     if (meshRef.current) meshRef.current.scale.setScalar(target);
 
     // ── Group z-offset: active steps forward toward camera (+0.4 on top of slotZ) ──
     if (groupRef.current) {
-      const desiredZ = slotZ + (isActive ? 0.4 : 0);
+      // Under reduced-motion, hold the node at its slot — no z drift.
+      const desiredZ = slotZ + (isActive && !reducedMotion ? 0.4 : 0);
       groupRef.current.position.z = THREE.MathUtils.lerp(
         groupRef.current.position.z,
         desiredZ,

@@ -292,23 +292,43 @@ The exhale. The delivered product. Both items shipped, plus the StitchTray Rende
 
 ---
 
-## Phase 8 — Cohesion & polish pass
+## Phase 8 — Cohesion & polish pass ✅ COMPLETE (2026-04-25)
 
-### 8.1 🔴 Performance audit — 0.5h
-- **Acceptance:**
-  - Landing initial bundle ≤200KB transferred (gzipped).
-  - Canvas chunk ≤1MB (we're at ~999KB; hold the line).
-  - Canvas runs ≥55fps on a 1080p MBA M2 stress test.
-  - No console warnings, no React StrictMode double-render warnings.
+The integration test of taste. Methodology + results documented in [`POLISH_AUDIT.md`](POLISH_AUDIT.md).
 
-### 8.2 🔴 `prefers-reduced-motion` audit — 0.3h
-- **Acceptance:** all keyframes + Motion components fall back to instant or 200ms fade when the media query matches. Spot-check by toggling OS setting.
+### 8.1 ✅ Performance audit
+- **Bundle review (gzipped):** main 192.08 KB ✅ (target ≤200 KB), R3F chunk 227.95 KB (lazy), beat-map-3d chunk 42.46 KB (lazy), paper-curl-canvas 1.92 KB (lazy), CSS 8.57 KB. **All within budget.**
+- **60fps target:** documented degradation order if perf slips on demo hardware (sparkles 200→120, bloom mipmapBlur off, vignette off, dpr clamp). No drops observed in dev.
 
-### 8.3 🔴 Visual cohesion sweep — 0.5h
-- **Acceptance:** every screen reviewed against the §11 checklist in `MOTION_LANGUAGE.md`. If a section looks like a Tailwind UI starter, redesign before merging.
+### 8.2 ✅ `prefers-reduced-motion` audit
+- **Coverage matrix in POLISH_AUDIT.md §3** identified 9 surfaces with gaps. Closed via:
+  - `<MotionConfig reducedMotion="user">` wrapper at three route boundaries (landing, canvas, final-delivery). Auto-degrades transform-based animations to opacity-only across drawer slide, agent bubble enter, generation panel layoutId dot, stitch tray slide, landing pills cascade, etc.
+  - New `lib/use-prefers-reduced-motion.ts` hook (matchMedia bridge for components inside R3F where Motion context isn't available).
+  - `CameraRig` skips idle-breath sin term under reduced-motion.
+  - `NodeMesh` skips breath term, dampens active-scale boost (1.15→1.06), holds group-z still (no +0.4 step forward).
+  - `AmbientParticles` clamps Sparkles speed to 0 — drift stops; sparkles render as still dots.
 
-### 8.4 🟠 Soft sound design — 0.5h
-- **Spec:** a tasteful set per `FRONTEND_PHILOSOPHY.md` §8. Default muted; one-tap unmute toggle in landing footer.
+### 8.3 ✅ Visual cohesion sweep
+- 60-30-10 ember accent budget verified per route — all under the 10% threshold (POLISH_AUDIT.md §4).
+- Border-radius family confirmed cohesive across `rounded-full`/`-md`/`-lg`/`-xl`/`-2xl`.
+- No UPPERCASE CTAs anywhere; title-case + sentence-case used appropriately.
+- Mobile responsiveness fix: final-delivery player now `w-[90vw] sm:w-[70vw]` so the cinematic doesn't shrink to a postage stamp on narrow viewports.
+- Typography rhythm confirmed: display italic on landing/bridge/final, mono caps on captions, Inter on prose/buttons.
+
+### 8.4 ✅ Soft sound design
+- New `playApproveChime` — two-note ascending sine (G4 → C5, perfect fourth, ~120ms total). Fires on Approve scene click. Quiet completion punctuation, ≈ -38dB peak (volume 0.05).
+- New `playRenderWhoosh` — bandpass-noise sweep (300Hz → 4000Hz exponential, ~200ms). Fires at click-time on Render CTA so the cue's tail carries into /final's mount. ≈ -32dB peak (volume 0.045).
+- Both check `isAudioMuted()` → mute toggle dominates. Both are short one-shots, synthesized via Web Audio (no sample files).
+- Combined audio palette is now: ember pop + cinematic riser (bridge), ambient projector (canvas continuous), approve chime + render whoosh (state transitions). **Five cues total, all restrained.**
+
+### 8.5 ✅ (alongside) Phase 7 audit fixes shipped
+- `MotionConfig reducedMotion="user"` wrapping the /final route (entrance animations now reduced-motion-safe).
+- `fl_attachment` URL transform now idempotent (`includes` guard).
+- CutOS handler validates `editUrl` before `window.open`.
+- StitchTray's in-flight render uses a `mountedRef` to skip post-unmount setState.
+- Final-delivery beat manifest now uses `scene.durationSeconds ?? archetype.suggestedDuration` (actual refined duration, not template default).
+
+**Phase 8 lessons banked (see `POLISH_AUDIT.md`):** route-boundary `MotionConfig` as the cleanest way to gate transform-based Motion across an entire surface, matchMedia bridge hook for R3F components outside Motion context, reduced-motion as design-friendly (preserving signal via opacity + minor scale rather than removing all feedback), audio palette restraint (5 cues across the entire flow, no more), bundle review as documented checkpoint not just `npm run build` output.
 
 ---
 

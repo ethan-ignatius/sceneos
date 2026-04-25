@@ -181,6 +181,86 @@ export function startAmbientProjector({
 }
 
 /**
+ * Two-note ascending sine chime (~120ms total) on Approve scene.
+ *
+ * Graph: two oscillators (G4 → C5 perfect-fourth) → gain envelope → dest.
+ *
+ * Reads as "approved" without fanfare. Quieter than the bridge cues so it
+ * doesn't dominate the room tone running underneath it on the canvas.
+ */
+export function playApproveChime({ volume = 0.05, force = false }: PlayOptions = {}): void {
+  if (!force && isAudioMuted()) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+
+  const now = ctx.currentTime;
+  const tones = [
+    { freq: 392, start: 0, dur: 0.08 }, // G4
+    { freq: 523.25, start: 0.05, dur: 0.1 }, // C5 — overlaps the G4 tail
+  ];
+
+  for (const t of tones) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = t.freq;
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now + t.start);
+    gain.gain.linearRampToValueAtTime(volume, now + t.start + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + t.start + t.dur);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now + t.start);
+    osc.stop(now + t.start + t.dur + 0.01);
+  }
+}
+
+/**
+ * Render whoosh — bandpass-noise sweep (~200ms) on Render CTA click.
+ *
+ * Graph: noise → bandpass (300Hz → 4000Hz exponential) → gain → dest.
+ *
+ * Pairs with the navigate to /final. Short enough to not collide with the
+ * final-delivery entrance choreography; long enough to feel like a transition.
+ */
+export function playRenderWhoosh({ volume = 0.045, force = false }: PlayOptions = {}): void {
+  if (!force && isAudioMuted()) return;
+  const ctx = getCtx();
+  if (!ctx) return;
+
+  const duration = 0.2;
+  const now = ctx.currentTime;
+
+  const bufferSize = Math.max(1, Math.floor(duration * ctx.sampleRate));
+  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.5;
+  }
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = buffer;
+
+  const bp = ctx.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.frequency.setValueAtTime(300, now);
+  bp.frequency.exponentialRampToValueAtTime(4000, now + duration);
+  bp.Q.value = 1.2;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(volume, now + 0.04);
+  gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+  noise.connect(bp);
+  bp.connect(gain);
+  gain.connect(ctx.destination);
+  noise.start(now);
+  noise.stop(now + duration);
+}
+
+/**
  * Cinematic riser — sub-bass glissando + bandpass-noise sweep.
  *
  * Graph (two parallel chains):

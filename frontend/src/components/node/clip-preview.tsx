@@ -5,6 +5,7 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
 import { buildClipUrl } from "@/lib/cloudinary-transforms";
+import { playApproveChime } from "@/lib/audio-cues";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
 import type { Beat } from "@/types/manifest";
 
@@ -66,6 +67,8 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
 
   const handleApprove = () => {
     approveScene(beat.beatId, scene.sceneId);
+    // Two-note chime — quiet completion punctuation; mute toggle respected.
+    playApproveChime();
     // Brief pause (DURATIONS.quick) so the user sees the approve happen
     // before the drawer exit animation runs — feels more deliberate.
     if (approveTimerRef.current !== null) window.clearTimeout(approveTimerRef.current);

@@ -2,6 +2,7 @@ import { Sparkles } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import * as THREE from "three";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 interface AmbientParticlesProps {
   /** Smoothed scroll velocity from useScrollVelocity. -1..1 ish. */
@@ -24,12 +25,18 @@ const BASE_SPEED = 0.3;
 
 export function AmbientParticles({ velocityRef }: AmbientParticlesProps) {
   const sparklesRef = useRef<THREE.Points>(null);
+  const reducedMotion = usePrefersReducedMotion();
 
   useFrame(() => {
     const mat = sparklesRef.current?.material as
       | (THREE.ShaderMaterial & { uniforms: { speed?: { value: number } } })
       | undefined;
     if (!mat?.uniforms?.speed) return;
+    if (reducedMotion) {
+      // Drift stops; sparkles render as still dots.
+      mat.uniforms.speed.value = 0;
+      return;
+    }
     const v = Math.min(Math.abs(velocityRef.current) * 8, 1.5);
     mat.uniforms.speed.value = BASE_SPEED * (1 + v);
   });

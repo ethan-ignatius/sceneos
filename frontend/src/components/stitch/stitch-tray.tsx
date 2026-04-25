@@ -16,6 +16,7 @@ import {
   moodAccentColor,
 } from "@/lib/cloudinary";
 import { api, ApiError } from "@/lib/api";
+import { playRenderWhoosh } from "@/lib/audio-cues";
 import { SPRING, DURATIONS, EASE } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -48,6 +49,15 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const allReady = approvedCount === totalCount && totalCount > 0;
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  // Tracks mount status so the in-flight stitchUrl call can't setState on
+  // an unmounted tray (e.g., user clicks Close mid-render).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const segments = buildSpliceUrlSegments(approvedIds);
 
@@ -78,10 +88,14 @@ export function StitchTray({ onClose }: StitchTrayProps) {
 
   const handleRender = async () => {
     if (!manifest || !allReady || rendering) return;
+    // Whoosh fires at click-time; the navigate happens after stitchUrl
+    // resolves. The cue's tail (200ms) carries into the /final mount.
+    playRenderWhoosh();
     setRendering(true);
     setRenderError(null);
     try {
       const res = await api.stitchUrl({ manifest });
+      if (!mountedRef.current) return;
       setFinalCinematic({
         finalUrl: res.finalUrl,
         thumbnailUrl: res.thumbnailUrl,
@@ -89,6 +103,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       });
       navigate("/final");
     } catch (err) {
+      if (!mountedRef.current) return;
       setRenderError(err instanceof ApiError ? err.message : "Render failed.");
       setRendering(false);
     }

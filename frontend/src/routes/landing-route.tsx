@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { motion } from "motion/react";
+import { MotionConfig, motion } from "motion/react";
 import { Volume2, VolumeX, HelpCircle } from "lucide-react";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -88,6 +88,12 @@ export function LandingRoute() {
   const longPress = useLongPress({ delayMs: 1000, onLongPress: loadDemoProject });
 
   return (
+    // MotionConfig at the route boundary auto-degrades transform animations
+    // to opacity-only when prefers-reduced-motion is set. Landing pills,
+    // input underline, radial breath, and chrome fade all benefit. Existing
+    // CSS keyframes (flicker reveal, ember pulse) have their own overrides
+    // in index.css.
+    <MotionConfig reducedMotion="user">
     <main className="film-grain relative grid min-h-screen place-items-center bg-bg-base px-6">
       <CursorSpotlight intensity={0.28} radius={360} />
 
@@ -296,5 +302,6 @@ export function LandingRoute() {
         </div>
       </motion.footer>
     </main>
+    </MotionConfig>
   );
 }
