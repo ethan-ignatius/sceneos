@@ -1,6 +1,7 @@
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
+import { LocateFixed } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
@@ -8,6 +9,8 @@ import { StitchTray } from "@/components/stitch/stitch-tray";
 import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
+import { Minimap } from "@/components/canvas/minimap";
+import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
 
@@ -18,8 +21,13 @@ const BeatMap3D = lazy(() =>
 export function CanvasRoute() {
   const manifest = useBeatGraphStore((s) => s.manifest);
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
+  const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
+  // Stitch-tray state lives in the store (not local) so the canvas tree —
+  // specifically NodeMesh's label-hiding — can react to it without prop
+  // drilling. Recent refactor; see beat-graph-store.ts.
+  const stitchOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
+  const setStitchOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
   const { masterPrompt } = usePromptStore();
-  const [stitchOpen, setStitchOpen] = useState(false);
 
   // Ambient projector loop. Fades in over 0.8s, fades out over 0.6s.
   // Mute is checked at start time only — toggling mid-canvas doesn't
@@ -28,6 +36,29 @@ export function CanvasRoute() {
     const stop = startAmbientProjector();
     return stop;
   }, []);
+
+  // Re-center: clear active beat AND fire the camera-reset event so
+  // BeatMap3D zeros any pan offset. One operation, two effects.
+  const recenterCamera = useCallback(() => {
+    if (activeBeatId) setActiveBeat(null);
+    window.dispatchEvent(new CustomEvent(RESET_CAMERA_EVENT));
+  }, [activeBeatId, setActiveBeat]);
+
+  // Esc key returns to overview from anywhere — including mid-pan, mid-
+  // active-orbit, or while a stitch tray is open. Closes stitch tray
+  // first if open (most-recent-modal-wins convention); otherwise re-centers.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (stitchOpen) {
+        setStitchOpen(false);
+        return;
+      }
+      recenterCamera();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [stitchOpen, recenterCamera]);
 
   // Visible fallback instead of a silent <Navigate>. The previous behaviour
   // was: no manifest → redirect to "/" → page-crumple bg flashed dark, which
@@ -79,7 +110,7 @@ export function CanvasRoute() {
         </div>
 
         <button
-          onClick={() => setStitchOpen((s) => !s)}
+          onClick={() => setStitchOpen(!stitchOpen)}
           aria-label={`Open stitch tray — ${approvedCount} of ${totalCount} beats ready`}
           className="pointer-events-auto group min-h-11 w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)] transition-colors duration-200 hover:border-brand-ember/60 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base md:w-auto"
         >
@@ -117,6 +148,29 @@ export function CanvasRoute() {
       {/* Always-visible URL strip — Cloudinary track-hero feature is no
           longer hidden behind the stitch tray (VIABILITY V2 / issue #072). */}
       <PersistentUrlStrip onOpenTray={() => setStitchOpen(true)} />
+
+      {/* 2D top-down minimap — the React-Flow-style overview. Click a beat
+          to fly the camera to it. Hidden when the stitch tray is open
+          (it would overlap on smaller viewports). */}
+      {!stitchOpen ? <Minimap beats={manifest.beats} activeBeatId={activeBeatId} /> : null}
+
+      {/* Re-center affordance — bottom-right corner. Subdued by default,
+          ember on hover. Always available; the keyboard shortcut (Esc) is
+          power-user, this is discoverable. Hidden when the stitch tray is
+          open (it would overlap). */}
+      {!stitchOpen ? (
+        <button
+          type="button"
+          onClick={recenterCamera}
+          aria-label="Re-center camera (Esc)"
+          title="Re-center camera (Esc)"
+          className="pointer-events-auto group fixed bottom-4 right-4 z-20 inline-flex items-center gap-2 rounded-full border border-fg-tertiary/25 bg-bg-elev-1/70 px-3 py-1.5 caption-track text-[10px] text-fg-tertiary backdrop-blur-xl transition-colors duration-200 hover:border-brand-ember/60 hover:bg-bg-elev-1/85 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+        >
+          <LocateFixed size={12} strokeWidth={1.5} aria-hidden="true" />
+          <span>Re-center</span>
+          <span className="ml-1 hidden text-fg-tertiary/60 sm:inline">⎋</span>
+        </button>
+      ) : null}
 
       <AnimatePresence>{activeBeatId ? <NodeDetailDrawer key={activeBeatId} /> : null}</AnimatePresence>
 

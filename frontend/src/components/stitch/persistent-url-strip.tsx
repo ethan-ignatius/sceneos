@@ -33,10 +33,14 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
   // change and re-renders on every store update — which under React 19 +
   // StrictMode can cascade into a max-update-depth crash.
   const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
-  const segments = buildSpliceUrlSegments(approvedIds);
-  const fullUrl = buildSpliceUrl(approvedIds);
+  // Hide the strip while the stitch tray is open — the same content appears
+  // (in fuller form) inside the tray, and leaving it visible underneath
+  // creates the bottom-left bleed seen in the screenshot.
+  const stitchTrayOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
 
-  // Animate the new tail when approvedIds.length grows.
+  // ALL hooks must run on every render — early returns mid-component cause
+  // "Rendered fewer hooks than expected" under React 19. The visibility
+  // gate moves to the bottom (after hooks).
   const prevCountRef = useRef(0);
   const [revealKey, setRevealKey] = useState(0);
   const [shouldType, setShouldType] = useState(false);
@@ -50,6 +54,11 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
     }
     prevCountRef.current = approvedIds.length;
   }, [approvedIds.length]);
+
+  // Visibility gate now AFTER hooks (was a bug — early-return crash).
+  if (stitchTrayOpen) return null;
+  const segments = buildSpliceUrlSegments(approvedIds);
+  const fullUrl = buildSpliceUrl(approvedIds);
 
   if (!segments) {
     // Empty state — keep it short. The user already knows what fl_splice is

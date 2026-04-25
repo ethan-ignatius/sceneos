@@ -74,7 +74,16 @@ export type BeatTemplate =
   | "feature.midpoint"
   | "feature.crisis"
   | "feature.climax"
-  | "feature.denouement";
+  | "feature.denouement"
+  // story.* — canonical 7-beat dramatic arc (added Module C / STATE.md).
+  // Backend `beat_templates.STORY` is the source of truth.
+  | "story.hook"
+  | "story.exposition"
+  | "story.inciting"
+  | "story.rising"
+  | "story.climax"
+  | "story.falling"
+  | "story.resolution";
 
 export interface BeatArchetype {
   /** One-line beat purpose for UI display. */

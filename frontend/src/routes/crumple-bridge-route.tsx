@@ -96,14 +96,40 @@ export function CrumpleBridgeRoute() {
 
   return (
     <div ref={containerRef} className="relative h-screen w-screen overflow-hidden bg-bg-base">
-      {/* Track B — the "landing vibe" we collapse. Standalone visual cue, not a snapshot. */}
+      {/* Vignette + scan-band — match the landing's overlay stack so the
+          bridge reads as the same room, not a different page. The radial
+          gradient pulls focus to the centered headline; the 1px ember
+          repeat is the "glitchy" register the landing carries. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-bg-base/85 via-bg-base/55 to-bg-base/95"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 110% 70% at 50% 50%, transparent 30%, rgba(10,9,8,0.9) 100%)",
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-[0.04]"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(0deg, transparent 0px, transparent 2px, rgba(240,168,104,1) 2px, rgba(240,168,104,1) 3px)",
+        }}
+      />
+
+      {/* Track B — the "landing vibe" we collapse. Single line of display
+          type matching the landing's headline register; no mono caption. */}
       <div className="crumple-landing absolute inset-0 grid place-items-center">
-        <div className="space-y-3 text-center">
-          <h2 className="text-display-md italic text-fg-primary">Composing the canvas…</h2>
-          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
-            Five beats. One cinematic.
-          </p>
-        </div>
+        <h2
+          className="text-center font-display font-medium leading-[1.0] tracking-[-0.03em] text-fg-primary"
+          style={{ fontSize: "clamp(1.75rem, 4vw, 3rem)" }}
+        >
+          Composing <span className="italic text-fg-secondary">the</span> canvas.
+        </h2>
       </div>
 
       {/* Track C — canvas silhouette: a few glowing orbs hint at the beat-map. */}

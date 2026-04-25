@@ -1,9 +1,12 @@
-/* Premium typography — Fraunces (display, soft + wonk + italic axes) +
-   Manrope (body, semi-humanist geometric, variable, less ubiquitous than
-   Geist/Inter) + Geist Mono (caption / URL / tabular).
-   Per user feedback: Instrument Serif + Geist read "fine" but not premium;
-   Fraunces' wonk + Manrope's character give SOTD-tier register. */
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Manrope:wght@200..800&family=Geist+Mono:wght@100..900&display=swap");
+/* Typography — Geist Sans + Geist Mono only. Single foundry (Vercel),
+   one family covers display through caption via weight + italic axes,
+   the matching mono ships from the same studio so display→prompt→URL
+   transitions never feel like a foundry-mismatch.
+   Fraunces (serif display) and Manrope (body) were rejected: serifs read
+   as wedding-invite at small sizes, and the display/body foundry split
+   was producing visible mismatches in headers next to body. Inter was
+   skipped for being the obvious ChatGPT-tier choice. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap");
 
 @import "tailwindcss";
 
@@ -37,13 +40,15 @@
   --color-glow-ember: #ffb47080;
   --color-glow-cool: #7090a080;
 
-  /* Typography — Fraunces (display, italic-forward, soft + wonk axes) +
-     Manrope (body, variable, semi-humanist geometric) + Geist Mono (caption
-     / URL / tabular). Picked over Instrument Serif + Geist for premium
-     register — Fraunces has more character; Manrope is less ubiquitous. */
-  --font-display: "Fraunces", "PP Editorial New", "Times New Roman", serif;
-  --font-body: "Manrope", "Inter", system-ui, sans-serif;
-  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+  /* Typography stack — Geist Sans + Geist Mono.
+     Display, body, and chrome all use the same family at different weights.
+     Display = Geist 700 (or italic for emotional moments). Body = 400/500.
+     Captions = 500 with the single 0.18em uppercase tracking. Mono = real
+     code strings only (URLs, jobIds, beat IDs).
+     No serifs anywhere — the single family is the discipline. */
+  --font-display: "Geist", system-ui, -apple-system, sans-serif;
+  --font-body: "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "Cascadia Code", monospace;
 
   /* Type scale (per issues/open/13-the-tiny-text-disease.md §P1).
      The currently-missing register is the 14-17px body — almost everything
@@ -68,7 +73,7 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     /* Manrope tuning — kerning + contextual alts. Slight negative tracking
-       because Manrope's metrics ship with semi-loose default. */
+       because Manrope's metrics ship semi-loose at body sizes. */
     font-feature-settings: "kern", "calt";
     font-variant-numeric: tabular-nums;
     font-optical-sizing: auto;
