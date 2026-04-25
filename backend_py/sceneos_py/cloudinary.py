@@ -68,6 +68,42 @@ def color_grade_for(mood: str) -> str:
     }.get(mood, "")
 
 
+# Named look presets — picked by the editor agent as a single LUT-style choice
+# applied across the whole cut. Mood color grades stay per-beat; this is the
+# editor's global pass on top.
+LOOK_PRESETS: dict[str, str] = {
+    "neutral": "",
+    "warm-archive": "e_brightness:-3,e_contrast:8,e_saturation:-8,e_sepia:20",
+    "cool-modern": "e_brightness:-5,e_contrast:14,e_saturation:-18,e_blue:10",
+    "high-contrast-mono": "e_brightness:-4,e_contrast:32,e_saturation:-100",
+    "punchy-trailer": "e_brightness:0,e_contrast:24,e_saturation:14,e_vibrance:30",
+    "soft-romance": "e_brightness:6,e_contrast:-4,e_saturation:6,e_blur:30",
+}
+
+
+def look_grade(look: str | None) -> str:
+    return LOOK_PRESETS.get((look or "neutral").strip(), "")
+
+
+def _escape_caption(text: str) -> str:
+    """
+    Encode caption text for the Cloudinary `l_text:` layer.
+
+    Cloudinary's text-overlay parser is comma-and-slash-sensitive — those need
+    to be URL-encoded inside the value itself, not just at the URL level.
+    Newlines render as %0A.
+    """
+    return (
+        text.replace("%", "%25")
+        .replace(",", "%2C")
+        .replace("/", "%2F")
+        .replace("?", "%3F")
+        .replace("#", "%23")
+        .replace(" ", "%20")
+        .replace("\n", "%0A")
+    )
+
+
 _NORMALIZE = "c_fill,w_1920,h_1080"
 
 
@@ -117,6 +153,196 @@ def build_splice_url(
 
 def build_thumbnail_url(public_id: str) -> str:
     return f"https://res.cloudinary.com/{CLOUD}/video/upload/so_auto/{public_id}.jpg"
+
+
+# ── Editor URL builder (Stage 7) ────────────────────────────────────────────
+#
+# Extends build_splice_url with the full editor vocabulary:
+#   - per-beat trim (so / eo on the layer)
+#   - per-beat color grade (mood) + global look LUT
+#   - cross-fade transitions between beats (e_fade:NNN before fl_splice)
+#   - audio overlay with volume + optional ducking of the original clip audio
+#   - per-beat captions placed by absolute timeline offset (so / du)
+#   - watermark image overlay (lower-right corner)
+#
+# Everything is URL-derived. No render server, no ffmpeg job — Cloudinary's
+# CDN evaluates the transform on-demand and caches the MP4. Same model as
+# build_splice_url; this is just a wider transform vocabulary.
+
+
+def _trim_segment(in_s: float | None, out_s: float | None) -> str:
+    parts: list[str] = []
+    if in_s is not None and in_s > 0:
+        parts.append(f"so_{round(float(in_s), 2)}")
+    if out_s is not None and out_s > 0:
+        parts.append(f"eo_{round(float(out_s), 2)}")
+    return ",".join(parts)
+
+
+def _caption_overlay(text: str, start_at: float, duration: float, position: str = "south") -> str:
+    """
+    A single caption overlay timed to a specific window in the spliced timeline.
+
+    `g_<position>` controls anchor (south = bottom-center, north = top-center).
+    `y_60` lifts off the absolute edge so the text sits in the safe zone.
+    """
+    safe = _escape_caption(text)
+    return (
+        f"l_text:Inter_36_bold:{safe},co_white,bo_2px_solid_black,"
+        f"g_{position},y_60/"
+        f"fl_layer_apply,so_{round(start_at, 2)},du_{round(duration, 2)}"
+    )
+
+
+def _audio_overlay(public_id: str, volume: int | None, fade_in_ms: int | None, fade_out_ms: int | None) -> str:
+    bits = [f"l_audio:{_layer_id(public_id)}"]
+    effects: list[str] = []
+    if volume is not None:
+        # Cloudinary clamps. Negative values lower volume (dB-ish), positive raise.
+        effects.append(f"e_volume:{int(volume)}")
+    if fade_in_ms:
+        effects.append(f"e_fade:{int(fade_in_ms)}")
+    if fade_out_ms:
+        effects.append(f"e_fade:-{int(fade_out_ms)}")
+    if effects:
+        bits.append(",".join(effects))
+    return "/".join(bits)
+
+
+def _watermark_overlay(public_id: str) -> str:
+    return f"l_{_layer_id(public_id)},g_south_east,x_24,y_24"
+
+
+def build_editor_url(decisions: dict) -> str | None:
+    """
+    Build the final Cloudinary delivery URL for an EditDecisions object.
+
+    decisions = {
+      "clips": [
+        {
+          "publicId": "...",
+          "durationSeconds": 5.0,         # the source clip's duration
+          "trimStart": 0.0,               # optional: in-point on source
+          "trimEnd":   5.0,               # optional: out-point on source
+          "colorGrade": "<mood string>",  # optional per-beat grade
+          "transitionMs": 300,            # cross-fade INTO this clip (ignored on first)
+          "caption": "Hook"               # optional: per-beat caption (timeline-anchored)
+        },
+        ...
+      ],
+      "audio":     { "publicId": "...", "volume": -20, "fadeInMs": 800, "fadeOutMs": 1200 } | None,
+      "duckOriginalAudioDb": -12,         # optional: lower clip audio under music
+      "watermarkPublicId": "..."          | None,
+      "look":      "warm-archive" | "cool-modern" | "high-contrast-mono" | "punchy-trailer" | "soft-romance" | "neutral",
+      "captionPosition": "south" | "north"
+    }
+
+    Layered, in order:
+      1. base normalize + base trim/grade
+      2. for each subsequent clip: trim → grade → e_fade:N (transition) → fl_splice
+      3. global look LUT
+      4. global audio overlay
+      5. captions, each anchored at its absolute timeline offset
+      6. watermark
+    """
+    clips = decisions.get("clips") or []
+    if not clips:
+        return None
+
+    base, *overlays = clips
+    segments: list[str] = [_NORMALIZE]
+
+    # 1. Base trim + grade
+    base_trim = _trim_segment(base.get("trimStart"), base.get("trimEnd"))
+    if base_trim:
+        segments.append(base_trim)
+    if base.get("colorGrade"):
+        segments.append(base["colorGrade"])
+    duck = decisions.get("duckOriginalAudioDb")
+    if duck is not None:
+        segments.append(f"e_volume:{int(duck)}")
+
+    # 2. Splice each overlay clip with its own trim + grade + cross-fade.
+    cumulative_duration = float(base.get("durationSeconds") or 0)
+    if base_trim:
+        # Trimming changes the contributed duration on the timeline.
+        contributed = (base.get("trimEnd") or base.get("durationSeconds") or 0) - (base.get("trimStart") or 0)
+        cumulative_duration = max(contributed, 0)
+
+    for clip in overlays:
+        layer = f"l_video:{_layer_id(clip['publicId'])}"
+        transforms: list[str] = [_NORMALIZE]
+        trim = _trim_segment(clip.get("trimStart"), clip.get("trimEnd"))
+        if trim:
+            transforms.append(trim)
+        if clip.get("colorGrade"):
+            transforms.append(clip["colorGrade"])
+        transition = clip.get("transitionMs")
+        if transition:
+            # e_fade:NNN before fl_splice gives a cross-fade INTO this layer.
+            transforms.append(f"e_fade:{int(transition)}")
+        segments.append(layer)
+        segments.append(",".join(transforms))
+        segments.append("fl_layer_apply,fl_splice")
+
+        contributed = (clip.get("trimEnd") or clip.get("durationSeconds") or 0) - (clip.get("trimStart") or 0)
+        cumulative_duration += max(contributed, 0)
+
+    # 3. Global look LUT
+    look = look_grade(decisions.get("look"))
+    if look:
+        segments.append(look)
+
+    # 4. Audio
+    audio = decisions.get("audio")
+    if audio and audio.get("publicId"):
+        segments.append(
+            _audio_overlay(
+                audio["publicId"],
+                audio.get("volume"),
+                audio.get("fadeInMs"),
+                audio.get("fadeOutMs"),
+            )
+        )
+
+    # 5. Captions — placed at absolute timeline offsets.
+    caption_position = decisions.get("captionPosition") or "south"
+    timeline_cursor = 0.0
+    if base.get("caption"):
+        beat_dur = (base.get("trimEnd") or base.get("durationSeconds") or 0) - (base.get("trimStart") or 0)
+        segments.append(_caption_overlay(base["caption"], 0.0, max(beat_dur, 0.5), caption_position))
+        timeline_cursor = max(beat_dur, 0)
+    else:
+        timeline_cursor = (base.get("trimEnd") or base.get("durationSeconds") or 0) - (base.get("trimStart") or 0)
+
+    for clip in overlays:
+        beat_dur = (clip.get("trimEnd") or clip.get("durationSeconds") or 0) - (clip.get("trimStart") or 0)
+        if clip.get("caption"):
+            segments.append(
+                _caption_overlay(
+                    clip["caption"],
+                    max(timeline_cursor, 0.0),
+                    max(beat_dur, 0.5),
+                    caption_position,
+                )
+            )
+        timeline_cursor += max(beat_dur, 0)
+
+    # 6. Watermark — last, so it survives the look LUT.
+    if decisions.get("watermarkPublicId"):
+        segments.append(_watermark_overlay(decisions["watermarkPublicId"]))
+
+    prefix = f"{'/'.join(segments)}/" if segments else ""
+    return f"https://res.cloudinary.com/{CLOUD}/video/upload/{prefix}{base['publicId']}.mp4"
+
+
+def edit_decisions_total_duration(decisions: dict) -> float:
+    total = 0.0
+    for clip in decisions.get("clips", []):
+        in_s = float(clip.get("trimStart") or 0)
+        out_s = float(clip.get("trimEnd") or clip.get("durationSeconds") or 0)
+        total += max(out_s - in_s, 0.0)
+    return round(total, 2)
 
 
 def last_frame_url(public_id: str, cloud: str | None = None) -> str:

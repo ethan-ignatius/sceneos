@@ -185,7 +185,7 @@ export function FinalDeliveryRoute() {
             />
           </motion.div>
 
-          {/* Two actions — Download primary, Copy share link ghost. */}
+          {/* Three actions — Download primary, Copy share link ghost, Reopen editor link. */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -206,6 +206,14 @@ export function FinalDeliveryRoute() {
             >
               <Link2 size={16} strokeWidth={1.5} aria-hidden="true" />
               Copy share link
+            </Button>
+            <Button
+              size="lg"
+              variant="ghost"
+              onClick={() => navigate("/edit")}
+              className="btn--edge-underline"
+            >
+              Reopen editor
             </Button>
           </motion.div>
         </motion.section>

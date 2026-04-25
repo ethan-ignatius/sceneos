@@ -1,9 +1,22 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Manifest, Beat, Scene, AgentTurn, VideoType } from "@/types/manifest";
-import type { DecomposedClip } from "@/types/api";
+import type { DecomposedClip, EditDecisions } from "@/types/api";
 import { buildInitialBeats } from "@/lib/beat-templates";
 import { uuid, nowISO } from "@/lib/utils";
+
+/** Conversation entries the editor session keeps separately from the per-beat questionnaire. */
+export interface EditorTurn {
+  role: "agent" | "user";
+  content: string;
+  timestamp: string;
+  /**
+   * Snapshot of the EditDecisions the agent emitted alongside this turn.
+   * Lets the UI render undo/revert as "go back to turn N's decisions" rather
+   * than computing inverse patches.
+   */
+  decisions?: EditDecisions;
+}
 
 /**
  * Transient lifecycle of the landing → /api/decompose call. Drives the
@@ -17,6 +30,16 @@ interface BeatGraphState {
   manifest: Manifest | null;
   activeBeatId: string | null;
   decomposeStatus: DecomposeStatus;
+  /** Stage 7 editor state. Lives on the store so the route can mount/unmount without losing the user's edits. */
+  editor: {
+    decisions: EditDecisions | null;
+    conversation: EditorTurn[];
+    /** Last baked Cloudinary URL — drives the in-route <video> preview. */
+    finalUrl: string | null;
+    thumbnailUrl: string | null;
+    durationSeconds: number | null;
+    committed: boolean;
+  };
 
   // mutations
   initialize: (params: { masterPrompt: string; videoType: VideoType }) => void;
@@ -48,8 +71,27 @@ interface BeatGraphState {
     thumbnailUrl: string;
     durationSeconds: number;
   }) => void;
+  // ── Stage 7 editor ────────────────────────────────────────────────────
+  setEditorBaked: (params: {
+    decisions: EditDecisions;
+    finalUrl: string;
+    thumbnailUrl: string;
+    durationSeconds: number;
+  }) => void;
+  appendEditorTurn: (turn: EditorTurn) => void;
+  resetEditor: () => void;
+  markEditorCommitted: () => void;
   reset: () => void;
 }
+
+const EDITOR_INITIAL: BeatGraphState["editor"] = {
+  decisions: null,
+  conversation: [],
+  finalUrl: null,
+  thumbnailUrl: null,
+  durationSeconds: null,
+  committed: false,
+};
 
 export const useBeatGraphStore = create<BeatGraphState>()(
   persist(
@@ -57,6 +99,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       manifest: null,
       activeBeatId: null,
       decomposeStatus: "idle",
+      editor: EDITOR_INITIAL,
 
       initialize: ({ masterPrompt, videoType }) => {
         const beats = buildInitialBeats(videoType);
@@ -70,6 +113,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
           },
           activeBeatId: null,
           decomposeStatus: "idle",
+          editor: EDITOR_INITIAL,
         });
       },
 
@@ -202,7 +246,22 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         });
       },
 
-      reset: () => set({ manifest: null, activeBeatId: null, decomposeStatus: "idle" }),
+      setEditorBaked: ({ decisions, finalUrl, thumbnailUrl, durationSeconds }) =>
+        set((s) => ({
+          editor: { ...s.editor, decisions, finalUrl, thumbnailUrl, durationSeconds },
+        })),
+
+      appendEditorTurn: (turn) =>
+        set((s) => ({
+          editor: { ...s.editor, conversation: [...s.editor.conversation, turn] },
+        })),
+
+      markEditorCommitted: () => set((s) => ({ editor: { ...s.editor, committed: true } })),
+
+      resetEditor: () => set({ editor: EDITOR_INITIAL }),
+
+      reset: () =>
+        set({ manifest: null, activeBeatId: null, decomposeStatus: "idle", editor: EDITOR_INITIAL }),
     }),
     {
       name: "sceneos:beat-graph",
@@ -211,6 +270,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       partialize: (state) => ({
         manifest: state.manifest,
         activeBeatId: state.activeBeatId,
+        editor: state.editor,
       }) as unknown as BeatGraphState,
     },
   ),

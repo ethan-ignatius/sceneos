@@ -93,6 +93,10 @@ export function StitchTray({ onClose }: StitchTrayProps) {
     setRenderError(null);
     playRenderWhoosh();
     try {
+      // The stitch URL is the OPENING cut. The editor route will re-bake it
+      // through /api/editor/apply once the user lands and refines the edit.
+      // We seed the same fields here so the final-delivery route still works
+      // as a fallback if the user skips the editor.
       const res = await api.stitchUrl({ manifest });
       if (!mountedRef.current) return;
       setFinalCinematic({
@@ -100,7 +104,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         thumbnailUrl: res.thumbnailUrl,
         durationSeconds: res.durationSeconds,
       });
-      navigate("/final");
+      navigate("/edit");
     } catch (err) {
       if (!mountedRef.current) return;
       setRenderError(err instanceof ApiError ? err.message : "Render failed.");
@@ -342,7 +346,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             ) : (
               <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
             )}
-            {rendering ? "Stitching the cut…" : allReady ? "Compose the cinematic" : "Render"}
+            {rendering ? "Stitching the cut…" : allReady ? "Open the editor" : "Render"}
           </span>
           <ArrowUpRight
             size={18}

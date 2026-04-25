@@ -83,6 +83,55 @@ def mock_cutos_import() -> dict:
     return {"projectId": project_id, "editUrl": f"{base}/projects/{project_id}"}
 
 
+# ── Mock editor (Stage 7) ───────────────────────────────────────────────────
+
+
+def run_mock_editor_turn(req: dict) -> dict:
+    """
+    Mock editor agent. Walks through three canned proposals, then commits.
+
+    Drives the visualizer demo path so the editor route is testable without
+    a live Vertex client. Mirrors the live shape from editor.run_editor_turn.
+    """
+    from .editor import _stub_editor_turn, initial_decisions
+
+    manifest = req.get("manifest") or {}
+    decisions = req.get("decisions") or initial_decisions(manifest)
+    conversation = list(req.get("conversation") or [])
+    if req.get("userMessage"):
+        conversation.append({"role": "user", "content": req["userMessage"]})
+    user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
+    return _stub_editor_turn(manifest, decisions, max(0, user_turn_count - 1))
+
+
+async def run_mock_editor_streaming(req: dict):
+    """Mock streaming editor. Synthetic thinking events, then the canned result."""
+    import asyncio as _asyncio
+
+    yield {"type": "ready"}
+
+    manifest = req.get("manifest") or {}
+    clips = (req.get("decisions") or {}).get("clips")
+    n_clips = len(clips) if clips else len(manifest.get("beats") or [])
+    thoughts = [
+        f"looking at the assembled cut, {n_clips} approved beats. ",
+        f"master prompt: \"{manifest.get('masterPrompt', '')[:60]}\". ",
+        "tracing the rhythm: hook, exposition, inciting, rising, climax, falling, resolution. ",
+        "deciding which edit decision matters most right now. ",
+    ]
+    for chunk in thoughts:
+        yield {"type": "thought", "chunk": chunk}
+        await _asyncio.sleep(0.16)
+
+    result = run_mock_editor_turn(req)
+    yield {
+        "type": "tool_call",
+        "name": "commitEdit" if result["kind"] == "commit" else "proposeEdit",
+        "args": result,
+    }
+    yield {"type": "result", **result}
+
+
 # ── Mock questionnaire agent ────────────────────────────────────────────────
 
 

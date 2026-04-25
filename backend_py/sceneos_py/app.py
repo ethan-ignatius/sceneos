@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import agent as agent_service
 from . import decompose as decompose_service
+from . import editor as editor_service
 from . import mock as mock_service
 from .cloudinary import build_splice_url, build_thumbnail_url, color_grade_for, cutos_payload, last_frame_url, sign_upload
 from .config import env, mock_mode
@@ -479,6 +480,111 @@ def stitch(body: dict):
         "thumbnailUrl": build_thumbnail_url(clips[0]["publicId"]),
         "durationSeconds": duration_seconds,
     }
+
+
+# ── /api/editor/* — Stage 7 agentic editor ─────────────────────────────────
+
+
+@app.post("/api/editor/init")
+def editor_init(body: dict):
+    """
+    Seed the editor with the opening cut — same shape as a /api/stitch/url
+    output, expressed as EditDecisions. The frontend uses this to populate
+    the timeline before the first agent turn.
+    """
+    manifest = body.get("manifest") or {}
+    if not isinstance(manifest.get("beats"), list):
+        raise HTTPException(status_code=400, detail="manifest.beats[] is required")
+    decisions = editor_service.initial_decisions(manifest)
+    if not decisions["clips"]:
+        raise HTTPException(
+            status_code=400,
+            detail="No approved beats with scene.clipPublicId — nothing to edit yet.",
+        )
+    baked = editor_service.apply_edit_decisions(manifest, decisions)
+    return {"decisions": baked["decisions"], **{k: v for k, v in baked.items() if k != "decisions"}}
+
+
+@app.post("/api/editor/turn")
+async def editor_turn(body: dict):
+    """
+    One agent turn in the editor session.
+
+    Request:
+      {
+        manifest: Manifest,
+        decisions?: EditDecisions,             # current state; if omitted, initial_decisions(manifest)
+        conversation?: [{role, content, ts}],  # editor-session history (separate from beat questionnaire)
+        userMessage?: string,
+      }
+
+    Response: { kind: "propose"|"commit", decisions, rationale, suggestedFollowups?, summary? }
+    """
+    if mock_mode():
+        return mock_service.run_mock_editor_turn(body)
+    try:
+        return await editor_service.run_editor_turn(body)
+    except Exception as exc:
+        logger.exception("[editor/turn] failed")
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "Editor turn failed", "details": str(exc)},
+        ) from exc
+
+
+@app.post("/api/editor/stream")
+async def editor_stream(body: dict):
+    """
+    SSE stream of an editor agent turn. Same event shape as /api/agent/stream.
+    """
+    if mock_mode():
+        events = mock_service.run_mock_editor_streaming(body)
+    else:
+        events = editor_service.run_editor_turn_streaming(body)
+
+    async def gen():
+        try:
+            async for event in events:
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as exc:
+            logger.exception("[editor/stream] failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': f'{type(exc).__name__}: {exc}'})}\n\n"
+        finally:
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/api/editor/apply")
+def editor_apply(body: dict):
+    """
+    Deterministic. Bake EditDecisions into a Cloudinary delivery URL.
+
+    Request: { manifest, decisions }
+    Response: { finalUrl, thumbnailUrl, durationSeconds, decisions }
+    """
+    manifest = body.get("manifest") or {}
+    decisions = body.get("decisions") or {}
+    if not isinstance(manifest.get("beats"), list):
+        raise HTTPException(status_code=400, detail="manifest.beats[] is required")
+    try:
+        return editor_service.apply_edit_decisions(manifest, decisions)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("[editor/apply] failed")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Editor apply failed", "details": str(exc)},
+        ) from exc
 
 
 # ── /api/cloudinary/sign ────────────────────────────────────────────────────

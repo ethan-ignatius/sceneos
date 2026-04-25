@@ -215,3 +215,139 @@ def test_stitch_builds_url():
     body = res.json()
     assert body["finalUrl"].endswith("sceneos/demo/a.mp4")
     assert body["durationSeconds"] == 5
+
+
+# ── Editor (Stage 7) ───────────────────────────────────────────────────────
+
+
+def _approved_two_beat_manifest() -> dict:
+    return {
+        "projectId": "p1",
+        "videoType": "story",
+        "masterPrompt": "a monkey steals a banana from a zoo",
+        "beats": [
+            {
+                "beatId": "b1", "beatName": "Hook", "template": "story.hook",
+                "status": "approved",
+                "archetype": {"intent": "x", "mood": "intimate-hook", "suggestedDuration": 5, "directorNotes": ""},
+                "scenes": [{"sceneId": "s1", "conversation": [], "approved": True, "clipPublicId": "dog", "durationSeconds": 5}],
+            },
+            {
+                "beatId": "b2", "beatName": "Exposition", "template": "story.exposition",
+                "status": "approved",
+                "archetype": {"intent": "x", "mood": "wide-establish", "suggestedDuration": 8, "directorNotes": ""},
+                "scenes": [{"sceneId": "s2", "conversation": [], "approved": True, "clipPublicId": "elephants", "durationSeconds": 8}],
+            },
+        ],
+    }
+
+
+def test_editor_init_returns_baked_url(monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "true")
+    client = TestClient(app)
+    res = client.post("/api/editor/init", json={"manifest": _approved_two_beat_manifest()})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["durationSeconds"] == 13.0
+    assert body["finalUrl"].endswith("dog.mp4")
+    assert "fl_splice" in body["finalUrl"]
+    assert len(body["decisions"]["clips"]) == 2
+    # Default editor decisions: every beat gets per-mood color grade carried forward.
+    assert body["decisions"]["clips"][0]["colorGrade"]
+
+
+def test_editor_init_rejects_no_approved_beats():
+    client = TestClient(app)
+    res = client.post(
+        "/api/editor/init",
+        json={"manifest": {"beats": [
+            {"beatId": "b1", "beatName": "Hook", "template": "story.hook",
+             "status": "pending",
+             "archetype": {"intent": "x", "mood": "intimate-hook", "suggestedDuration": 5, "directorNotes": ""},
+             "scenes": [{"sceneId": "s1", "conversation": [], "approved": False}]}
+        ]}},
+    )
+    assert res.status_code == 400
+
+
+def test_editor_turn_proposes_then_commits_in_mock_mode(monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "true")
+    client = TestClient(app)
+    manifest = _approved_two_beat_manifest()
+
+    # Turn 1: agent proposes an edit. No prior conversation.
+    r1 = client.post("/api/editor/turn", json={"manifest": manifest})
+    assert r1.status_code == 200
+    b1 = r1.json()
+    assert b1["kind"] == "propose"
+    assert "decisions" in b1
+    assert len(b1["suggestedFollowups"]) == 3
+    decisions = b1["decisions"]
+
+    # Turn 2: user reply moves the agent through canned proposals.
+    r2 = client.post(
+        "/api/editor/turn",
+        json={
+            "manifest": manifest,
+            "decisions": decisions,
+            "conversation": [{"role": "user", "content": "tighter please"}],
+        },
+    )
+    assert r2.status_code == 200
+    assert r2.json()["kind"] == "propose"
+
+    # After enough turns the stub commits.
+    r3 = client.post(
+        "/api/editor/turn",
+        json={
+            "manifest": manifest,
+            "decisions": decisions,
+            "conversation": [
+                {"role": "user", "content": "ok"},
+                {"role": "user", "content": "ok"},
+                {"role": "user", "content": "ok"},
+                {"role": "user", "content": "lock it"},
+            ],
+        },
+    )
+    assert r3.status_code == 200
+    assert r3.json()["kind"] == "commit"
+    assert "summary" in r3.json()
+
+
+def test_editor_apply_bakes_full_transform_chain(monkeypatch):
+    monkeypatch.setenv("MOCK_MODE", "true")
+    client = TestClient(app)
+    manifest = _approved_two_beat_manifest()
+
+    # Build a richly populated EditDecisions and ensure every transform shows up.
+    decisions = {
+        "clips": [
+            {"publicId": "dog", "durationSeconds": 5, "trimEnd": 4.5,
+             "colorGrade": "e_brightness:-5,e_contrast:8,e_saturation:0",
+             "caption": "Hook"},
+            {"publicId": "elephants", "durationSeconds": 8, "transitionMs": 360,
+             "colorGrade": "e_brightness:-15,e_contrast:10,e_saturation:-12",
+             "caption": "Exposition"},
+        ],
+        "audio": {"publicId": "audio/track", "volume": -20, "fadeInMs": 800, "fadeOutMs": 1200},
+        "duckOriginalAudioDb": -12,
+        "watermarkPublicId": "sceneos-mark",
+        "look": "cool-modern",
+        "captionPosition": "south",
+    }
+    res = client.post("/api/editor/apply", json={"manifest": manifest, "decisions": decisions})
+    assert res.status_code == 200
+    body = res.json()
+    url = body["finalUrl"]
+    assert url.startswith("https://res.cloudinary.com/")
+    # Every transform we asked for appears in the URL — no server-side render path.
+    assert "fl_splice" in url
+    assert "e_fade:360" in url        # transition into exposition
+    assert "eo_4.5" in url            # trim on the hook
+    assert "e_volume:-12" in url      # ducking
+    assert "l_audio:" in url          # music overlay
+    assert "l_text:" in url           # caption layer
+    assert "l_sceneos-mark" in url    # watermark
+    assert "e_blue:10" in url         # cool-modern look component
+    assert body["durationSeconds"] == 12.5

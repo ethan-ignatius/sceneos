@@ -3,6 +3,11 @@ import type {
   AgentResponse,
   DecomposeRequest,
   DecomposeResponse,
+  EditorApplyRequest,
+  EditorApplyResponse,
+  EditorInitResponse,
+  EditorTurnRequest,
+  EditorTurnResponse,
   GenerateRequest,
   GenerateResponse,
   StatusResponse,
@@ -11,6 +16,7 @@ import type {
   CutOSImportRequest,
   CutOSImportResponse,
 } from "@/types/api";
+import type { Manifest } from "@/types/manifest";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8787";
 
@@ -65,6 +71,26 @@ export const api = {
 
   cutosImport: (body: CutOSImportRequest) =>
     request<CutOSImportRequest, CutOSImportResponse>("/api/cutos/import", {
+      method: "POST",
+      body,
+    }),
+
+  // ── Editor (Stage 7) ────────────────────────────────────────────────────
+
+  editorInit: (manifest: Manifest) =>
+    request<{ manifest: Manifest }, EditorInitResponse>("/api/editor/init", {
+      method: "POST",
+      body: { manifest },
+    }),
+
+  editorTurn: (body: EditorTurnRequest) =>
+    request<EditorTurnRequest, EditorTurnResponse>("/api/editor/turn", {
+      method: "POST",
+      body,
+    }),
+
+  editorApply: (body: EditorApplyRequest) =>
+    request<EditorApplyRequest, EditorApplyResponse>("/api/editor/apply", {
       method: "POST",
       body,
     }),
