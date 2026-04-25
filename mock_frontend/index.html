@@ -295,6 +295,16 @@
             <p class="text-zinc-700 italic text-[11px]">empty — populates when the agent calls markSufficient</p>
           </div>
         </div>
+
+        <div class="panel p-5">
+          <div class="flex items-center justify-between mb-3">
+            <span class="label label-neural">pipeline dispatch</span>
+            <span id="pipelineStatus" class="text-[10px] text-zinc-600 mono">idle</span>
+          </div>
+          <div id="pipeline" class="space-y-3 text-[11px]">
+            <p class="text-zinc-700 italic">empty — orchestrator runs after markSufficient</p>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -329,6 +339,7 @@
     let manifest = null;
     let currentBeatIndex = 0;
     let inFlight = false;
+    let previousLastFrameUrl = null;  // chain primitive — fed to next beat's orchestrate call
 
     const $ = (id) => document.getElementById(id);
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -352,6 +363,33 @@
       } catch {
         $('connDot').className = 'w-2 h-2 rounded-full bg-rose-500 transition-colors';
       }
+    }
+
+    /* ── Plain JSON POST (for /api/orchestrate) ──────────────────────── */
+    async function postJson(path, body) {
+      const res = await fetch(`${apiBase()}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`POST ${path} ${res.status}: ${text.slice(0, 240)}`);
+      }
+      return res.json();
+    }
+
+    /* ── Status poll (after orchestrate) ───────────────────────────────── */
+    async function pollStatus(jobId, maxAttempts = 10, intervalMs = 800) {
+      for (let i = 0; i < maxAttempts; i++) {
+        const res = await fetch(`${apiBase()}/api/status/${encodeURIComponent(jobId)}`);
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const body = await res.json();
+        if (body.status === 'succeeded') return body;
+        if (body.status === 'failed') throw new Error(body.error || 'provider failed');
+        await sleep(intervalMs);
+      }
+      return null;  // timeout — caller decides what to do
     }
 
     /* ── SSE consumer ──────────────────────────────────────────────────── */
@@ -568,6 +606,78 @@
       $('beatFacts').innerHTML = `<p class="text-zinc-700 italic text-[11px]">empty — populates when the agent calls markSufficient</p>`;
     }
 
+    /* ── Render: pipeline dispatch ─────────────────────────────────────── */
+    function clearPipeline() {
+      $('pipeline').innerHTML = `<p class="text-zinc-700 italic">empty — orchestrator runs after markSufficient</p>`;
+      $('pipelineStatus').textContent = 'idle';
+      $('pipelineStatus').className = 'text-[10px] text-zinc-600 mono';
+    }
+
+    function setPipelineStatus(text, tone /* 'working' | 'done' | 'error' */) {
+      const el = $('pipelineStatus');
+      el.textContent = text;
+      el.className = 'text-[10px] mono ' + (
+        tone === 'working' ? 'text-cyan-300 blink' :
+        tone === 'done'    ? 'text-emerald-400' :
+        tone === 'error'   ? 'text-rose-400' :
+                             'text-zinc-600'
+      );
+    }
+
+    function renderPipeline(result) {
+      const fmt = (s) => escapeHtml(String(s ?? ''));
+      const refCard = (ref, accent) => ref ? `
+        <div class="flex gap-3 items-start fact-card pl-3 py-1.5">
+          <img src="${fmt(ref.imageUrl)}" alt="${fmt(ref.kind)} ref"
+               class="w-16 h-16 rounded object-cover border border-white/10 flex-shrink-0"
+               onerror="this.style.display='none'" />
+          <div class="flex-1 min-w-0">
+            <div class="label ${accent} text-[9px]">${fmt(ref.kind)} ref</div>
+            <div class="text-[10px] text-zinc-500 mono truncate">${fmt(ref.publicId)}</div>
+          </div>
+        </div>
+      ` : '';
+
+      const motion = result.motionPreset || {};
+      const motionRows = ['lens', 'lighting', 'cameraMove', 'pace'].filter(k => motion[k]).map(k => `
+        <div class="flex gap-2 text-[11px]">
+          <span class="text-zinc-600 mono w-20 shrink-0">${k}</span>
+          <span class="text-zinc-300">${fmt(motion[k])}</span>
+        </div>
+      `).join('');
+
+      $('pipeline').innerHTML = `
+        <div class="flex items-center gap-3 fade-up">
+          <span class="label ${result.chainFromPrevious ? 'label-neural' : 'label-accent'}">
+            ${result.chainFromPrevious ? 'chained · seeded from previous frame' : 'cut · fresh references generated'}
+          </span>
+        </div>
+        ${result.chainFromPrevious ? `
+          <div class="flex gap-3 items-start fact-card pl-3 py-1.5">
+            <img src="${fmt(result.seedImageUrl)}" alt="seed frame"
+                 class="w-16 h-16 rounded object-cover border border-white/10 flex-shrink-0"
+                 onerror="this.style.display='none'" />
+            <div class="flex-1 min-w-0">
+              <div class="label label-neural text-[9px]">seed (last frame of previous beat)</div>
+              <div class="text-[10px] text-zinc-500 mono truncate">${fmt(result.seedImageUrl)}</div>
+            </div>
+          </div>
+        ` : `
+          ${refCard(result.characterRef, 'label-accent')}
+          ${refCard(result.locationRef, 'label-accent')}
+        `}
+        <div class="border-t border-white/[.06] pt-3 space-y-1">
+          <div class="label label-accent text-[9px] mb-1">motion preset</div>
+          ${motionRows}
+        </div>
+        <div class="border-t border-white/[.06] pt-3">
+          <div class="label text-[9px]">job</div>
+          <div class="text-[10px] text-zinc-400 mono break-all">${fmt(result.jobId)}</div>
+          <div class="text-[10px] text-zinc-500 mt-1">provider: ${fmt(result.provider)} · poll after ${fmt(result.pollAfterMs)}ms</div>
+        </div>
+      `;
+    }
+
     /* ── Build manifest from chosen template ──────────────────────────── */
     function buildManifest(masterPrompt, videoType) {
       const tmpls = TEMPLATES[videoType] || TEMPLATES.story;
@@ -609,6 +719,7 @@
       renderConversation();
       clearThinking();
       clearBeatFacts();
+      clearPipeline();
 
       await advance(undefined);
     }
@@ -689,6 +800,50 @@
         await populateBeatFacts(result.beatFacts);
         renderAnswerArea([], { thinking: true });
 
+        // ── Hand off to the deterministic pipeline ──────────────────────
+        setPipelineStatus('dispatching', 'working');
+        let orchestrateResult = null;
+        try {
+          orchestrateResult = await postJson(`/api/orchestrate/${beat.beatId}`, {
+            manifest,
+            beatFacts: result.beatFacts || {},
+            previousLastFrameUrl,
+            aspectRatio: '16:9',
+          });
+          beat.scenes[0].jobId = orchestrateResult.jobId;
+          beat.scenes[0].seedImageUrl = orchestrateResult.seedImageUrl || null;
+          beat.scenes[0].clipPrompt = orchestrateResult.clipPrompt || null;
+          beat.chainFromPrevious = orchestrateResult.chainFromPrevious;
+          renderPipeline(orchestrateResult);
+          setPipelineStatus('rendering', 'working');
+        } catch (err) {
+          setPipelineStatus(`error: ${err.message.slice(0, 80)}`, 'error');
+        }
+
+        // Poll status briefly for the lastFrameUrl that will seed the next beat.
+        if (orchestrateResult && orchestrateResult.jobId) {
+          try {
+            const statusBody = await pollStatus(orchestrateResult.jobId, 10, 800);
+            if (statusBody) {
+              previousLastFrameUrl = statusBody.lastFrameUrl || null;
+              beat.scenes[0].clipUrl = statusBody.clipUrl;
+              beat.scenes[0].clipPublicId = statusBody.clipPublicId;
+              beat.scenes[0].lastFrameUrl = statusBody.lastFrameUrl;
+              setPipelineStatus('clip ready', 'done');
+            } else {
+              // Timeout — real-mode video still rendering. Don't chain;
+              // next beat will get fresh refs.
+              previousLastFrameUrl = null;
+              setPipelineStatus('render in flight (advancing)', 'working');
+            }
+          } catch (err) {
+            previousLastFrameUrl = null;
+            setPipelineStatus(`render error: ${err.message.slice(0, 80)}`, 'error');
+          }
+        }
+        beat.status = 'preview';
+        renderBeatStrip();
+
         await sleep(1700);
 
         if (currentBeatIndex < manifest.beats.length - 1) {
@@ -700,6 +855,7 @@
           renderConversation();
           clearThinking();
           clearBeatFacts();
+          clearPipeline();
           await advance(undefined);
         } else {
           renderAnswerArea([], { done: true });
@@ -713,7 +869,9 @@
       manifest = null;
       currentBeatIndex = 0;
       inFlight = false;
+      previousLastFrameUrl = null;
       setThinkingActive(false);
+      clearPipeline();
       $('loop').classList.add('hidden');
       $('boot').classList.remove('hidden');
       $('resetBtn').classList.add('hidden');

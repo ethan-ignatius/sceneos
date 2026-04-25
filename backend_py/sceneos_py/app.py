@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from . import agent as agent_service
 from . import decompose as decompose_service
 from . import mock as mock_service
-from .cloudinary import build_splice_url, build_thumbnail_url, color_grade_for, cutos_payload, sign_upload
+from .cloudinary import build_splice_url, build_thumbnail_url, color_grade_for, cutos_payload, last_frame_url, sign_upload
 from .config import env, mock_mode
 from .provider import (
     GenerationProvider,
@@ -141,6 +141,159 @@ async def agent_stream(body: dict):
     )
 
 
+# ── /api/orchestrate/{beat_id} — deterministic per-beat pipeline ──────────
+
+
+@app.post("/api/orchestrate/{beat_id}")
+async def orchestrate(beat_id: str, body: dict):
+    """
+    Run the deterministic pipeline for one beat:
+      beatFacts → motion preset → reference images (when not chained) →
+      clipPrompt composition → provider.generate() → jobId
+
+    Request body:
+      {
+        manifest: Manifest,
+        beatFacts: { subject, action, setting, framing?, mood, characterDescription?, locationDescription? },
+        previousLastFrameUrl?: string,
+        aspectRatio?: "16:9" | "9:16" | "1:1"
+      }
+
+    Response: see orchestrator.run_beat_pipeline().
+    """
+    from . import orchestrator
+    from .motion_presets import pick_motion_preset
+
+    manifest = body.get("manifest")
+    beat_facts = body.get("beatFacts")
+    previous_last_frame_url = body.get("previousLastFrameUrl")
+    aspect_ratio = body.get("aspectRatio") or "16:9"
+
+    if not isinstance(manifest, dict) or not isinstance(beat_facts, dict):
+        raise HTTPException(status_code=400, detail="manifest (object) and beatFacts (object) are required")
+
+    beat = next((b for b in manifest.get("beats", []) if b.get("beatId") == beat_id), None)
+    if beat is None:
+        raise HTTPException(status_code=404, detail=f"beatId {beat_id} not found in manifest")
+
+    if mock_mode():
+        # Mock branch: skip Imagen + provider, return deterministic stub mirroring the live shape.
+        chain = orchestrator.decide_chain(manifest, beat, previous_last_frame_url)
+        motion_preset = pick_motion_preset(beat_facts.get("mood") or beat.get("archetype", {}).get("mood", "cinematic"))
+        clip_prompt = orchestrator.compose_clip_prompt(beat, beat_facts, motion_preset, aspect_ratio)
+        refined_prompt = f"{clip_prompt['imagePrompt']} {clip_prompt['motionPrompt']}"
+        scenes = beat.get("scenes") or []
+        scene_id = (scenes[0] or {}).get("sceneId") if scenes else f"{beat_id}-scene-1"
+        cloud = env("CLOUDINARY_CLOUD_NAME") or "demo"
+        seed = previous_last_frame_url if chain else f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg"
+        return {
+            "sceneId": scene_id,
+            "jobId": mock_service.deterministic_job_id("mock", f"{beat['template']}-{scene_id}"),
+            "provider": "cached",
+            "pollAfterMs": 800,
+            "chainFromPrevious": chain,
+            "seedImageUrl": seed,
+            "characterRef": None if chain else {
+                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg",
+                "publicId": f"mock::character-{beat_id}",
+                "kind": "character",
+                "prompt": "[mock] cinematic character reference",
+            },
+            "locationRef": None if chain else {
+                "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/couple.jpg",
+                "publicId": f"mock::location-{beat_id}",
+                "kind": "location",
+                "prompt": "[mock] cinematic location reference",
+            },
+            "motionPreset": motion_preset,
+            "clipPrompt": clip_prompt,
+            "refinedPrompt": refined_prompt,
+        }
+
+    try:
+        return await orchestrator.run_beat_pipeline(
+            manifest=manifest,
+            beat_id=beat_id,
+            beat_facts=beat_facts,
+            previous_last_frame_url=previous_last_frame_url,
+            aspect_ratio=aspect_ratio,
+        )
+    except Exception as exc:
+        logger.exception("[orchestrate] failed for beat %s", beat_id)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Orchestration failed",
+                "details": str(exc),
+                "hint": "Set MOCK_MODE=true for canned data, or check Imagen + provider quotas.",
+            },
+        ) from exc
+
+
+# ── /api/references/generate — Imagen 3 character + location refs ─────────
+
+
+@app.post("/api/references/generate")
+async def references_generate(body: dict):
+    """
+    Generate a reference still (character or location) via Vertex Imagen 3.
+
+    Request:
+      {
+        kind: "character" | "location",
+        description: string,
+        projectId?: string,
+        beatId?: string,
+        aspectRatio?: "16:9" | "9:16" | "1:1"
+      }
+
+    Response: { imageUrl, publicId, kind, prompt }
+
+    Mock-mode short-circuits to a Cloudinary demo asset (no Imagen call).
+    """
+    from . import vertex_imagen as vi
+
+    kind = (body.get("kind") or "").strip()
+    description = (body.get("description") or "").strip()
+    if kind not in vi.REFERENCE_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"kind must be one of {list(vi.REFERENCE_KINDS)}",
+        )
+    if not description:
+        raise HTTPException(status_code=400, detail="description is required")
+
+    if mock_mode():
+        cloud = env("CLOUDINARY_CLOUD_NAME") or "demo"
+        public_id = "sample" if kind == "character" else "couple"
+        return {
+            "imageUrl": f"https://res.cloudinary.com/{cloud}/image/upload/{public_id}.jpg",
+            "publicId": f"mock::{kind}",
+            "kind": kind,
+            "prompt": vi._stylize_prompt(kind, description),
+            "stub": True,
+        }
+
+    try:
+        return await vi.generate_reference(
+            kind=kind,
+            description=description,
+            project_id=body.get("projectId"),
+            beat_id=body.get("beatId"),
+            aspect_ratio=body.get("aspectRatio") or vi.DEFAULT_ASPECT_RATIO,
+        )
+    except Exception as exc:
+        logger.exception("[references/generate] failed")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Reference image generation failed",
+                "details": str(exc),
+                "hint": "Set MOCK_MODE=true for a stubbed demo asset, or check Vertex Imagen quota.",
+            },
+        ) from exc
+
+
 # ── /api/decompose ──────────────────────────────────────────────────────────
 
 
@@ -218,6 +371,9 @@ async def status(job_id: str):
             "status": "succeeded",
             "clipUrl": clip["url"],
             "clipPublicId": clip["publicId"],
+            # Mock clips live on Cloudinary's public demo cloud — derive last-frame
+            # URL from that cloud, not the user's configured one.
+            "lastFrameUrl": last_frame_url(clip["publicId"], cloud="demo"),
         }
 
     try:
@@ -251,6 +407,10 @@ async def status(job_id: str):
         response["clipUrl"] = result["clipUrl"]
     if result.get("clipPublicId"):
         response["clipPublicId"] = result["clipPublicId"]
+        # Chain primitive: when a clip succeeds and lives on Cloudinary, expose
+        # its near-final frame so the next beat can use it as I2V seed.
+        if result.get("status") == "succeeded":
+            response["lastFrameUrl"] = last_frame_url(result["clipPublicId"])
     if result.get("error"):
         response["error"] = result["error"]
     return response

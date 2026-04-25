@@ -88,6 +88,17 @@ async def _authed_post(url: str, body: dict) -> dict:
     return res.json()
 
 
+async def _fetch_image_b64(url: str) -> tuple[str, str]:
+    """Fetch a remote image and return (base64-encoded bytes, mimeType)."""
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        res = await client.get(url)
+    if res.status_code >= 400:
+        raise RuntimeError(f"Could not fetch startImageUrl: {res.status_code} {url}")
+    mime = (res.headers.get("content-type") or "image/jpeg").split(";", 1)[0].strip() or "image/jpeg"
+    encoded = base64.b64encode(res.content).decode("ascii")
+    return encoded, mime
+
+
 async def generate(params: GenerateClipParams) -> dict:
     provider_job_id = str(uuid.uuid4())
     pid = public_id_for_scene(
@@ -100,8 +111,24 @@ async def generate(params: GenerateClipParams) -> dict:
     duration_seconds = max(5, min(8, round(float(requested))))
     prompt = clip_prompt.get("motionPrompt") or params["refinedPrompt"]
 
+    instance: dict[str, Any] = {"prompt": prompt}
+
+    # Chained generation: when the previous beat's last frame is provided,
+    # seed Veo's I2V mode with it. Veo accepts inline base64 OR gcsUri.
+    start_image_url = params.get("startImageUrl")
+    if start_image_url:
+        try:
+            b64, mime = await _fetch_image_b64(start_image_url)
+            instance["image"] = {"bytesBase64Encoded": b64, "mimeType": mime}
+        except Exception as exc:
+            _JOBS[provider_job_id] = {
+                "status": "failed",
+                "error": f"failed to fetch startImageUrl: {exc}",
+            }
+            return {"jobId": provider_job_id}
+
     body = {
-        "instances": [{"prompt": prompt}],
+        "instances": [instance],
         "parameters": {
             "aspectRatio": aspect_ratio,
             "durationSeconds": duration_seconds,

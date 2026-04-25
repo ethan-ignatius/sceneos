@@ -180,6 +180,14 @@ export interface GenerateRequest {
   durationSeconds: number;
   /** Helps the cached provider locate the right pre-rendered clip. */
   beatTemplate?: string;
+  /**
+   * Chained generation: pass the previous beat's `lastFrameUrl` to seed I2V.
+   * Honored by fal, vertex (Veo I2V), and higgsfield (skips T2I and goes
+   * straight to I2V). When omitted, providers do their own keyframe gen.
+   */
+  startImageUrl?: string;
+  /** The full clipPrompt (imagePrompt + motionPrompt + ...) — provider-specific. */
+  clipPrompt?: HiggsfieldClipPrompt;
 }
 
 export interface GenerateResponse {
@@ -214,6 +222,13 @@ export interface StatusResponse {
   status: JobStatus;
   clipUrl?: string;
   clipPublicId?: string;
+  /**
+   * Chain primitive: present iff status === "succeeded" AND clipPublicId
+   * is set. Cloudinary `so_99p` derivative — the near-final frame of the
+   * clip as a JPG. Pass this as `startImageUrl` on the next beat's
+   * /api/generate call to chain consecutive scenes.
+   */
+  lastFrameUrl?: string;
   error?: string;
   pollAfterMs?: number;          // present iff status is queued/running
   provider?: GenerationProvider; // echoed for client display

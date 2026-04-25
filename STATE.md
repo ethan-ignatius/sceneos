@@ -300,33 +300,39 @@ After (1)+(2) ship this turn, the agent is verifiable. Items 3-9 are concrete ne
 - **mock_frontend overhaul.** Full rewrite. Streams SSE via `fetch + ReadableStream`. Live cyan thinking panel that streams character-by-character with thought-fade-in animation. Typewriter on the question (22ms/char). Suggestion chips slide up in stagger. beatFacts cards populate one-at-a-time when markSufficient fires. Aurora-pulse background while thinking. JetBrains Mono for thoughts. Inter for everything else. Beat-strip glow animation on active node.
 - **Mock-mode streaming parity.** `mock.run_mock_agent_streaming()` synthesizes thinking events around the canned result so the visualizer feels alive even without GCP creds.
 
-### 🔴 Next up — module by module
+### ✅ Modules A, B, C — done & verified live
 
-**Module A: Last-frame + chain wiring (~1 hr) — IMMEDIATE NEXT**
-- `cloudinary.py:last_frame_url(public_id)` returns `https://res.cloudinary.com/{CLOUD}/video/upload/so_-0.1/{public_id}.jpg`.
-- `app.py` /api/status: include `lastFrameUrl` in succeeded response.
-- `vertex_veo.py:generate()`: when `params["startImageUrl"]`, fetch URL → base64 → add to predict body's `instances[0].image`.
-- `higgsfield.py:generate()`: when `params["startImageUrl"]`, skip T2I stage, post directly to I2V with that image_url.
+**Module A: Last-frame + chain wiring** ✅
+- `cloudinary.last_frame_url(public_id)` returns `…/so_99p/<public_id>.jpg` (99% time mark — reliable last-frame derivative).
+- `/api/status` includes `lastFrameUrl` when status=succeeded AND clipPublicId is set (both mock branch and real-provider branch).
+- `vertex_veo.generate()` fetches `startImageUrl` → base64 → adds to `instances[0].image` (Veo I2V mode).
+- `higgsfield.generate()` skips T2I entirely when `startImageUrl` is set; goes straight to I2V with that image_url.
+- `fal.py` already honored startImageUrl — no change.
+- Cloudinary creds resolver now parses `CLOUDINARY_URL` combined form (`cloudinary://key:secret@cloud`) as a fallback for `CLOUDINARY_CLOUD_NAME`.
 
-**Module B: Reference image generator (~1.5 hr)**
-- New file `vertex_imagen.py` — Vertex AI Imagen 3 client using same SA auth as Veo.
-- New endpoint `POST /api/references/generate` accepts `{ kind: "character" | "location", description, projectId, beatId }`.
-- Returns `{ imageUrl, publicId }` (uploaded to Cloudinary for stable public_id).
-- Defer fal Flux + Higgsfield Soul as alternate providers.
+**Module B: Reference image generator** ✅
+- New `vertex_imagen.py` — Vertex AI Imagen 3 (`imagen-3.0-generate-002`). Same SA auth as Veo + Gemini. Stylizes prompts per kind (`character` adds 35mm reference framing; `location` adds 24mm establishing shot).
+- New endpoint `POST /api/references/generate` accepts `{ kind, description, projectId?, beatId?, aspectRatio? }` → uploads to Cloudinary at `sceneos/{projectId}/refs/{beatId}/{kind}` → returns `{ imageUrl, publicId, kind, prompt }`.
+- Mock-mode short-circuits to a Cloudinary demo asset.
+- New `cloudinary.upload_image_from_bytes()` accepts raw bytes (Imagen → data URI → Cloudinary).
+- Live verified: chimpanzee character ref generated and uploaded to user's Cloudinary cloud.
 
-**Module C: Orchestrator (~2 hr)**
-- New file `orchestrator.py` exposing `run_beat_pipeline(beat, beatFacts) -> { sceneId, jobId }`.
-- Step 1: motion-preset lookup from `(mood, archetype)` — pure function.
-- Step 2: chainFromPrevious lookup from beat archetype (story.hook=false, story.exposition=true, etc).
-- Step 3: if !chained, call `references.generate(character)` and `references.generate(location)`.
-- Step 4: compose `clipPrompt`.
-- Step 5: call `provider.generate(...)`.
-- Frontend triggers via new `POST /api/orchestrate/:beatId` (or inlines the steps).
+**Module C: Orchestrator** ✅
+- New `motion_presets.py` — extracted mood→cinematography table (lens, lighting, composition, camera move, pace, atmosphere) shared with decompose.
+- New `orchestrator.py` — `run_beat_pipeline(manifest, beat_id, beat_facts, previous_last_frame_url?)`. Pure deterministic dispatcher: motion preset lookup → chain decision → reference image gen (when not chained or first beat) → clipPrompt composition → provider.generate() with seedImageUrl. Returns `{ sceneId, jobId, provider, chainFromPrevious, seedImageUrl, characterRef, locationRef, motionPreset, clipPrompt, refinedPrompt }`.
+- New endpoint `POST /api/orchestrate/{beat_id}` mirrors the function signature. Mock branch returns deterministic stub.
+- Tests cover: first-beat-no-chain (fresh refs path), subsequent-beat-with-chain (seeded from prev frame), hard-cut-overrides-chain (explicit `Beat.chainFromPrevious=false`).
 
-**Module D: Demo project bake (~1 hr)**
-- Run the full pipeline against ONE master prompt with real providers.
-- Capture all 7 clip publicIds.
-- Hardcode into `cached.py` so the on-stage safety net replays the same demo instantly.
+**Bonus: visualizer extended**
+- `mock_frontend/index.html` now calls `/api/orchestrate` after `markSufficient` and renders a "pipeline dispatch" panel with: chain-or-cut tag, character + location reference image thumbnails, motion preset (lens/lighting/cameraMove/pace), provider jobId. Polls `/api/status` for up to 8 seconds to capture `lastFrameUrl` for the next beat (chain primitive). Watch the full pipeline live.
+
+### 🔴 Next up
+
+**Module D: Demo project bake (~1 hr) — IMMEDIATE NEXT** *(user-driven)*
+- Run the full pipeline against ONE chosen master prompt with real providers (Vertex Gemini agent + Imagen refs + Veo or Higgsfield video).
+- Capture all 7 clip `publicId`s as they succeed.
+- Hardcode into `cached.py` so the on-stage safety net replays the same demo instantly when wifi or quota dies.
+- **Why this needs you:** picking the demo prompt and judging the agent questions are creative calls. I can run the pipeline once you've picked.
 
 **Module E: Editing pass (stretch)**
 - Music selection (canned library for hackathon scope).

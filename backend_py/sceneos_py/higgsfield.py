@@ -94,6 +94,41 @@ async def generate(params: dict) -> dict:
         "durationSeconds": params["durationSeconds"],
         "preferredModel": DEFAULT_I2V_MODEL,
     }
+
+    # Chained generation: when a seed image is provided (typically the previous
+    # beat's lastFrameUrl), skip T2I entirely and dispatch I2V directly.
+    start_image_url = params.get("startImageUrl")
+    if start_image_url:
+        body = await _post(
+            prompt.get("preferredModel", DEFAULT_I2V_MODEL),
+            {
+                "image_url": start_image_url,
+                "prompt": prompt.get("motionPrompt", params["refinedPrompt"]),
+                "duration": prompt.get("durationSeconds", 5),
+                "aspect_ratio": prompt.get("aspectRatio", "16:9"),
+                "resolution": prompt.get("resolution", "1080p"),
+            },
+        )
+        request_id = _request_id(body)
+        if not request_id:
+            raise RuntimeError(f"Higgsfield I2V (chained) response missing request_id: {body}")
+        job_id = f"hf-{uuid.uuid4()}"
+        put(
+            Job(
+                job_id=job_id,
+                provider="higgsfield",
+                stage="i2v_running",
+                clip_prompt=prompt,
+                i2v_request_id=request_id,
+                image_url=start_image_url,
+                project_id=params.get("projectId"),
+                beat_id=params.get("beatId"),
+                scene_id=params.get("sceneId"),
+            )
+        )
+        return {"jobId": job_id}
+
+    # First beat (or hard cut) — original two-stage T2I → I2V flow.
     body = await _post(
         DEFAULT_T2I_MODEL,
         {

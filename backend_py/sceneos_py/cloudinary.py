@@ -9,7 +9,37 @@ import httpx
 from .config import env
 
 
-CLOUD = env("CLOUDINARY_CLOUD_NAME", "demo") or "demo"
+def _parse_cloudinary_url(url: str) -> tuple[str, str, str]:
+    """Parse cloudinary://<api_key>:<api_secret>@<cloud_name> → (cloud, key, secret)."""
+    if not url or not url.startswith("cloudinary://"):
+        return "", "", ""
+    try:
+        rest = url[len("cloudinary://"):]
+        creds, _, tail = rest.partition("@")
+        api_key, _, api_secret = creds.partition(":")
+        cloud = (tail or "").strip("/").split("/", 1)[0]
+        return cloud, api_key, api_secret
+    except Exception:
+        return "", "", ""
+
+
+def _cloudinary_creds() -> tuple[str, str, str]:
+    """
+    Resolve (cloud_name, api_key, api_secret) — preferring explicit env vars and
+    falling back to CLOUDINARY_URL combined form. Either configuration works.
+    """
+    cloud = env("CLOUDINARY_CLOUD_NAME") or ""
+    api_key = env("CLOUDINARY_API_KEY") or ""
+    api_secret = env("CLOUDINARY_API_SECRET") or ""
+    if not (cloud and api_key and api_secret):
+        url_cloud, url_key, url_secret = _parse_cloudinary_url(env("CLOUDINARY_URL") or "")
+        cloud = cloud or url_cloud
+        api_key = api_key or url_key
+        api_secret = api_secret or url_secret
+    return cloud, api_key, api_secret
+
+
+CLOUD = _cloudinary_creds()[0] or "demo"
 
 
 def _layer_id(public_id: str) -> str:
@@ -89,12 +119,22 @@ def build_thumbnail_url(public_id: str) -> str:
     return f"https://res.cloudinary.com/{CLOUD}/video/upload/so_auto/{public_id}.jpg"
 
 
+def last_frame_url(public_id: str, cloud: str | None = None) -> str:
+    """
+    Extract the near-final frame of a video as a JPG.
+
+    Cloudinary's `so_99p` seeks to 99% through the clip — close enough to the
+    last frame for any duration, and reliable across keyframe layouts. This is
+    the seed image that flows into the next beat's I2V generation when
+    chainFromPrevious is true.
+    """
+    return f"https://res.cloudinary.com/{cloud or CLOUD}/video/upload/so_99p/{public_id}.jpg"
+
+
 def sign_upload(folder: str = "sceneos/user-media") -> dict:
-    api_key = env("CLOUDINARY_API_KEY")
-    api_secret = env("CLOUDINARY_API_SECRET")
-    cloud = env("CLOUDINARY_CLOUD_NAME")
+    cloud, api_key, api_secret = _cloudinary_creds()
     if not api_key or not api_secret or not cloud:
-        raise RuntimeError("missing CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET")
+        raise RuntimeError("missing CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET (or CLOUDINARY_URL)")
     timestamp = int(time.time())
     payload = f"folder={folder}&timestamp={timestamp}{api_secret}"
     signature = hashlib.sha1(payload.encode()).hexdigest()
@@ -108,11 +148,9 @@ def sign_upload(folder: str = "sceneos/user-media") -> dict:
 
 
 async def upload_video_from_url(remote_url: str, public_id: str) -> dict:
-    api_key = env("CLOUDINARY_API_KEY")
-    api_secret = env("CLOUDINARY_API_SECRET")
-    cloud = env("CLOUDINARY_CLOUD_NAME")
+    cloud, api_key, api_secret = _cloudinary_creds()
     if not api_key or not api_secret or not cloud:
-        raise RuntimeError("missing Cloudinary credentials")
+        raise RuntimeError("missing Cloudinary credentials (set CLOUDINARY_URL or the three explicit vars)")
     url = f"https://api.cloudinary.com/v1_1/{cloud}/video/upload"
     async with httpx.AsyncClient(timeout=120) as client:
         res = await client.post(
@@ -127,6 +165,35 @@ async def upload_video_from_url(remote_url: str, public_id: str) -> dict:
         "url": body.get("secure_url"),
         "durationSeconds": body.get("duration", 0),
     }
+
+
+async def upload_image_from_bytes(content: bytes, public_id: str, mime: str = "image/png") -> dict:
+    """Upload raw image bytes (e.g. from Imagen) to Cloudinary as a data URI."""
+    import base64 as _base64
+
+    cloud, api_key, api_secret = _cloudinary_creds()
+    if not api_key or not api_secret or not cloud:
+        raise RuntimeError("missing Cloudinary credentials (set CLOUDINARY_URL or the three explicit vars)")
+    url = f"https://api.cloudinary.com/v1_1/{cloud}/image/upload"
+    data_uri = f"data:{mime};base64,{_base64.b64encode(content).decode('ascii')}"
+    async with httpx.AsyncClient(timeout=60) as client:
+        res = await client.post(
+            url,
+            data={"file": data_uri, "public_id": public_id, "overwrite": "true"},
+            auth=(api_key, api_secret),
+        )
+        res.raise_for_status()
+    body = res.json()
+    return {
+        "publicId": body["public_id"],
+        "url": body.get("secure_url"),
+        "width": body.get("width"),
+        "height": body.get("height"),
+    }
+
+
+def public_id_for_reference(project_id: str | None, beat_id: str | None, kind: str) -> str:
+    return f"sceneos/{_sanitize(project_id or 'project')}/refs/{_sanitize(beat_id or 'beat')}/{_sanitize(kind)}"
 
 
 def cutos_payload(manifest: dict) -> dict:
