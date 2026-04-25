@@ -210,11 +210,26 @@ Internally calls CutOS's `POST /api/projects/import-manifest` (see §11).
 
 ## 6. External integrations
 
+### Generation provider tiering — `GENERATION_PROVIDER` env var
+
+Generation is dispatched through `backend/src/services/provider.ts`, which reads `GENERATION_PROVIDER` and returns the active provider's `generate` / `getStatus` functions. Routes do not import provider-specific clients directly — they call `getProvider().impl.generate(...)`. This is what lets us flip tiers between Saturday's recording, Sunday's live demo, and on-stage emergency without code changes.
+
+| Tier | Value | Characteristics | When to use |
+|---|---|---|---|
+| 1 | `higgsfield` (default) | Best quality (Sora 2 / Veo 3.1 / Kling 3.0 routed by Higgsfield). 60–180s per clip. | Recording the 2-minute demo video Saturday/Sunday morning. |
+| 2 | `kling` | Direct Kling 3.0 API. ~15–30s per clip. Slightly lower visual quality than tier 1, normalised via Cloudinary color grade so it matches the recording. | Live on-stage demo. |
+| 3 | `replicate` | Multi-model gateway. Use only if both Higgsfield AND Kling are down. | Emergency only. |
+| 4 | `cached` | Returns pre-rendered Cloudinary public_ids from `services/cached-demo.ts`. Instant. | On-stage emergency switch — when *anything* else flakes. Render the demo project Saturday night, paste public_ids in, and you have a guaranteed working demo. |
+
+**JobId encoding** — every `jobId` returned by `/api/generate` is `provider::providerJobId`. `/api/status/:jobId` decodes the prefix to dispatch — keeps the backend stateless across restarts.
+
+**Color-grade normalisation** — when running `kling` for the live demo, the upload pipeline applies `e_brightness:N,e_contrast:N,e_saturation:N` per beat (mood-driven) so the on-stage output matches the LUT of the higgsfield-tier recorded clips. Judges shouldn't notice the tier switch.
+
 ### Higgsfield
 - **Auth:** API key in `HIGGSFIELD_API_KEY` env var. Server-only. Never sent to the browser.
-- **Models:** prefer Sora 2 or Veo 3.1 for quality if available; fall back to Kling 3.0 (cheaper credits).
+- **Models:** prefer Sora 2 or Veo 3.1 for quality if available; fall back to Kling 3.0 internally.
 - **Latency:** Sora 2 / Veo 3.1 take 60–180 s per clip. Frontend polls; show choreographed loading state.
-- **Failure:** if API errors or quota hits, swap provider transparently (Segmind / Replicate / Kling direct).
+- **Failure:** if API errors or quota hits, the `kling` and `cached` tiers exist — flip the env var, redeploy in seconds.
 
 ### Cloudinary
 - **Auth:** Cloud name + API key + API secret in env. Public cloud name is also fine to expose to frontend (it's in the URL).

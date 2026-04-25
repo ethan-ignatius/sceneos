@@ -52,9 +52,18 @@ export type BeatTemplate =
   | "feature.denouement";
 
 export interface BeatArchetype {
+  /** One-line beat purpose for UI display. */
   intent: string;
+  /** Visual mood — informs Cloudinary color grade transformation. */
   mood: BeatMood;
+  /** Suggested duration. Final duration is per-scene. */
   suggestedDuration: number;
+  /**
+   * Directorial guidance the agent prepends to its system prompt when
+   * questioning + composing a Higgsfield prompt for this beat. This is
+   * the moat — keep it specific (lens, movement, light, blocking, pace).
+   */
+  directorNotes: string;
 }
 
 export type BeatMood =

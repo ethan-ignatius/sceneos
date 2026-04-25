@@ -137,29 +137,37 @@ LA Hacks rubric (from the Devpost):
 > **Hard deadline: Sun 2026-04-26 11:00am EDT.** Submission needs Devpost page + GitHub link + 2–3 min demo video + in-person presence at Pauley Pavilion.
 
 ### Saturday 2026-04-25 (now)
-- **Done:** Repo, CONTEXT, all docs, frontend skeleton, backend skeleton, prize-track decision, settings (no Claude attribution), memories. ✅
+- **Done:** Repo, CONTEXT, all docs, frontend skeleton, backend skeleton, prize-track decision, settings (no Claude attribution), memories, **provider tiering (higgsfield/kling/replicate/cached)**, **directorial beat templates**. ✅
 - **Evening (Alex):** Google Stitch session — generate the visual prototypes for Landing, Canvas, Node Detail, Agent Bubbles. Use prompts in `STITCH_PROMPTS.md`. Iterate to taste.
-- **Evening (Vishnu/Ethan):** wire `services/cloudinary.ts` + `POST /api/stitch/url`. Test with mock public_ids — confirm a real `fl_splice` URL plays end-to-end.
-- **Late evening:** Sleep. Tomorrow is execution.
+- **Evening (Vishnu/Ethan):** wire `services/cloudinary.ts` + `POST /api/stitch/url` so the URL builder is testable. Then wire `services/higgsfield.ts` and verify ONE clip generates end-to-end.
+- **🔴 Pre-warm protocol (mandatory before sleep):**
+  1. Verify all three sets of API keys: Higgsfield, Cloudinary, OpenAI. Run a 1-clip dry through each.
+  2. Render the **demo project** end-to-end with `GENERATION_PROVIDER=higgsfield`. Use `DEMO_PROMPT` from `frontend/src/lib/demo-project.ts`.
+  3. Capture the 5 Cloudinary `public_id`s. Paste them into `backend/src/services/cached-demo.ts` → `DEMO_TRAILER_CLIPS`.
+  4. Flip `GENERATION_PROVIDER=cached`. Confirm the same prompt now plays in <2s without any model calls.
+  5. Commit (`chore: pin demo-project clips`). Push. Now the on-stage safety net exists.
+- **Late evening:** Sleep. Tomorrow is execution, not architecture.
 
 ### Sunday 2026-04-26 — execution day
 
 | Time (EDT) | Task | Owner |
 |---|---|---|
-| 00:00–02:00 | Implement Landing + Crumple transition (GSAP showpiece) | Alex |
-| 02:00–04:00 | R3F canvas + node mesh + camera rig | Alex |
-| 00:00–04:00 | Higgsfield service + `/api/generate` + `/api/status` | Vishnu |
-| 00:00–04:00 | Agent service + `/api/agent` + sufficiency logic | Ethan |
-| 04:00–05:30 | Wire one full happy-path: prompt → 1 beat → 1 clip → Cloudinary | All |
-| 05:30–07:00 | Multi-beat parallel generation; `fl_splice` end-to-end | All |
-| 07:00–08:30 | Polish: agent bubbles, node breathe loop, color grade per beat | Alex |
-| 07:00–08:30 | Demo project preset (a known-good prompt that always renders well) | Vishnu |
-| 08:30–09:30 | Record 2-min demo video (see `DEMO_PHILOSOPHY.md`) | All |
+| 00:00–02:00 | Landing polish + GSAP page-crumple showpiece (priority #1) | Alex |
+| 02:00–04:00 | R3F canvas polish: bloom, vignette, camera rig, node breathe | Alex |
+| 00:00–02:00 | Higgsfield service: `generate` + `getStatus` end-to-end | Vishnu |
+| 02:00–03:30 | Cloudinary upload-from-URL on Higgsfield success → return `clipPublicId` | Vishnu |
+| 00:00–03:30 | Agent service: prompt with `directorNotes`, sufficiency in 2–4 questions | Ethan |
+| 03:30–05:00 | **Parallel generation kickoff** — once a beat is sufficient, fire its job. Don't wait for the user to leave the drawer. Frontend optimistic UI shows "rendering" on the canvas node while the user explores the next beat. | All |
+| 05:00–06:30 | `fl_splice` end-to-end: 5 approved clips → final URL → playback | All |
+| 06:30–07:30 | "While-you-wait" UI: choreographed loading state inside node (FlowBoard's `animate-blur-pulse`) | Alex |
+| 06:30–07:30 | Color-grade-per-beat via Cloudinary `e_brightness/contrast/saturation` so kling-tier and higgsfield-tier outputs match visually | Vishnu |
+| 07:30–08:30 | Record 2-min demo video on `GENERATION_PROVIDER=higgsfield` (see `DEMO_PHILOSOPHY.md`) | All |
+| 08:30–09:30 | Switch to `GENERATION_PROVIDER=kling` for on-stage live demo. Smoke-test the flow 3× under realistic Wi-Fi. | All |
 | 09:30–10:30 | Devpost write-up (use `DEVPOST_DRAFT.md` as starting point) | All |
-| 10:30–10:55 | Final submission — push, double-check repo public, paste links | All |
+| 10:30–10:55 | Final submission — push, repo public, video uploaded, links pasted | All |
 | 11:00 | **Deadline.** |
 
-If we slip: cut the CutOS handoff first, then drop multi-beat parallelism (do them sequentially), then drop the recursive feature mode (only ship trailer + short).
+**Slip plan (in this order):** drop CutOS handoff → drop animated agent bubble reveals → drop multi-beat parallelism → flip to `GENERATION_PROVIDER=cached` and present the rendered demo project as the only flow.
 
 ---
 
@@ -180,12 +188,15 @@ Per LA Hacks rules:
 
 | Risk | Mitigation |
 |---|---|
-| Higgsfield API access blocked or slow on demo day | Provider abstraction → swap to Segmind/Replicate. Keep a pre-rendered backup demo video. |
-| Cloudinary upload preset misconfigured | Configure Saturday evening; test signed + unsigned paths. |
-| 3D canvas performance bad on judges' laptops | R3F bundle is lazy-loaded; offer a 2D fallback canvas (React Flow or SVG). |
-| Page-crumple transition too ambitious | Simplify to a CSS-only dissolve as a Plan B. Do the crumple last. |
-| One teammate down (sick, sleep) | All shared services are interface-bound; anyone can pick up another's stub. |
-| Demo video re-records eat into time | Lock the demo script Saturday evening; shoot once, edit minimally. |
+| **Higgsfield latency on stage** (Sora 2 / Veo 3.1 are 30s–2min per clip; 5 clips serial = multi-minute dead air) | **Three-tier provider strategy** (`GENERATION_PROVIDER` env var): record the demo video on `higgsfield` (best quality), present live on `kling` (faster), keep `cached` ready as the third tier. **Parallel generation** kicks off the moment a beat is sufficient; the user explores the next node while clips render in the background. |
+| **Visual quality mismatch** between recorded demo and live render | Cloudinary `e_brightness / e_contrast / e_saturation` color grade per beat normalises the two tiers to the same LUT. Audience can't tell the difference. |
+| Higgsfield outage or quota hit Saturday night | `cached` tier — pre-rendered demo project lives in Cloudinary as a known-good fallback. The on-stage emergency switch. |
+| Cloudinary upload preset misconfigured | Configure Saturday evening; test signed + unsigned paths. Pre-warm protocol verifies. |
+| 3D canvas performance bad on judges' laptops | R3F bundle is lazy-loaded; postprocessing (bloom + vignette) drops to no-postprocessing fallback if FPS < 50. |
+| Page-crumple transition too ambitious | CSS-only dissolve is the Plan B. The transition is the *first 30 seconds* — protect this above all. |
+| Pizza-simplicity vs node-canvas tension | Cap questionnaire at 2–4 questions per beat. Each question MUST reference a directorial decision (lens, movement, light) — never "what mood?". The canvas reads as exploration; the questions read as decisions. If a teammate writes a question that sounds like a survey, reject it. |
+| Demo video re-records eat into time | Lock the demo script Saturday evening. Shoot once on `higgsfield` tier. Don't re-shoot — voice-over over the same clips. |
+| One teammate down (sick, sleep) | Provider modules are interface-bound (`services/provider.ts:ProviderModule`); anyone picks up any stub without context. |
 
 ---
 

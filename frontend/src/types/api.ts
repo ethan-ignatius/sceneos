@@ -30,9 +30,17 @@ export interface GenerateRequest {
   sceneId: string;
   refinedPrompt: string;
   durationSeconds: number;
+  beatTemplate?: string;
 }
 
-export type GenerationProvider = "higgsfield" | "segmind" | "replicate";
+/**
+ * Dispatch tiers, switched via backend GENERATION_PROVIDER env var.
+ *  - higgsfield: recorded-demo tier (best quality, slow)
+ *  - kling:      live-demo tier (faster, slightly lower quality)
+ *  - replicate:  multi-model fallback
+ *  - cached:     hard-coded demo project (instant, on-stage safety net)
+ */
+export type GenerationProvider = "higgsfield" | "kling" | "replicate" | "cached";
 
 export interface GenerateResponse {
   jobId: string;
@@ -49,6 +57,7 @@ export interface StatusResponse {
   clipPublicId?: string;
   error?: string;
   pollAfterMs?: number;
+  provider?: GenerationProvider;
 }
 
 export interface StitchRequest {
