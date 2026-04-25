@@ -14,26 +14,28 @@ Each item has:
 
 ---
 
-## Phase 0 — Foundation primitives (do these first, everything builds on them)
+## Phase 0 — Foundation primitives ✅ COMPLETE (2026-04-25)
 
-### 0.1 🔴 Upgrade `motion-presets.ts` with full easing library — 0.5h
-- **Acceptance:** exports `EASE` with `outQuart`, `inOutQuart`, `filmIn`, `filmOut`, plus the 18 named curves from alexportfolio's library (linear, ease[In/Out/InOut][Quad/Cubic/Quart/Quint/Expo/Sine/Circ]). Plus `DURATIONS` (5 tokens), `SPRING` (3 presets).
-- **Why first:** every other motion task imports from here.
+All foundation primitives are shipped. Every Phase 1+ task imports from these. Full inventory + signatures + when-to-use are in [`MASTER_FRONTEND_DEV.md §10`](MASTER_FRONTEND_DEV.md).
 
-### 0.2 🔴 Add `lib/text-splitter.tsx` — 0.5h
-- **Acceptance:** `<TextSplitter text="...">` renders each char as `<span data-index>` with deterministic random animationDelay seed. Used by the landing flicker reveal and agent bubbles.
-- **Reference:** alexportfolio's `components/Common/TextSplitter/TextSplitter.tsx`.
+### 0.1 ✅ `lib/motion-presets.ts` — 5 durations · 4 named eases · 18-curve `easingFns` · 3 springs · 3 stagger presets
+### 0.2 ✅ `lib/text-splitter.tsx` — `<TextSplitter>` + `<WordSplitter>` with deterministic seed
+### 0.3 ✅ `lib/use-scroll-velocity.ts` — RAF inertial scroll bridge, refs only, CSS-var compatible
+### 0.4 ✅ `src/index.css` — `flicker-reveal`, `ember-pulse`, `tick-flicker`, `blur-pulse`, `grain`, `marquee` keyframes + reduced-motion overrides
+### 0.5 ✅ `components/ui/cursor-spotlight.tsx` — pointer-follow halo, CSS-only
+### 0.6 ✅ `components/ui/magnetic-button.tsx` — magnetic pull + corner flicker + ember-pulse-when-ready
+### 0.7 ✅ `components/ui/pill.tsx` — outline/filled · ember/cool/fg · sm/md · active state *(Augen Pro pattern)*
+### 0.8 ✅ `components/ui/arrow-link.tsx` — stacked-arrow hover-swap, right/down/out · sm/md/lg · 3 tones *(Augen Pro pattern)*
+### 0.9 ✅ `components/ui/live-clock.tsx` — tabular-num timestamp + label + pulsing dot *(Parinaz Kassemi pattern)*
+### 0.10 ✅ `components/ui/section-label.tsx` — icon-square + caption *(Augen + FlowBoard pattern)*
+### 0.11 ✅ `components/ui/marquee.tsx` — infinite-scroll, edge-fade mask, pause-on-hover *(NextSense pattern)*
+### 0.12 ✅ `components/ui/announcement-bar.tsx` — rotating slides, hidden-tab pause, 3 tones *(NextSense pattern)*
 
-### 0.3 🔴 Add `lib/use-scroll-velocity.ts` — 1h
-- **Acceptance:** RAF-driven hook returning a `currentProgressRef`. Wheel + touch + drag deltas accumulate; exponential decay at rate 5; interpolation constant 0.3. CSS variable bridge (`el.style.setProperty('--scroll-progress', ...)`).
-- **Reference:** alexportfolio's `app/ScrollVelocityProvider.tsx`.
-
-### 0.4 🔴 Add `index.css` keyframes + utility classes — 0.5h
-- **Acceptance:** keyframes `flicker`, `flicker-corner`, `ember-pulse`, `grain` (already present), `paper-curl-burn`. Utility classes `.glow-ember`, `.glow-cool`, `.film-grain` (present), `.ember-pulse-on-ready`.
-
-### 0.5 🟠 Add `components/ui/cursor-spotlight.tsx` — 0.5h
-- **Acceptance:** subtle radial-gradient at pointer position, ember-warm at 6% opacity. CSS-only via custom property `--mouse-x` / `--mouse-y` updated on `pointermove`. Mount once at App root, beneath all content.
-- **Why:** elevates perceived quality without a custom cursor. Apple-Vision-Pro-page energy.
+**Documented but not yet shipped — defer until a Phase 1+ task needs it:**
+- `components/ui/bracket-text.tsx` — `[Pha¹]`-style system tags *(Augen Pro pattern)*
+- `components/ui/scroll-indicator.tsx` — chevron-down pill inviting scroll *(Augen Pro pattern)*
+- `components/ui/pin-track.tsx` — sticky-child + tall-parent scroll-pin wrapper *(NextSense pattern)*
+- `components/ui/color-shift-section.tsx` + `lib/use-color-shift.ts` — IO-driven CSS-var swap *(NextSense pattern)*
 
 ---
 
