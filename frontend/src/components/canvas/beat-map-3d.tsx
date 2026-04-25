@@ -7,9 +7,16 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
 import { computeBeatPositions } from "@/lib/beat-layout";
 import { NodeMesh } from "./node-mesh";
-import { CameraRig } from "./camera-rig";
+import { CameraRig, type PanState } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
+
+/**
+ * Custom event the route chrome (Esc handler, Re-center button) dispatches
+ * to clear the camera's pan offset without lifting the ref into a store.
+ * Listened-for at the BeatMap3D level — see the useEffect below.
+ */
+export const RESET_CAMERA_EVENT = "sceneos:camera:reset";
 
 interface BeatMap3DProps {
   beats: Beat[];
@@ -54,6 +61,9 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
   const [hoveredBeatId, setHoveredBeatId] = useState<string | null>(null);
+  // Vignette overlay opacity tracks pan state; React-y way is fine here
+  // since the overlay is HTML, not WebGL.
+  const [panning, setPanning] = useState(false);
 
   // Bridge: scroll/wheel velocity → ambient particles' speed uniform.
   // The hook accumulates wheel/touch deltas, decays exponentially, and
@@ -77,6 +87,95 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   // FOV widens on portrait viewports (#152) — see `<ResponsiveCamera>` below.
   const cameraZ = 4 + Math.max(beats.length, 5) * 0.6;
 
+  // ── Pan state ──────────────────────────────────────────────────────────
+  // The pan ref lives outside React so middle-drag never triggers a route
+  // re-render. CameraRig reads it each frame; this component writes to it
+  // from pointer events. RESET_CAMERA_EVENT (Esc / Re-center) zeros it.
+  const panRef = useRef<PanState>({ offset: [0, 0], active: false });
+
+  // Middle-button drag → world-unit translation on the XY plane.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let anchorX = 0;
+    let anchorY = 0;
+    let startOffsetX = 0;
+    let startOffsetY = 0;
+
+    // World units per screen pixel at z=0, given current camera distance + fov.
+    // worldHeightAtZ0 = 2 * camDist * tan(vfov/2). Width = height * aspect.
+    // We approximate with the rendering viewport size (containerRef.current).
+    const worldPerPx = () => {
+      const rect = el.getBoundingClientRect();
+      const fovRad = (42 * Math.PI) / 180;
+      const dist = cameraZ;
+      const worldH = 2 * dist * Math.tan(fovRad / 2);
+      const worldW = worldH * (rect.width / Math.max(rect.height, 1));
+      return { x: worldW / Math.max(rect.width, 1), y: worldH / Math.max(rect.height, 1) };
+    };
+
+    const onPointerDown = (e: PointerEvent) => {
+      // Middle button only. Left = node click; right = browser default.
+      if (e.button !== 1) return;
+      e.preventDefault(); // suppress browser auto-scroll cursor
+      panRef.current.active = true;
+      setPanning(true);
+      anchorX = e.clientX;
+      anchorY = e.clientY;
+      startOffsetX = panRef.current.offset[0];
+      startOffsetY = panRef.current.offset[1];
+      el.setPointerCapture(e.pointerId);
+      document.body.style.cursor = "grabbing";
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!panRef.current.active) return;
+      const { x: wpxX, y: wpxY } = worldPerPx();
+      // Drag-right moves camera target right → scene drifts left. Match
+      // common 3D-tool convention where dragging brings the world with you.
+      const dx = (e.clientX - anchorX) * wpxX;
+      const dy = (e.clientY - anchorY) * wpxY;
+      panRef.current.offset[0] = startOffsetX - dx;
+      panRef.current.offset[1] = startOffsetY + dy; // screen-y is flipped
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.button !== 1 || !panRef.current.active) return;
+      panRef.current.active = false;
+      setPanning(false);
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* released already; no-op */
+      }
+      document.body.style.cursor = "";
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
+    el.addEventListener("pointercancel", onPointerUp);
+
+    // External reset (Esc / Re-center button) — zero the pan offset.
+    const onReset = () => {
+      panRef.current.offset[0] = 0;
+      panRef.current.offset[1] = 0;
+      panRef.current.active = false;
+      setPanning(false);
+      document.body.style.cursor = "";
+    };
+    window.addEventListener(RESET_CAMERA_EVENT, onReset);
+
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
+      el.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener(RESET_CAMERA_EVENT, onReset);
+    };
+  }, [cameraZ]);
+
   return (
     <div ref={containerRef} className="absolute inset-0">
       <Canvas
@@ -97,11 +196,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         <color attach="background" args={["#0a0908"]} />
         <ResponsiveCamera baseFov={42} baseZ={cameraZ} />
 
-        {/* Brighter ambient + warm key + cool fill so the PBR core sphere
-            has something to bounce off. Higher intensity than the previous
-            setup because emissive carries most of the visual; this just
-            adds form. */}
-        <ambientLight intensity={0.6} />
+        {/* Lighting recalibrated for textured planet bodies (Phase 2):
+              ambient 0.6→0.35 — textures carry their own tonal range; over-
+                lighting them flattens detail. Keep enough fill that the
+                shadowed crescent still reads.
+              warm key 2.4 — Sun-side accent; matches our "ember is the only
+                hue language" rule (PHILOSOPHY §3).
+              cool fill 1.0 — counterweight, prevents the dark side from
+                disappearing into bg-base. */}
+        <ambientLight intensity={0.35} />
         <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
         <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
@@ -129,6 +232,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           activeBeatId={activeBeatId}
           hoveredBeatId={hoveredBeatId}
           overviewZ={cameraZ}
+          panRef={panRef}
         />
 
         {/* Postprocessing stack:
@@ -155,6 +259,19 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
             postprocess after the pipeline (Veo + stitch + delivery) is
             verified end-to-end. */}
       </Canvas>
+      {/* Edge-vignette feedback while panning. Gentle 5% darkening at the
+          frame edges signals "you're in motion" without obstructing the
+          scene. CSS-only; no per-frame React work. */}
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${
+          panning ? "opacity-100" : "opacity-0"
+        }`}
+        style={{
+          background:
+            "radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%)",
+        }}
+      />
     </div>
   );
 }

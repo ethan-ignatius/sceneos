@@ -17,11 +17,18 @@ interface BeatGraphState {
   manifest: Manifest | null;
   activeBeatId: string | null;
   decomposeStatus: DecomposeStatus;
+  /**
+   * Whether any modal-style chrome (stitch tray, command menu) is open.
+   * Used by the 3D canvas to hide planet HTML labels — they're DOM siblings
+   * of the Canvas and bleed through translucent overlays otherwise.
+   */
+  stitchTrayOpen: boolean;
 
   // mutations
   initialize: (params: { masterPrompt: string; videoType: VideoType }) => void;
   setDecomposeStatus: (status: DecomposeStatus) => void;
   setActiveBeat: (beatId: string | null) => void;
+  setStitchTrayOpen: (open: boolean) => void;
   updateBeat: (beatId: string, patch: Partial<Beat>) => void;
   updateScene: (beatId: string, sceneId: string, patch: Partial<Scene>) => void;
   appendAgentTurn: (beatId: string, sceneId: string, turn: AgentTurn) => void;
@@ -57,6 +64,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       manifest: null,
       activeBeatId: null,
       decomposeStatus: "idle",
+      stitchTrayOpen: false,
 
       initialize: ({ masterPrompt, videoType }) => {
         const beats = buildInitialBeats(videoType);
@@ -76,6 +84,8 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       setDecomposeStatus: (status) => set({ decomposeStatus: status }),
 
       setActiveBeat: (beatId) => set({ activeBeatId: beatId }),
+
+      setStitchTrayOpen: (open) => set({ stitchTrayOpen: open }),
 
       updateBeat: (beatId, patch) => {
         const m = get().manifest;
@@ -202,7 +212,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         });
       },
 
-      reset: () => set({ manifest: null, activeBeatId: null, decomposeStatus: "idle" }),
+      reset: () => set({ manifest: null, activeBeatId: null, decomposeStatus: "idle", stitchTrayOpen: false }),
     }),
     {
       name: "sceneos:beat-graph",

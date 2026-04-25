@@ -1,9 +1,11 @@
-/* Premium typography — Fraunces (display, soft + wonk + italic axes) +
-   Manrope (body, semi-humanist geometric, variable, less ubiquitous than
-   Geist/Inter) + Geist Mono (caption / URL / tabular).
-   Per user feedback: Instrument Serif + Geist read "fine" but not premium;
-   Fraunces' wonk + Manrope's character give SOTD-tier register. */
-@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Manrope:wght@200..800&family=Geist+Mono:wght@100..900&display=swap");
+/* Typography — Inter Variable as the workhorse + Fraunces reserved as a
+   marquee accent (landing headline, drawer beat title, final-delivery
+   hero only). JetBrains Mono kept exclusively for genuine code-like
+   strings (URLs in the stitch tray and persistent strip).
+   Sweep rationale: the mono+uppercase caption pattern was reading as
+   admin-template, not editorial. Inter at the right weight + tracking
+   carries the same "small caps" register without the mono stiffness. */
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..900,0..100,0..1;1,9..144,300..900,0..100,0..1&family=Inter:wght@100..900&family=JetBrains+Mono:wght@100..800&display=swap");
 
 @import "tailwindcss";
 
@@ -37,13 +39,19 @@
   --color-glow-ember: #ffb47080;
   --color-glow-cool: #7090a080;
 
-  /* Typography — Fraunces (display, italic-forward, soft + wonk axes) +
-     Manrope (body, variable, semi-humanist geometric) + Geist Mono (caption
-     / URL / tabular). Picked over Instrument Serif + Geist for premium
-     register — Fraunces has more character; Manrope is less ubiquitous. */
+  /* Typography stack:
+       --font-display  Fraunces — used ONLY for marquee moments
+                       (landing headline, drawer beat title, final hero).
+       --font-body     Inter Variable — body, chrome, captions, buttons.
+                       Inter is the tech-platform standard for a reason:
+                       the variable axes (wght 100..900 + slnt) cover
+                       every UI register without needing a second family.
+       --font-mono     JetBrains Mono — kept only for genuine code strings
+                       (Cloudinary fl_splice URL). Tabular-style numbers
+                       ride Inter's `tnum` feature instead. */
   --font-display: "Fraunces", "PP Editorial New", "Times New Roman", serif;
-  --font-body: "Manrope", "Inter", system-ui, sans-serif;
-  --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
   /* Type scale (per issues/open/13-the-tiny-text-disease.md §P1).
      The currently-missing register is the 14-17px body — almost everything
@@ -67,12 +75,15 @@
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    /* Manrope tuning — kerning + contextual alts. Slight negative tracking
-       because Manrope's metrics ship with semi-loose default. */
-    font-feature-settings: "kern", "calt";
+    /* Inter tuning — kerning, contextual alts, contextual swash via cv11
+       (single-storey 'a' on small sizes for cleaner UI rendering), and
+       tabular numerals so chrome counters align without an explicit
+       `tabular-nums` class. Slight negative tracking — Inter ships
+       slightly loose at body sizes. */
+    font-feature-settings: "kern", "calt", "ss01", "cv11";
     font-variant-numeric: tabular-nums;
     font-optical-sizing: auto;
-    letter-spacing: -0.012em;
+    letter-spacing: -0.011em;
   }
 
   body {

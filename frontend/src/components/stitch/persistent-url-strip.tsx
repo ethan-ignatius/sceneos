@@ -33,6 +33,11 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
   // change and re-renders on every store update — which under React 19 +
   // StrictMode can cascade into a max-update-depth crash.
   const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
+  // Hide the strip while the stitch tray is open — the same content appears
+  // (in fuller form) inside the tray, and leaving it visible underneath
+  // creates the bottom-left bleed seen in the screenshot.
+  const stitchTrayOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
+  if (stitchTrayOpen) return null;
   const segments = buildSpliceUrlSegments(approvedIds);
   const fullUrl = buildSpliceUrl(approvedIds);
 

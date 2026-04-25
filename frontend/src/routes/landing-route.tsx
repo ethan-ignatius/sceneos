@@ -85,10 +85,23 @@ export function LandingRoute() {
     else speech.start();
   };
 
-  // Preload the page-crumple R3F+three chunk so that the bridge route
-  // doesn't pay the network cost when the user submits.
+  // Preload the page-crumple R3F+three chunk + the canvas planet textures
+  // so that the bridge → /canvas mount doesn't pay the network cost when
+  // the user submits. The textures are ~7MB total but compress fast on a
+  // local cache; the crumple animation gives us 1.6s of free time.
   useEffect(() => {
     void import("@/components/transition/paper-curl-canvas").catch(() => {});
+    void import("@react-three/drei").then(({ useTexture }) => {
+      // useTexture.preload accepts a single URL or an array. We preload all
+      // bodies any template might map to so cold mount of /canvas is never
+      // blocked by Suspense.
+      // Done lazily via dynamic import + named-export access so the drei
+      // chunk isn't pulled into the landing bundle itself.
+      const list = import("@/lib/planet-templates").then(({ PLANET_TEXTURE_PRELOAD_LIST, SATURN_RING_TEXTURE }) => {
+        useTexture.preload([...PLANET_TEXTURE_PRELOAD_LIST, SATURN_RING_TEXTURE]);
+      });
+      void list;
+    }).catch(() => {});
   }, []);
 
   const toggleMute = useCallback(() => {

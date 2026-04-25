@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Html, Sparkles } from "@react-three/drei";
+import { Html, Sparkles, useTexture } from "@react-three/drei";
 import * as THREE from "three";
-import type { Beat, BeatMood } from "@/types/manifest";
+import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
+import { planetForBeat, SATURN_RING_TEXTURE, type PlanetSpec } from "@/lib/planet-templates";
 import { useAtmosphereMaterial } from "./atmosphere-material";
 import { useHolographicMaterial } from "./holographic-material";
 
@@ -15,63 +16,26 @@ interface NodeMeshProps {
   onHoverChange?: (beatId: string | null) => void;
 }
 
-type GeometryKind = "sphere" | "icosahedron" | "torus-knot" | "dodecahedron" | "ring-disc";
-
-/** Per-mood geometry — one of five archetypal forms. */
-function geometryForMood(mood: BeatMood): GeometryKind {
-  switch (mood) {
-    case "wide-establish":
-      return "sphere"; // elongated via group scale
-    case "intimate-hook":
-      return "icosahedron";
-    case "kinetic-rising":
-      return "torus-knot";
-    case "tense-climax":
-      return "dodecahedron";
-    case "punchy-sting":
-      return "ring-disc";
-    case "still-resolve":
-      return "sphere";
-  }
-}
-
-/** Subtle base rotation per mood — one always-moving anchor. */
-function baseSpinForMood(mood: BeatMood): { x: number; y: number; z: number } {
-  switch (mood) {
-    case "wide-establish":
-      return { x: 0, y: 0.05, z: 0 };
-    case "intimate-hook":
-      return { x: 0.04, y: 0.08, z: 0.02 };
-    case "kinetic-rising":
-      return { x: 0.06, y: 0.18, z: 0.04 };
-    case "tense-climax":
-      return { x: -0.04, y: 0.12, z: 0.06 };
-    case "punchy-sting":
-      return { x: 0, y: 0.1, z: 0 };
-    case "still-resolve":
-      return { x: 0, y: 0.03, z: 0 };
-  }
-}
-
 /**
- * One distinct beat-orb in the canvas.
+ * One distinct beat-orb in the canvas — now a real textured planet.
  *
- * Per-mood geometry (see RESEARCH_PLANETARY.md + 3D_PLAYBOOK.md §B):
- *   wide-establish  → elongated sphere
- *   intimate-hook   → icosahedron (sharp facets)
- *   kinetic-rising  → torus knot (slow tumble)
- *   tense-climax    → dodecahedron
- *   punchy-sting    → ring + central disc
- *   still-resolve   → simple sphere
+ * Per-template mapping in `lib/planet-templates.ts`:
+ *   story.hook → Sun · story.exposition → Earth · story.inciting → Mercury
+ *   story.rising → Mars · story.climax → Saturn (with rings)
+ *   story.falling → Moon · story.resolution → Neptune
  *
- * Layered shaders:
- *   - Atmosphere shell — fresnel halo (FakeGlowMaterial-derived)
- *   - Active state    — HolographicMaterial overlay (animated stripe + fresnel)
- *   - Core            — meshStandardMaterial with strong emissive baseline
- *   - Active accent   — drei <Sparkles>
+ * Three layered passes per node:
+ *   1. Atmosphere shell — fresnel halo (BackSide additive); tint from PlanetSpec.
+ *   2. Core sphere     — meshStandardMaterial with the equirectangular texture
+ *                         as both color map and (Sun only) emissive map.
+ *   3. Holographic overlay — only when `isActive`; signals "you're inside this
+ *                              beat" without a label.
  *
- * The active orb visibly changes *material*, not just color — judges read the
- * shift instantly without needing a label.
+ * Saturn (and any future ringed planet) gets a fourth pass: an alpha-mapped
+ * torus-disc rotated to its ring plane.
+ *
+ * Texture detail dominates silhouette detail at our render distances —
+ * see RESEARCH_PLANETARY.md and CANVAS_PLANETARY_OVERHAUL.md §6.
  */
 export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
@@ -79,38 +43,42 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const atmosphereRef = useRef<THREE.Mesh>(null);
   const holoOverlayRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const [hover, setHover] = useState(false);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
+  const stitchTrayOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
   const isActive = activeBeatId === beat.beatId;
   const isApproved = beat.status === "approved";
   const isReady = beat.status === "ready-to-generate";
+  // "Untouched": the user hasn't started work on this beat — needs to read
+  // visually as 'to-do', not just as 'dim version of approved'.
+  const isUntouched = !isActive && !isApproved && !isReady;
+  // Hide my floating label whenever an overlay is layered above the canvas.
+  // The active beat keeps its label so the drawer's subject is still named.
+  const labelsHidden = stitchTrayOpen || (activeBeatId !== null && !isActive);
   const reducedMotion = usePrefersReducedMotion();
 
   const slotZ = position[2];
-  const mood = beat.archetype.mood;
-  const geometryKind = geometryForMood(mood);
-  const spin = baseSpinForMood(mood);
+  const planet = planetForBeat(beat.template, beat.archetype.mood);
 
-  const palette = useMemo(() => {
-    if (isApproved) {
-      return { core: "#f0a868", emissive: "#ffb874", atmosphere: "#f0a868", holo: "#ffb874" };
-    }
-    if (isActive) {
-      return { core: "#f0a868", emissive: "#ffc080", atmosphere: "#ffb874", holo: "#ffc888" };
-    }
-    if (isReady) {
-      return { core: "#d4a373", emissive: "#f0a868", atmosphere: "#f0a868", holo: "#f0a868" };
-    }
-    return { core: "#a87447", emissive: "#c5895a", atmosphere: "#a87447", holo: "#c5895a" };
-  }, [isActive, isApproved, isReady]);
+  // Texture preloaded by landing-route's effect; useTexture here returns
+  // synchronously when warm, suspends the first time on cold cache.
+  const planetTexture = useTexture(`/textures/planets/${planet.texture}`);
+  const ringTexture = useTexture(planet.hasRing ? SATURN_RING_TEXTURE : "/textures/planets/2k_saturn_ring_alpha.png");
 
-  // Atmosphere tuned to *tint*, not flood: falloff 0.1→0.5 softens the rim,
-  // peak opacity 1.0→0.65 (controlled per-frame below) prevents bloom-clamp
-  // to white. See issue #167.
+  // Texture color space — JPGs from Solar System Scope are sRGB.
+  // Without this they read washed-out under ACES tone mapping.
+  useMemo(() => {
+    if (planetTexture instanceof THREE.Texture) {
+      planetTexture.colorSpace = THREE.SRGBColorSpace;
+      planetTexture.anisotropy = 8;
+    }
+  }, [planetTexture]);
+
   const atmosphereMat = useAtmosphereMaterial({
-    glowColor: palette.atmosphere,
+    glowColor: planet.atmosphereTint,
     falloff: 0.5,
     glowInternalRadius: 3.8,
     glowSharpness: 0.4,
@@ -118,7 +86,7 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   });
 
   const holoMat = useHolographicMaterial({
-    hologramColor: palette.holo,
+    hologramColor: "#ffc888",
     fresnelAmount: 0.45,
     fresnelOpacity: 1.0,
     scanlineSize: 7.0,
@@ -130,32 +98,31 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
 
-    // Holographic time uniform (only when used, but cheap to always tick).
     if (holoMat.uniforms.time) holoMat.uniforms.time.value += delta;
 
-    // ── Continuous form rotation (never stops — primary motion anchor) ──
+    // Continuous Y-axis spin — primary motion anchor that always reads as
+    // "this is alive." Per-planet rate from PlanetSpec.spinY.
     if (formRef.current && !reducedMotion) {
-      formRef.current.rotation.x += spin.x * delta;
-      formRef.current.rotation.y += spin.y * delta;
-      formRef.current.rotation.z += spin.z * delta;
+      formRef.current.rotation.y += planet.spinY * delta;
     }
 
-    // ── Core scale (subtle breath; dampened under reduced-motion) ──
+    // ── Core scale ──
     const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.025 : 1;
     const hoverBoost = hover ? 1.07 : 1;
     const activeBoost = isActive ? (reducedMotion ? 1.06 : 1.18) : 1;
     const approvedScale = isApproved ? 1.12 : 1;
-    const target = breath * hoverBoost * activeBoost * approvedScale;
+    const target = breath * hoverBoost * activeBoost * approvedScale * planet.baseScale;
     if (meshRef.current) meshRef.current.scale.setScalar(target);
-    // Atmosphere shell sized 1.4× the form's current scale (issues #164 + #170).
-    // Was a static 1.2 — too coincident with the active form (1.18) and got
-    // swallowed. Now always reads as a halo wrapping the body.
     if (atmosphereRef.current) atmosphereRef.current.scale.setScalar(target * 1.4);
     if (holoOverlayRef.current) holoOverlayRef.current.scale.setScalar(target * 1.18);
+    if (ringRef.current) ringRef.current.scale.setScalar(target);
 
-    // ── Group z-offset: active steps forward toward camera ──
+    // ── Group z-offset: subtle step forward when active ──
+    // Reduced from 0.4 → 0.15 in Phase 2 because the camera now arcs in
+    // closer (+0.6 instead of +1.2 in CameraRig). Two signals doubling up
+    // would have over-shifted the planet relative to the camera target.
     if (groupRef.current) {
-      const desiredZ = slotZ + (isActive && !reducedMotion ? 0.4 : 0);
+      const desiredZ = slotZ + (isActive && !reducedMotion ? 0.15 : 0);
       groupRef.current.position.z = THREE.MathUtils.lerp(
         groupRef.current.position.z,
         desiredZ,
@@ -164,160 +131,78 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     }
 
     // ── Core emissive intensity ──
-    // Idle baseline 0.55 → 0.95 — after the bloom-threshold + tone-mapping
-    // fixes, the previous baseline left orbs nearly invisible. The ceiling
-    // (active 1.3) is unchanged so the active state still reads as "lit up."
+    // For the Sun (planet.isEmissive), the texture itself drives emission;
+    // the multiplier maps directly to "how bright is the corona right now."
+    // For everything else, emissive is an ember-warm tint that reflects the
+    // beat's status (idle / hover / active / ready / approved).
     let baseEmissive: number;
-    if (isApproved) baseEmissive = 1.1;
-    else if (isActive) baseEmissive = 1.35;
-    else if (isReady) baseEmissive = 1.0;
-    else if (hover) baseEmissive = 1.0;
-    else baseEmissive = 0.95;
-    const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.25 + 0.25 : 0;
+    if (planet.isEmissive) {
+      // Sun: dramatic emissive ramp by beat status.
+      if (isActive) baseEmissive = 1.2;
+      else if (isApproved) baseEmissive = 1.0;
+      else if (isReady) baseEmissive = 0.95;
+      else if (hover) baseEmissive = 0.9;
+      else baseEmissive = 0.8;
+    } else {
+      // Other planets: subtle emissive boost on focus, none at idle.
+      if (isActive) baseEmissive = 0.45;
+      else if (isApproved) baseEmissive = 0.35;
+      else if (isReady) baseEmissive = 0.3;
+      else if (hover) baseEmissive = 0.25;
+      else baseEmissive = 0.0;
+    }
+    const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.2 + 0.2 : 0;
     if (materialRef.current) {
       materialRef.current.emissiveIntensity = baseEmissive + pulse;
-      materialRef.current.color.set(palette.core);
-      materialRef.current.emissive.set(palette.emissive);
+      // Untouched beats: tint the texture down toward a cool grey via the
+      // material's color multiplier. This greys the planet's actual surface
+      // (so Mars stops reading as a vivid red while it's still "to do") and
+      // gives a strong visual distinction from the saturated active/ready
+      // states. Hover lifts the tint so users feel the orb acknowledge them.
+      const targetTint = isUntouched ? (hover ? 0.55 : 0.32) : 1.0;
+      const c = materialRef.current.color;
+      // Lerp toward target so status changes don't snap.
+      c.r = THREE.MathUtils.lerp(c.r, targetTint, 0.12);
+      c.g = THREE.MathUtils.lerp(c.g, targetTint, 0.12);
+      c.b = THREE.MathUtils.lerp(c.b, targetTint * 1.05, 0.12);
     }
 
     // ── Atmosphere uniforms ──
-    // Capped at 0.65 so additive bloom never blows the centre to white (#167).
+    // Incomplete planets get a notably dimmer halo (max 0.22) so the cool
+    // greyed core isn't smeared by an ember-tinted atmosphere fighting it.
     const auni = atmosphereMat.uniforms;
     if (auni) {
-      const baseOpacity = isActive ? 0.65 : isReady ? 0.55 : hover ? 0.5 : 0.4;
+      const baseOpacity = isApproved
+        ? 0.6
+        : isActive
+        ? 0.65
+        : isReady
+        ? 0.55
+        : hover
+        ? 0.32
+        : 0.18;
       const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.08 + 0.08 : 0;
       auni.opacity.value = Math.min(baseOpacity + readyPulse, 0.7);
-      (auni.glowColor.value as THREE.Color).set(palette.atmosphere);
     }
 
-    // ── Holographic uniforms (color/opacity for active state) ──
-    if (holoMat.uniforms.hologramColor) {
-      (holoMat.uniforms.hologramColor.value as THREE.Color).set(palette.holo);
-    }
+    // ── Holographic uniforms ──
     if (holoMat.uniforms.hologramOpacity) {
       holoMat.uniforms.hologramOpacity.value = isActive ? 0.85 : 0;
     }
   });
 
-  // The geometry node, scaled to read at the same visual weight as a 0.55 sphere.
-  const formNode = useMemo(() => {
-    switch (geometryKind) {
-      case "sphere":
-        return (
-          <mesh ref={meshRef}>
-            <sphereGeometry args={[0.55, 64, 64]} />
-            <meshStandardMaterial
-              ref={materialRef}
-              color={palette.core}
-              emissive={palette.emissive}
-              emissiveIntensity={0.6}
-              roughness={0.45}
-              metalness={0.4}
-              envMapIntensity={0.7}
-            />
-          </mesh>
-        );
-      case "icosahedron":
-        return (
-          <mesh ref={meshRef}>
-            <icosahedronGeometry args={[0.6, 0]} />
-            <meshStandardMaterial
-              ref={materialRef}
-              color={palette.core}
-              emissive={palette.emissive}
-              emissiveIntensity={0.6}
-              roughness={0.3}
-              metalness={0.6}
-              envMapIntensity={0.8}
-              flatShading
-            />
-          </mesh>
-        );
-      case "torus-knot":
-        return (
-          <mesh ref={meshRef}>
-            <torusKnotGeometry args={[0.4, 0.13, 96, 16]} />
-            <meshStandardMaterial
-              ref={materialRef}
-              color={palette.core}
-              emissive={palette.emissive}
-              emissiveIntensity={0.6}
-              roughness={0.4}
-              metalness={0.5}
-              envMapIntensity={0.8}
-            />
-          </mesh>
-        );
-      case "dodecahedron":
-        return (
-          <mesh ref={meshRef}>
-            <dodecahedronGeometry args={[0.55, 0]} />
-            <meshStandardMaterial
-              ref={materialRef}
-              color={palette.core}
-              emissive={palette.emissive}
-              emissiveIntensity={0.6}
-              roughness={0.25}
-              metalness={0.7}
-              envMapIntensity={0.9}
-              flatShading
-            />
-          </mesh>
-        );
-      case "ring-disc":
-        return (
-          <group>
-            {/* Central disc */}
-            <mesh ref={meshRef}>
-              <sphereGeometry args={[0.32, 48, 48]} />
-              <meshStandardMaterial
-                ref={materialRef}
-                color={palette.core}
-                emissive={palette.emissive}
-                emissiveIntensity={0.6}
-                roughness={0.4}
-                metalness={0.5}
-                envMapIntensity={0.7}
-              />
-            </mesh>
-            {/* Ring */}
-            <mesh rotation={[Math.PI / 2.2, 0, 0]}>
-              <torusGeometry args={[0.55, 0.04, 24, 96]} />
-              <meshStandardMaterial
-                color={palette.core}
-                emissive={palette.emissive}
-                emissiveIntensity={0.7}
-                roughness={0.3}
-                metalness={0.7}
-                envMapIntensity={0.8}
-              />
-            </mesh>
-          </group>
-        );
-    }
-  }, [geometryKind, palette.core, palette.emissive]);
-
   return (
-    // Pass the parent's stable position tuple directly. Constructing a fresh
-    // [slotX, slotY, slotZ] every render handed R3F a new tuple identity each
-    // time, which reset the group's local matrix mid-lerp from useFrame —
-    // visible as orbs blinking back to their slot positions on every parent
-    // re-render.
     <group ref={groupRef} position={position}>
       {/* Atmosphere shell — scale set in useFrame (target × 1.4) so it tracks
-          the form size and never gets swallowed when active. */}
+          the planet size and never gets swallowed when active. */}
       <mesh ref={atmosphereRef}>
         <sphereGeometry args={[0.55, 48, 48]} />
         <primitive object={atmosphereMat} attach="material" />
       </mesh>
 
-      {/* The form group (rotated each frame) */}
-      <group
-        ref={formRef}
-        // wide-establish gets a vertical elongation per the playbook.
-        scale={mood === "wide-establish" ? [1, 1.15, 1] : 1}
-      >
-        {/* Pointer events handled here so any geometry catches clicks/hover. */}
+      {/* The form group (Y-spun each frame) */}
+      <group ref={formRef}>
+        {/* Pointer events handled here so the geometry catches clicks/hover. */}
         <group
           onPointerOver={(e) => {
             e.stopPropagation();
@@ -335,9 +220,31 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
             setActiveBeat(isActive ? null : beat.beatId);
           }}
         >
-          {formNode}
+          {/* The planet itself */}
+          <PlanetCore
+            spec={planet}
+            texture={planetTexture as THREE.Texture}
+            meshRef={meshRef}
+            materialRef={materialRef}
+          />
 
-          {/* Holographic overlay — only visible on active state (uniform opacity). */}
+          {/* Saturn-style ring (alpha-mapped torus disc) — only when hasRing. */}
+          {planet.hasRing ? (
+            <mesh ref={ringRef} rotation={[Math.PI / 2.5, 0, 0]}>
+              {/* Use a flat ring (RingGeometry would be flat too) — torus with
+                  thin tube reads as a band when viewed near edge-on. */}
+              <ringGeometry args={[0.78, 1.18, 96]} />
+              <meshBasicMaterial
+                map={ringTexture as THREE.Texture}
+                alphaMap={ringTexture as THREE.Texture}
+                transparent
+                side={THREE.DoubleSide}
+                depthWrite={false}
+              />
+            </mesh>
+          ) : null}
+
+          {/* Holographic overlay — only visible on active state. */}
           {isActive ? (
             <mesh ref={holoOverlayRef}>
               <sphereGeometry args={[0.6, 48, 48]} />
@@ -347,24 +254,69 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
         </group>
       </group>
 
-      {/* Active-only sparkles */}
+      {/* Active-only sparkles drift around the focused planet. */}
       {isActive ? (
         <Sparkles count={20} scale={1.6} size={3} speed={0.4} opacity={0.7} color="#f0a868" noise={0.4} />
       ) : null}
 
-      {/* Floating italic label */}
-      <Html center position={[0, 1.05, 0]} style={{ pointerEvents: "none" }}>
-        <div
-          className="whitespace-nowrap font-display text-base italic"
-          style={{
-            color: isActive || isApproved ? "#f0a868" : "#e6dfd2",
-            textShadow: "0 1px 12px rgba(0,0,0,0.85), 0 0 24px rgba(240,168,104,0.18)",
-            transition: "color 200ms ease",
-          }}
-        >
-          {beat.beatName}
-        </div>
-      </Html>
+      {/* Floating label — hidden whenever an overlay is layered above the
+          canvas, since drei <Html> renders DOM siblings of the Canvas and
+          would otherwise bleed through translucent panels. Untouched beats
+          drop to a cool grey so the to-do state reads in 2D as well as 3D. */}
+      {!labelsHidden ? (
+        <Html center position={[0, 1.05, 0]} style={{ pointerEvents: "none" }}>
+          <div
+            className="whitespace-nowrap font-body text-[14px] font-medium tracking-[-0.005em]"
+            style={{
+              color: isActive || isApproved
+                ? "#f0a868"
+                : isReady
+                ? "#e6dfd2"
+                : "#7e7c84",
+              textShadow: "0 1px 14px rgba(0,0,0,0.85), 0 0 24px rgba(240,168,104,0.10)",
+              transition: "color 220ms ease",
+            }}
+          >
+            {beat.beatName}
+          </div>
+        </Html>
+      ) : null}
     </group>
+  );
+}
+
+/**
+ * Just the textured sphere, materialRef captured separately so the parent's
+ * useFrame can drive emissiveIntensity. Kept as a tiny helper so the JSX
+ * tree above stays readable.
+ */
+function PlanetCore({
+  spec,
+  texture,
+  meshRef,
+  materialRef,
+}: {
+  spec: PlanetSpec;
+  texture: THREE.Texture;
+  meshRef: React.RefObject<THREE.Mesh | null>;
+  materialRef: React.RefObject<THREE.MeshStandardMaterial | null>;
+}) {
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry args={[0.55, 64, 64]} />
+      <meshStandardMaterial
+        ref={materialRef}
+        map={texture}
+        emissive={spec.isEmissive ? "#ffb874" : "#f0a868"}
+        // The Sun re-uses its own texture as an emissive map for a true
+        // "this body is the light source" feel; everything else gets a
+        // small ember tint that lifts off the dark side on focus.
+        emissiveMap={spec.isEmissive ? texture : undefined}
+        emissiveIntensity={spec.isEmissive ? 0.8 : 0}
+        roughness={spec.isEmissive ? 1.0 : 0.6}
+        metalness={spec.isEmissive ? 0.0 : 0.1}
+        envMapIntensity={spec.isEmissive ? 0.0 : 0.7}
+      />
+    </mesh>
   );
 }
