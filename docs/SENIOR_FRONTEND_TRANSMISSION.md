@@ -5291,4 +5291,1383 @@ End of transmission.
 
 *Document compiled from working notes on the SceneOS build, LA Hacks 2026. Frontend lead: Alex. Stack: React 19 + Vite 7 + TypeScript 5.7 + Tailwind v4 + Motion 12 + GSAP 3.12 + R3F 9 + drei 10 + Zustand v5 + Lenis + cmdk + Web Speech + Web Audio. Bar: godly.website. Mantra: pizza-ordering simplicity. Anti-pattern: generic.*
 
+---
+
+## APPENDIX A — RECIPES
+
+These are concrete, copy-pasteable patterns for the most common tasks. Each recipe is what we would actually write in this codebase. Treat them as starting points; tune as needed.
+
+### A.1 A new chrome chip
+
+Used for: stage indicators, mode switches, status badges.
+
+```tsx
+import { motion } from 'motion/react';
+import { DURATIONS, EASE } from '@/lib/motion-tokens';
+
+interface ChipProps {
+  label: string;
+  active?: boolean;
+  onClick?: () => void;
+  ariaPressed?: boolean;
+}
+
+export function Chip({ label, active = false, onClick, ariaPressed }: ChipProps) {
+  return (
+    <motion.button
+      onClick={onClick}
+      aria-pressed={ariaPressed}
+      whileTap={{ scale: 0.96 }}
+      transition={{ duration: DURATIONS.micro, ease: EASE.out }}
+      className={[
+        'inline-flex h-7 items-center gap-1.5 rounded-full px-3',
+        'caption-track text-[10px]',
+        'border transition-[color,background-color,border-color] duration-200',
+        active
+          ? 'border-brand-ember/40 bg-brand-ember/10 text-fg-primary'
+          : 'border-fg-tertiary/25 text-fg-secondary hover:border-fg-tertiary/45 hover:text-fg-primary',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base',
+      ].join(' ')}
+    >
+      {label}
+    </motion.button>
+  );
+}
+```
+
+Notes:
+- `h-7` (28px) — caption chip register. For a more prominent chip, use `h-9` (36px).
+- `caption-track` class applies the 0.18em tracking + uppercase.
+- `whileTap` is acknowledge motion. `whileHover` is *not* used; hover is communicated via the color transition.
+- Active state uses ember border + ember-tinted background + bone fg. Inactive uses fg-tertiary structural + fg-secondary text.
+
+### A.2 A new modal
+
+Drawer pattern, using Radix. The modal is the simpler version of the drawer — centered, dismissible, single-purpose.
+
+```tsx
+import * as Dialog from '@radix-ui/react-dialog';
+import { motion } from 'motion/react';
+import { X } from 'lucide-react';
+import { DURATIONS, EASE } from '@/lib/motion-tokens';
+
+interface CinematicModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}
+
+export function CinematicModal({ open, onOpenChange, title, description, children }: CinematicModalProps) {
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay asChild>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: DURATIONS.standard, ease: EASE.out }}
+            className="fixed inset-0 z-40 bg-bg-base/80 backdrop-blur-sm"
+          />
+        </Dialog.Overlay>
+        <Dialog.Content asChild>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: DURATIONS.standard, ease: EASE.out }}
+            className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[min(40rem,90vw)] rounded-[2px] border border-fg-tertiary/25 bg-bg-elev-1 p-8"
+          >
+            <header className="space-y-1">
+              <Dialog.Title className="font-display text-[2rem] leading-[1.0] tracking-[-0.02em] text-fg-primary text-balance">
+                {title}
+              </Dialog.Title>
+              {description && (
+                <Dialog.Description className="font-display italic text-[1.125rem] leading-[1.4] text-fg-secondary text-pretty">
+                  {description}
+                </Dialog.Description>
+              )}
+            </header>
+            <div className="mt-6">{children}</div>
+            <Dialog.Close asChild>
+              <button
+                aria-label="Close"
+                className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-fg-tertiary hover:text-fg-primary"
+              >
+                <X size={14} strokeWidth={1.5} />
+              </button>
+            </Dialog.Close>
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+```
+
+Notes:
+- `border-radius: 2px` — precise, not the SaaS-default rounded.
+- `backdrop-blur-sm` on overlay — subtle, doesn't compete with the modal content. The modal itself is solid.
+- Close button is in the corner, 36×36 hit area. The `<X>` icon is 14px (small in the hit area, but the hit area is the touch target).
+- Title + description follow the Part 18.12 pattern.
+
+### A.3 A new R3F mesh
+
+For adding a new node-like 3D object to the canvas:
+
+```tsx
+import { useFrame } from '@react-three/fiber';
+import { useRef, useMemo } from 'react';
+import * as THREE from 'three';
+import { usePrefersReducedMotion } from '@/lib/use-prefers-reduced-motion';
+
+interface FloatingMarkerProps {
+  position: [number, number, number];
+  color: string;
+}
+
+export function FloatingMarker({ position, color }: FloatingMarkerProps) {
+  const ref = useRef<THREE.Mesh>(null);
+  const reduced = usePrefersReducedMotion();
+  const startY = useMemo(() => position[1], [position]);
+
+  useFrame((state) => {
+    if (!ref.current || reduced) return;
+    const t = state.clock.elapsedTime;
+    ref.current.position.y = startY + Math.sin(t * 1.2) * 0.04;
+  });
+
+  return (
+    <mesh ref={ref} position={position}>
+      <sphereGeometry args={[0.08, 24, 24]} />
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={0.6}
+        roughness={0.3}
+        metalness={0.0}
+      />
+    </mesh>
+  );
+}
+```
+
+Notes:
+- Reduced-motion gate at the top of `useFrame`.
+- Small floating delta (`0.04`) — barely perceptible drift, not a bouncy float.
+- `meshStandardMaterial` uses the warm ember palette via `color` + `emissive`.
+- Geometry segment count (24, 24) is enough for a small sphere; bump to 32-64 for larger.
+
+### A.4 A new agent action
+
+For adding a new conversational pattern:
+
+```ts
+// in src/lib/agent-prompts.ts
+export const AGENT_PROMPTS = {
+  // existing prompts...
+  ASK_LIGHTING: (beat: Beat) =>
+    `Tell me about the lighting in beat "${beat.title}". Soft and golden? Hard and clinical? Or something we haven't seen?`,
+
+  CONFIRM_MOOD: (beat: Beat, mood: string) =>
+    `So the mood in this beat lands as *${mood}* — let me know if I should re-frame it.`,
+
+  // new pattern: ASK_PACING
+  ASK_PACING: (beat: Beat) =>
+    `What's the cut on this beat — long and breathing, or quick and clipped?`,
+};
+```
+
+The pattern: agent prompts live in a single file as functions taking beat + relevant context. They return strings in the director's voice. The conversation engine pulls from this map based on the beat's missing fields.
+
+### A.5 A new caption row
+
+For adding a small metadata row (e.g., `BEAT 03 · MELANCHOLIC · 4.2s`):
+
+```tsx
+interface MetadataRowProps {
+  items: Array<{ label: string; emphasis?: boolean }>;
+}
+
+export function MetadataRow({ items }: MetadataRowProps) {
+  return (
+    <div className="caption-track flex items-center gap-2 text-[10px]">
+      {items.map((item, i) => (
+        <span
+          key={i}
+          className={item.emphasis ? 'text-brand-ember' : 'text-fg-tertiary'}
+        >
+          {item.label}
+          {i < items.length - 1 && <span className="ml-2 opacity-40">·</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+```
+
+Usage:
+
+```tsx
+<MetadataRow items={[
+  { label: 'BEAT 03', emphasis: true },
+  { label: 'MELANCHOLIC' },
+  { label: '4.2s' },
+]} />
+```
+
+The emphasis flag puts ember on one item — typically the primary identifier. Other items stay fg-tertiary.
+
+### A.6 An API call with cancellation
+
+```ts
+// in your component
+import { useEffect, useRef, useState } from 'react';
+import { api } from '@/lib/api';
+
+export function useGenerateClip(beatId: string, sceneId: string) {
+  const [state, setState] = useState<'idle' | 'generating' | 'success' | 'error'>('idle');
+  const controllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      controllerRef.current?.abort();
+    };
+  }, []);
+
+  async function start() {
+    controllerRef.current?.abort();
+    controllerRef.current = new AbortController();
+    setState('generating');
+    try {
+      const result = await api.generate({ beatId, sceneId, signal: controllerRef.current.signal });
+      setState('success');
+      return result;
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return;
+      setState('error');
+      throw err;
+    }
+  }
+
+  function cancel() {
+    controllerRef.current?.abort();
+    setState('idle');
+  }
+
+  return { state, start, cancel };
+}
+```
+
+Notes:
+- AbortController per call, replaced on each new start.
+- Cleanup aborts on unmount.
+- AbortError is silent (intentional cancel, not a real error).
+
+### A.7 A new persistent UI strip
+
+For adding a chrome strip that lives across the canvas:
+
+```tsx
+import { motion } from 'motion/react';
+import { useShallow } from 'zustand/react/shallow';
+import { useBeatGraphStore } from '@/stores/beat-graph-store';
+
+export function GenerationProgressStrip() {
+  const inflightCount = useBeatGraphStore(
+    useShallow((s) => s.manifest?.beats.filter(b => b.status === 'generating').length ?? 0)
+  );
+  const totalCount = useBeatGraphStore((s) => s.manifest?.beats.length ?? 0);
+
+  if (inflightCount === 0 || totalCount === 0) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 6 }}
+      transition={{ duration: 0.36, ease: [0.25, 1, 0.5, 1] }}
+      className="pointer-events-none absolute inset-x-0 top-12 z-10 flex justify-center"
+    >
+      <div className="rounded-full border border-brand-ember/30 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl">
+        <span className="caption-track text-[10px] text-fg-secondary">
+          rolling · {inflightCount} of {totalCount}
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+```
+
+Notes:
+- `useShallow` even on a count, because the predicate is a fresh object: actually no, the count is a number, useShallow not strictly needed — but it does no harm. The selectors I'd actually wrap in `useShallow` are array-returning ones. Keeping in this example for safety.
+- `pointer-events: none` on the wrapper, `pointer-events: auto` on the inner if it has interactions (this one doesn't).
+- Conditional render — strip only appears when there's something to show.
+
+### A.8 A new keyboard shortcut
+
+```tsx
+import { useEffect } from 'react';
+
+export function useKeyboardShortcut(
+  key: string,
+  modifiers: { meta?: boolean; ctrl?: boolean; shift?: boolean; alt?: boolean },
+  handler: () => void,
+) {
+  useEffect(() => {
+    function listener(e: KeyboardEvent) {
+      const wantsMeta = modifiers.meta ?? false;
+      const wantsCtrl = modifiers.ctrl ?? false;
+      const wantsShift = modifiers.shift ?? false;
+      const wantsAlt = modifiers.alt ?? false;
+
+      if (
+        e.key.toLowerCase() === key.toLowerCase() &&
+        e.metaKey === wantsMeta &&
+        e.ctrlKey === wantsCtrl &&
+        e.shiftKey === wantsShift &&
+        e.altKey === wantsAlt
+      ) {
+        e.preventDefault();
+        handler();
+      }
+    }
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, [key, modifiers.meta, modifiers.ctrl, modifiers.shift, modifiers.alt, handler]);
+}
+```
+
+Usage:
+
+```tsx
+useKeyboardShortcut('m', {}, () => prefs.toggleAudioMute());
+useKeyboardShortcut('k', { meta: true }, () => openCommandMenu());
+useKeyboardShortcut('?', { shift: true }, () => openShortcutsOverlay());
+```
+
+Notes:
+- Strict modifier matching — `Cmd+K` (`meta: true`) doesn't fire on `Ctrl+K` and vice versa.
+- `e.preventDefault()` prevents browser defaults (e.g., Cmd+K opens the location bar in some browsers).
+- For cross-platform (`Cmd` on Mac, `Ctrl` on Windows), use a helper that normalizes both as a `mod` modifier:
+
+```ts
+const isMac = navigator.platform.toLowerCase().includes('mac');
+useKeyboardShortcut('k', { meta: isMac, ctrl: !isMac }, openCommandMenu);
+```
+
+### A.9 A loading state without spinners
+
+```tsx
+function LoadingHairline() {
+  return (
+    <div className="h-px w-full overflow-hidden bg-fg-tertiary/15">
+      <div className="h-full w-1/3 animate-loading-shimmer bg-brand-ember" />
+    </div>
+  );
+}
+
+// in tailwind.config:
+extend: {
+  keyframes: {
+    'loading-shimmer': {
+      '0%': { transform: 'translateX(-100%)' },
+      '100%': { transform: 'translateX(400%)' },
+    },
+  },
+  animation: {
+    'loading-shimmer': 'loading-shimmer 1.5s linear infinite',
+  },
+},
+```
+
+The shimmer travels across the track. Reads as "active progress" without a percentage. Simpler than a spinner; cinematic register.
+
+For reduced motion, the shimmer is off; the track stays present (just static at 1/3 width or full).
+
+### A.10 An empty state
+
+```tsx
+interface EmptyStateProps {
+  title: string;
+  hint?: string;
+  action?: { label: string; onClick: () => void };
+}
+
+export function EmptyState({ title, hint, action }: EmptyStateProps) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <p className="font-display text-[1.5rem] leading-[1.2] text-fg-secondary text-balance">
+        {title}
+      </p>
+      {hint && (
+        <p className="mt-2 font-display italic text-[1.125rem] leading-[1.4] text-fg-tertiary text-pretty max-w-md">
+          {hint}
+        </p>
+      )}
+      {action && (
+        <button
+          onClick={action.onClick}
+          className="mt-6 inline-flex h-10 items-center rounded-full border border-fg-tertiary/35 px-5 caption-track text-[10px] text-fg-secondary hover:border-brand-ember hover:text-fg-primary"
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
+}
+```
+
+Usage:
+
+```tsx
+<EmptyState
+  title="approve a beat to begin"
+  hint="*the* splice composes itself when *the* first lock lands"
+/>
+```
+
+Notes:
+- Display font even at body sizes — narrative register.
+- Italics on the connectives in the hint.
+- Optional action button with the cinematic chip register.
+
+### A.11 An accessible icon button
+
+```tsx
+interface IconButtonProps {
+  icon: React.ReactNode;
+  label: string;  // accessible label, also tooltip
+  onClick: () => void;
+}
+
+export function IconButton({ icon, label, onClick }: IconButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="grid h-9 w-9 place-items-center rounded-full text-fg-tertiary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+    >
+      {icon}
+    </button>
+  );
+}
+```
+
+Usage:
+
+```tsx
+<IconButton
+  icon={<Copy size={11} strokeWidth={1.5} />}
+  label="Copy URL"
+  onClick={handleCopy}
+/>
+```
+
+Notes:
+- `aria-label` for screen readers.
+- `title` for hover tooltip (browser-native, not a custom tooltip).
+- 36×36 hit area; icon is 11px (small relative to area, but the area is the target).
+
+### A.12 A debounced input
+
+```ts
+import { useEffect, useState } from 'react';
+
+export function useDebouncedValue<T>(value: T, delayMs: number = 300): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
+```
+
+Usage:
+
+```tsx
+const [query, setQuery] = useState('');
+const debouncedQuery = useDebouncedValue(query, 300);
+
+useEffect(() => {
+  if (!debouncedQuery) return;
+  fetchSearchResults(debouncedQuery);
+}, [debouncedQuery]);
+```
+
+Standard debounce pattern. Use for search inputs, autosave, anything that fires on every keystroke and doesn't need to.
+
+### A.13 A toast with semantic styling
+
+```tsx
+import { toast } from 'sonner';
+
+// success
+toast.success('URL copied.', {
+  description: undefined,  // single line; don't pad with description
+  duration: 3000,
+});
+
+// error — only when actionable
+toast.error('couldn\'t reach the floor', {
+  description: 'check your connection?',
+  duration: 5000,
+  action: {
+    label: 'Retry',
+    onClick: () => retryOp(),
+  },
+});
+
+// neutral (rare)
+toast('rolling beat 03', {
+  description: undefined,
+  duration: 2000,
+});
+```
+
+Notes:
+- Success duration ~3s; user reads it and moves on.
+- Error duration ~5s; longer because the user might need to act.
+- Action button on errors that are retryable.
+- Description is for context the title can't carry; usually omit.
+
+### A.14 A custom motion variant
+
+```ts
+import type { Variants } from 'motion/react';
+import { DURATIONS, EASE, STAGGER } from '@/lib/motion-tokens';
+
+export const reveal: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: DURATIONS.standard, ease: EASE.out },
+  },
+};
+
+export const revealStaggered: Variants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: STAGGER.standard,
+      delayChildren: 0.2,
+    },
+  },
+};
+
+export const revealStaggeredItem: Variants = reveal;  // same as reveal
+```
+
+Usage:
+
+```tsx
+<motion.ul variants={revealStaggered} initial="hidden" animate="visible">
+  {items.map(item => (
+    <motion.li key={item.id} variants={revealStaggeredItem}>
+      {item.label}
+    </motion.li>
+  ))}
+</motion.ul>
+```
+
+Reusable variants. Defined once in a `lib/motion-variants.ts`; reused across the app. Don't redefine `{opacity: 0, y: 8}` per component.
+
+### A.15 A reusable Lenis-aware section
+
+For sections that should scroll smoothly (everything except the canvas):
+
+```tsx
+interface SmoothSectionProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+export function SmoothSection({ children, className }: SmoothSectionProps) {
+  return <section className={className}>{children}</section>;
+}
+```
+
+…actually, Lenis intercepts scroll on the entire page by default. Sections don't need to opt in.
+
+To opt *out* of Lenis (e.g., the canvas):
+
+```tsx
+<div data-lenis-prevent className="canvas-wrapper">...</div>
+```
+
+Lenis honours this attribute and skips scrolling on that subtree. The user's scroll on the canvas falls through to the page (which we handle separately via `useScrollVelocity`).
+
+---
+
+## APPENDIX B — DEEPER DIVES
+
+### B.1 Why warm-near-black, mathematically
+
+Warm-near-black is `#0a0908` in hex, RGB(10, 9, 8). The R > G > B ordering (warm), with R only marginally higher (still nearly neutral), gives the warmth without the brown tilt. Compare:
+
+- `#000000` — pure black. Reads cold on most monitors due to white-balance defaults.
+- `#0a0a0c` — cool-near-black. Reads as "tech."
+- `#0a0908` — warm-near-black. Reads as "film print."
+- `#100c08` — warm dark brown. Now perceptibly brown, not black.
+- `#1a1108` — full warm brown. Cinematic but no longer black.
+
+The `#0a0908` is the lowest R-channel point at which the warm tilt is perceptible without the color reading as brown. It's the "warmest plausible black."
+
+Reference: cinematographer Roger Deakins' interviews discuss the warmth of cinema black in print — "if it's perfectly neutral, you've left the cinema." The same principle applies digitally.
+
+### B.2 The ember palette derivation
+
+Ember `#f0a868` is RGB(240, 168, 104). HSL: 30°, 80%, 67% — warm orange, saturated, bright.
+
+The variants:
+- Ember-deep `#c97f3f`: 27°, 53%, 51% — same hue, less saturated, darker. Used on hover/press.
+- Ember-pale `#f7c894`: 31°, 87%, 78% — same hue, slightly desaturated, lighter. Used for halo brights.
+
+The HSL family is consistent. We don't use `hsl(30, ...)` and `hsl(45, ...)` — same family means same accent perception.
+
+### B.3 Why 0.18em tracking
+
+The number isn't arbitrary. Tracking values too tight (0.05em) read as "barely tracked" — visually similar to no tracking. Values too loose (0.3em+) read as "spaced out for emphasis" — losing the editorial register.
+
+0.18em is in the editorial sweet spot. Magazine titling (Vogue, Wired) uses 0.15-0.2em on uppercase. The 0.18em is the value that survived testing across ALL the uppercase contexts in this app — captions, eyebrows, stage indicator, status badges.
+
+It's also large enough to be visually distinct from "default tracking" — the user perceives the tracking, not just "the type is uppercase." That perception is what the 0.18em is for.
+
+### B.4 The four-reason-for-motion derivation
+
+Why exactly four? Why not "any motion that adds polish is fine"?
+
+The four are derived from cognitive science of motion perception:
+1. **Reveal** = signaling new information arrived in the visual field.
+2. **Acknowledge** = closing the loop between user input and system response.
+3. **Bridge** = preserving spatial/temporal continuity across context shifts.
+4. **Signal** = communicating a state change at a glance.
+
+These are the only four motion-categories that *carry meaning*. Anything outside them is decoration. Decoration is fine in some contexts (a video game UI; a marketing landing). It is wrong for a cinematic AI tool because:
+- The cinematic register is *spare*; decoration adds noise.
+- The product is utility-focused; decoration distracts from the work.
+- The judge has 3 minutes; every animation should pull weight.
+
+The four-reason rule is a forcing function: ask "which reason does this animation serve?" If the answer is "none," cut it.
+
+### B.5 The 200KB bundle target derivation
+
+Where does 200KB come from? It's the threshold where:
+- On a 4G connection (~10Mbps), the bundle downloads in ~150ms.
+- On a 3G connection (~1Mbps), the bundle downloads in ~1.6s.
+- The first paint can land within the user's "did the page load?" window (~2s on slow networks).
+
+Above 200KB:
+- 250KB on 3G ≈ 2s download. The user has already scrolled or tapped, expecting feedback.
+- 500KB on 3G ≈ 4s. The page reads as "broken/slow" before it loads.
+
+So 200KB is the tier-1 quality threshold. Below it, the app feels instant on most networks. Above it, the experience degrades on a meaningful slice of users.
+
+(Real measurement: our bundle is ~203KB; on a typical broadband connection, first paint is ~300ms. We're not actually bottlenecked by bundle size; the target is still useful as a discipline.)
+
+### B.6 The 800ms perception threshold
+
+Where does 800ms come from? Cognitive psychology of action-feedback:
+- 100ms = "instant" — the user perceives the action and response as one event.
+- 1000ms = "responsive" — the user perceives a delay but it doesn't break flow.
+- 10000ms = "slow" — the user assumes something is broken.
+
+800ms sits in the "responsive" band, with margin for the user to perceive intentional pacing rather than lag. A 600ms transition reads as crafted; a 1200ms transition reads as "is something broken?"
+
+The exception: bridge animations (1.2-1.6s). These are explicit cinematic moments where the wait is the point. The user understands "this is a portal, not a state change" and accepts the pacing.
+
+### B.7 Fraunces variable axis tuning
+
+Fraunces axes (default → SceneOS):
+- `wght` 400 → 350 (display) / 400 (body) / 500 (emphasis)
+- `opsz` (auto → explicit per size)
+  - 6pt → 24
+  - 14pt → 36
+  - 36pt → 96
+  - 96pt → 144
+- `soft` 0 → 50 (modest soft push, 50/100 of the range)
+- `wonk` 0 → 1 (very modest wonk, ~1% of the range)
+
+These are aggregate "design system" values. Override per use:
+- Drawer description italic at 18px: `font-variation-settings: 'opsz' 24, 'wght' 400, 'slnt' -10, 'soft' 50, 'wonk' 0;` — italic via slnt axis (Fraunces is variable-italic).
+
+Note `slnt` (slant) is the "italic axis" — Fraunces doesn't have a separate italic font, just a variable slant. `slnt: -10` is full italic; `slnt: -5` is half-italic for hybrid effects.
+
+### B.8 The Manrope axis tuning
+
+Manrope is variable on `wght` only (200-800). Defaults:
+- 400 for body
+- 500 for medium emphasis
+- 600 for strong emphasis
+- 700 only for caption-track at small sizes (the bold helps at 10-11px)
+
+We rarely use 200/300 (too light against warm-near-black at body sizes) or 800 (reads heavy, doesn't fit the editorial register).
+
+Manrope has no italic. For body italic, we either:
+- Use Fraunces italic at body sizes (when it's narrative)
+- Use Manrope upright + italic via CSS `font-style: italic` (faux italic, generally OK on Manrope because the geometry is forgiving)
+
+Avoid the latter for editorial copy (drawer description, route subtitle); use the former.
+
+### B.9 Geist Mono usage discipline (revisited)
+
+Geist Mono variable axis is `wght` 100-900. We use:
+- 400 for the URL strip body, IDs.
+- 500 for emphasis on a single ID (rare).
+- The `tabular-nums` font feature is on by default in Geist Mono, so digits align.
+
+Geist Mono ligatures: turned **off** for technical strings (URLs, IDs). Ligatures (like `==>` becoming a single arrow) are confusing in URL contexts. Turn off via `font-variant-ligatures: none`.
+
+```css
+.font-mono {
+  font-family: 'Geist Mono', monospace;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+}
+```
+
+### B.10 The Lenis configuration
+
+Lenis defaults are fine, but we tuned a few:
+
+```ts
+const lenis = new Lenis({
+  duration: 1.2,         // seconds for scroll to settle
+  easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+  direction: 'vertical',
+  gestureDirection: 'vertical',
+  smooth: true,
+  mouseMultiplier: 1,
+  smoothTouch: false,    // disable on touch — native scroll is better
+  touchMultiplier: 2,
+  infinite: false,
+});
+```
+
+Notes:
+- `smoothTouch: false` — Lenis on touch devices fights with native scroll inertia. Native is better; Lenis only on desktop scroll.
+- The easing is "exponential out," giving the iconic "long settle" Lenis is known for.
+- `duration: 1.2` is the default; we kept it.
+
+### B.11 The Three.js memory model
+
+R3F manages most resource lifecycles, but for custom resources you create:
+- Geometries: `geometry.dispose()` on unmount.
+- Materials: `material.dispose()`.
+- Textures: `texture.dispose()`.
+- RenderTargets: `target.dispose()` (postprocessing pipelines).
+
+Each `dispose` releases GPU memory. Without it, leaks accumulate.
+
+Detect leaks:
+- Chrome DevTools → Memory profiler.
+- `gl.info` (THREE renderer info) tracks current resource counts.
+
+```tsx
+// debug
+useFrame(({ gl }) => {
+  console.log(gl.info.memory, gl.info.render);
+});
+```
+
+Watch for `geometries`, `textures`, and `programs` growing on each route navigation. If they are, you have a leak.
+
+### B.12 The DPI scaling for 3D
+
+`dpr={[1, 1.75]}` caps device pixel ratio. Reasoning:
+- Mobile phones often have DPR 2.5-3.5. Rendering at 3.5× is 12× the pixels of 1×; punitive on GPU.
+- 1.75 is sharp enough on Retina displays without the 12× cost.
+- Below 1.75, edges look slightly soft on high-DPR; above 1.75, perf cost outweighs.
+
+For specific scenes (e.g., a hero shader), bump DPR higher. For the canvas at large, 1.75 is the right cap.
+
+### B.13 The R3F `Suspense` for assets
+
+Drei components like `<Environment>`, `<Stars>`, `<useGLTF>` use Suspense for asset loading. Wrap the canvas content:
+
+```tsx
+<Canvas>
+  <Suspense fallback={null}>
+    <Environment preset="night" />
+    {/* other suspense-using components */}
+  </Suspense>
+</Canvas>
+```
+
+`fallback={null}` means: while loading, render nothing. The canvas appears progressively. No loading spinner inside the canvas; the chrome (e.g., a "loading scene..." caption) is outside.
+
+If a Suspense-using component fails (asset 404), the React error boundary catches it. The CanvasErrorBoundary at the route level is the safety net.
+
+### B.14 The "no shared scene" rule
+
+Each `<Canvas>` is its own scene. Don't try to share materials/geometries/textures across canvases (would require the same WebGL context, which is per-canvas).
+
+For the SceneOS app, this isn't an issue (one canvas per route, only on /canvas). But if you ever add a second 3D viewport, plan for separate scenes.
+
+### B.15 The "useThree returns a snapshot" gotcha
+
+`const { camera } = useThree();` returns the camera at render time. If you store it in a ref and the camera changes (e.g., a different camera mounts), your ref is stale.
+
+Fix: use `useThree(state => state.camera)` (selector). The hook re-runs when the camera changes:
+
+```tsx
+const camera = useThree(state => state.camera);
+// camera is always the current scene camera
+```
+
+For frame-loop access (where you want the latest), use `state.camera` directly inside `useFrame`:
+
+```tsx
+useFrame((state) => {
+  state.camera.position.y += 0.01;
+});
+```
+
+### B.16 The "raycast on mesh" pattern
+
+Click handling on meshes uses R3F's pointer events:
+
+```tsx
+<mesh onClick={(event) => {
+  event.stopPropagation();  // prevent canvas onPointerMissed
+  setActiveBeat(beat.beatId);
+}}>
+```
+
+Notes:
+- `event.stopPropagation()` is critical. Without it, the canvas's `onPointerMissed` fires too, deselecting the beat you just selected.
+- The events have `event.intersections` (all meshes the ray hit) and `event.object` (the topmost). Useful for advanced cases.
+
+### B.17 The "instanced mesh" performance pattern
+
+For large numbers of similar meshes (1000+ particles, 100+ identical nodes), use `<instancedMesh>`. Single draw call regardless of count.
+
+We don't use it on this app (5-12 beats, no instancing needed), but worth knowing for scale.
+
+### B.18 The shader uniform update pattern
+
+Setting uniforms each frame:
+
+```tsx
+const materialRef = useRef<THREE.ShaderMaterial>(null);
+useFrame((state) => {
+  if (!materialRef.current) return;
+  materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+});
+```
+
+NOT:
+```tsx
+useFrame(() => {
+  // bad: forcing a re-render of the React component
+  setUTime(prev => prev + 0.01);
+});
+```
+
+Refs for per-frame mutation. State for things React renders.
+
+### B.19 The "shader recompile" trap
+
+Changing a `defines` object on a ShaderMaterial recompiles the shader (~10-100ms). Don't do this in `useFrame`.
+
+If you need to switch between shader variants, predefine multiple materials and swap which is on the mesh. The cost is one-time at compile.
+
+### B.20 The Vite dev mode HMR for shaders
+
+Vite + glsl loader supports HMR. Edit a shader file; the canvas updates without full reload. Great for iteration.
+
+Make sure the loader is configured in `vite.config.ts`:
+
+```ts
+import glsl from 'vite-plugin-glsl';
+export default defineConfig({
+  plugins: [react(), glsl()],
+});
+```
+
+### B.21 The cmdk command structure
+
+```tsx
+<Command>
+  <Command.Input placeholder="Search commands..." />
+  <Command.List>
+    <Command.Empty>No results found.</Command.Empty>
+
+    <Command.Group heading="Navigation">
+      <Command.Item onSelect={() => navigate('/')}>Go to Landing</Command.Item>
+      <Command.Item onSelect={() => navigate('/canvas')}>Go to Canvas</Command.Item>
+    </Command.Group>
+
+    <Command.Group heading="Audio">
+      <Command.Item onSelect={() => prefs.toggleAudioMute()}>
+        {muted ? 'Unmute' : 'Mute'}
+      </Command.Item>
+    </Command.Group>
+
+    <Command.Group heading="Beats">
+      {beats.map((beat, i) => (
+        <Command.Item key={beat.beatId} onSelect={() => setActiveBeat(beat.beatId)}>
+          Beat {i + 1}: {beat.title}
+        </Command.Item>
+      ))}
+    </Command.Group>
+  </Command.List>
+</Command>
+```
+
+The structure: groups for organization, items for actions. cmdk handles fuzzy search across all items. Keyboard navigation is built-in.
+
+### B.22 The `Toaster` configuration
+
+Sonner (`<Toaster />`) at the App root:
+
+```tsx
+<Toaster
+  position="bottom-center"
+  visibleToasts={2}
+  toastOptions={{
+    style: {
+      background: 'var(--color-bg-elev-1)',
+      border: '1px solid color-mix(in srgb, var(--color-fg-tertiary) 25%, transparent)',
+      color: 'var(--color-fg-primary)',
+      borderRadius: '2px',
+      fontFamily: 'var(--font-body)',
+    },
+    duration: 4000,
+  }}
+  expand={false}
+  richColors={false}
+/>
+```
+
+Notes:
+- `richColors={false}` — disable sonner's default colored success/error backgrounds. We tint via the success/error classes ourselves.
+- `expand={false}` — toasts are stacked, not expanded into a list. Two-toast cap means stacking is fine.
+- `borderRadius: 2px` — match the modal/chip register.
+
+### B.23 The text-shadow trick for low-contrast type
+
+When you must place text on a busy background (e.g., text over the 3D canvas), a subtle text-shadow improves legibility:
+
+```css
+.text-on-canvas {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+```
+
+Use sparingly. Generally, don't put text directly on the canvas — put it in a chrome strip with backdrop-blur. The text-shadow trick is a fallback.
+
+### B.24 The CSS variable approach for dynamic values
+
+For values that need to be JS-set but CSS-styled:
+
+```tsx
+<div style={{ '--progress': `${percentage}%` } as React.CSSProperties}>
+```
+
+```css
+.progress-bar::after {
+  content: '';
+  position: absolute;
+  width: var(--progress);
+  /* ...
+   */
+}
+```
+
+Cleaner than embedding the percentage in inline `style.width`. The CSS handles the styling; JS just supplies the value.
+
+### B.25 The "Don't trust matchMedia in SSR" pattern
+
+`window.matchMedia` doesn't exist server-side. Guard:
+
+```tsx
+const matches = useMemo(() => {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia(query).matches;
+}, [query]);
+```
+
+For SPA-only deployment, this is moot, but the discipline is worth maintaining for portability.
+
+### B.26 The Web Speech polyfill question
+
+There's no Web Speech polyfill for Firefox. The feature is browser-gated.
+
+We don't try to polyfill. We hide the feature when unsupported (covered in Part 11.1). The fallback is text input; the user doesn't lose function, just convenience.
+
+### B.27 The audio context creation timing
+
+Don't create `AudioContext` at module load. Browsers may auto-suspend it (Chrome's autoplay policy). Create lazily on first user gesture:
+
+```ts
+let _ctx: AudioContext | null = null;
+function getContext() {
+  if (!_ctx) _ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+  if (_ctx.state === 'suspended') _ctx.resume();
+  return _ctx;
+}
+```
+
+The `webkitAudioContext` fallback is for Safari < 14 (rare, but cheap to handle).
+
+### B.28 The "media session" API for playback
+
+The final-delivery video can integrate with browser media session for keyboard shortcuts (Play/Pause, Next/Previous):
+
+```ts
+navigator.mediaSession.metadata = new MediaMetadata({
+  title: 'SceneOS Cinematic',
+  artist: 'a single director\'s prompt',
+});
+navigator.mediaSession.setActionHandler('play', () => video.play());
+navigator.mediaSession.setActionHandler('pause', () => video.pause());
+```
+
+Optional but premium — the user can pause from their keyboard's media keys.
+
+### B.29 The Service Worker hygiene (when applicable)
+
+If you ever add a service worker:
+- Cache the bundle aggressively (long max-age + content-hashed filenames).
+- Cache HTML lightly (no max-age + must-revalidate).
+- Implement a cache-versioning scheme so old SWs unregister cleanly.
+- Use Workbox; don't roll your own.
+
+We didn't ship one. Worth knowing.
+
+### B.30 The Vite proxy for dev API
+
+In `vite.config.ts`:
+
+```ts
+export default defineConfig({
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8000',
+    },
+  },
+});
+```
+
+In dev, the frontend at `localhost:5173` proxies `/api/*` to the FastAPI backend at `localhost:8000`. No CORS, no env vars at dev time. Production deploys configure the API base URL via `VITE_API_BASE`.
+
+### B.31 The `@vitejs/plugin-react` Fast Refresh
+
+React Fast Refresh (HMR) is on by default. It preserves component state across edits. Edit a component, see the change, state intact. Faster iteration than full reload.
+
+The gotcha: edits to non-component exports break Fast Refresh and trigger full reload. Keep components in component files; utilities in utility files.
+
+### B.32 The Tailwind v4 `@theme` migration
+
+Tailwind v4's `@theme` directive replaces v3's `theme.extend` config. Define tokens once in CSS:
+
+```css
+@theme {
+  --color-bg-base: #0a0908;
+  --color-fg-primary: #f5f1ea;
+  --font-display: 'Fraunces', serif;
+  --spacing-1: 0.25rem;
+  /* ... */
+}
+```
+
+Tailwind generates utility classes from these (`bg-bg-base`, `text-fg-primary`, `font-display`, `space-y-1`).
+
+The benefits: tokens are in CSS, the source of truth for both Tailwind and direct CSS use. No JS config to keep in sync.
+
+### B.33 The Tailwind v4 `@variant` for custom variants
+
+```css
+@variant scrolled (.is-scrolled &);
+```
+
+Now `scrolled:bg-bg-elev-1` applies when the parent has `.is-scrolled` class. We use this for sticky-header treatments.
+
+### B.34 The "no PostCSS plugin chain"
+
+Tailwind v4 has its own PostCSS plugin and doesn't need autoprefixer (which now ships with Tailwind). Keep the PostCSS config minimal:
+
+```js
+export default {
+  plugins: {
+    '@tailwindcss/postcss': {},
+  },
+};
+```
+
+### B.35 The "named exports only" rule
+
+Use named exports, not default:
+
+```ts
+// good
+export function ChipRow() { ... }
+
+// bad
+export default function ChipRow() { ... }
+```
+
+Reasons:
+- Named exports survive renames better.
+- IDEs auto-import named exports more reliably.
+- `export default` + arrow function loses the function name for debugging.
+
+The exception: routes (default export is React Router idiom for dynamic imports) — but we mostly use named exports there too.
+
+### B.36 The `tsconfig.json` strict settings
+
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "exactOptionalPropertyTypes": false  // off — too aggressive for libraries
+  }
+}
+```
+
+`noUncheckedIndexedAccess` is the killer feature: `arr[0]` is `T | undefined` instead of `T`. Catches a class of "what if the array is empty" bugs.
+
+`exactOptionalPropertyTypes` is off because some libraries (Radix, Motion) have signatures that require explicit `undefined` distinction, which is annoying. Pick your battles.
+
+### B.37 The "no `any`" discipline
+
+`any` should appear only:
+- In third-party type augmentations where the library's types are insufficient.
+- In `as any` casts where TypeScript genuinely can't follow your reasoning.
+
+Otherwise: `unknown` (forces type-narrowing) or proper types.
+
+In SceneOS, we have ~3 `as any` casts in the entire codebase (one for SpeechRecognition window globals, one for Motion's variants where the inferred type is too narrow, one for partialize in Zustand). Each is documented inline.
+
+### B.38 The "discriminated unions" pattern for variants
+
+For props that have multiple shapes:
+
+```ts
+type ButtonProps =
+  | { variant: 'primary'; label: string; onClick: () => void; loading?: boolean }
+  | { variant: 'icon'; icon: React.ReactNode; ariaLabel: string; onClick: () => void };
+```
+
+TypeScript narrows on `variant`. The component renders different markup per variant, with type-safe access to variant-specific props.
+
+This is more robust than optional props (`label?: string; icon?: React.ReactNode`) because TypeScript can't tell which combination is valid without the union.
+
+### B.39 The "branded types" for IDs
+
+```ts
+type BeatId = string & { readonly __brand: 'BeatId' };
+type SceneId = string & { readonly __brand: 'SceneId' };
+
+function asBeatId(id: string): BeatId { return id as BeatId; }
+```
+
+Functions taking `BeatId` won't accept a raw `string`. Catches the "passed sceneId where beatId was expected" bug.
+
+We don't use this aggressively in SceneOS (the codebase is small), but for larger apps with many ID types, it's worth it.
+
+### B.40 The "type-only imports" discipline
+
+```ts
+import type { Beat, Scene, AgentTurn } from '@/types/manifest';
+```
+
+Type imports are erased at compile time. Faster builds, smaller bundles (TypeScript can drop the import). Use for imports that are exclusively types.
+
+For mixed imports, prefix the type ones:
+
+```ts
+import { type Beat, buildInitialBeats } from '@/lib/beats';
+```
+
+---
+
+## APPENDIX C — VOICE AND TONE DEEPER STUDIES
+
+### C.1 The opening line of the agent
+
+The agent's first line in any beat conversation should land the register immediately. Three patterns:
+
+**Direct directive**: "Tell me about the lighting in this beat."
+- Best when the beat has clear missing information.
+
+**Reflective question**: "What's the mood you're chasing in this opening?"
+- Best for beats that need tonal context before specifics.
+
+**Concrete observation**: "We have a wide establishing shot here — let's lock the framing."
+- Best for beats where the agent has a strong inference from the master prompt.
+
+The wrong opening: "Hi! How can I help you with this beat today?" — assistant register, doesn't fit.
+
+### C.2 The agent's questioning rhythm
+
+The agent asks 3-5 questions per beat, paced:
+- Q1: Mood / atmosphere.
+- Q2: Specific visual element (lighting, framing, motion).
+- Q3: Specific sensory detail (sound, texture, color).
+- Q4 (sometimes): Reference / inspiration.
+- Q5 (sometimes): Confirmation of synthesis.
+
+Each question is one sentence. Each user answer triggers the next. The conversation should feel like a director's mini-interview, not a form.
+
+### C.3 The agent's affirmation language
+
+After the user answers, the agent affirms briefly before moving on. Patterns:
+
+- "Got it."
+- "Nice — that locks the lighting."
+- "Yeah, that fits."
+- "Hmm, let me hold that — *that* might shape the whole beat."
+
+Brief. Not overly enthusiastic. Specific when there's a callback.
+
+The wrong affirmation: "Awesome! Thanks for sharing that!" — too eager, breaks the cinematic register.
+
+### C.4 The agent's rejection / pushback
+
+Sometimes the user gives an answer the agent should question (for clarity, for cinematic strength). The agent's pushback is gentle:
+
+- "That works — but let me push: do you mean *literal* gauzy, or just the feeling?"
+- "Hmm, two readings here. Are we leaning *closer* to the figure, or holding the wide?"
+- "I want to make sure we land this — what's the texture *under* the warmth?"
+
+Pushback is collaborative, not adversarial. The agent serves the director; the director serves the film.
+
+### C.5 The user's voice in the conversation
+
+The user's bubbles in the conversation are *their words*, formatted as-is. We don't auto-correct, auto-format, or smart-quote the user's text.
+
+Reasoning: the user's voice is theirs. Tampering would feel wrong, and would confuse them when their typed-quote becomes a curly-quote.
+
+The agent's voice is *ours* (smart-quoted, em-dashed, italicized on connectives). The user's is *theirs*.
+
+### C.6 The voice consistency audit
+
+Read every agent line on every beat in sequence. Does it sound like one person? Or are some lines warm-direct and others corporate-helpful?
+
+The audit catches drift from the canonical voice. Drift happens when:
+- Multiple people write copy without coordination.
+- Copy is rewritten ad-hoc without re-reading neighbours.
+- A new feature ships with copy written in isolation.
+
+Catch and fix in audit pass before release.
+
+### C.7 The translation question
+
+If we ever localize, the voice translates poorly literally. "Roll" / "cast" / "lock" are cinematic English-specific. Localized versions need a film-language equivalent in target language, not a literal translation.
+
+A French version might use "tourner" / "casser" / "verrouiller" — but the equivalent register is what matters, not the words.
+
+We didn't ship localization. Worth flagging.
+
+### C.8 The microcopy for empty states (deeper)
+
+Empty states fall into categories:
+- **First-time empty**: "approve a beat to begin" — the user hasn't done anything yet.
+- **Cleared empty**: "the splice is empty after reset — start a new project to begin" — the user reset.
+- **Filtered empty**: "no beats matching that search — try fewer words" — the user's filter excluded everything.
+
+Each gets distinct copy. First-time invites; cleared explains; filtered suggests.
+
+### C.9 The error message taxonomy
+
+Errors:
+- **User-error**: "this beat needs a few more details before we cast it" — user can fix.
+- **System-error (transient)**: "couldn't reach the floor — retry?" — retry usually works.
+- **System-error (persistent)**: "the agent is having trouble — try refreshing" — escalation.
+- **Catastrophic**: "something went sideways — reload the page" — full reset.
+
+Each tier gets distinct copy and distinct UI affordance (inline retry vs page-level retry vs reload).
+
+### C.10 The "feedback after action" copy
+
+When the user does something successful, the feedback is:
+- Visual: ember pulse, hairline progress, URL update.
+- Audio (optional): cue.
+- Copy (sometimes): toast or inline.
+
+The copy is brief. "URL copied." Not "Successfully copied URL to clipboard! 📋"
+
+Brief = confident. Verbose = compensating.
+
+---
+
+## APPENDIX D — WHEN THINGS GO WRONG ON DEMO DAY
+
+### D.1 The laptop won't connect to the projector
+
+Test with the projector before demo. Have a backup HDMI / USB-C / DisplayPort adapter. Have the demo-build URL bookmarked on a phone for emergency.
+
+### D.2 The internet drops
+
+Switch to mock mode (`VITE_MOCK_MODE=true` in URL or env). Demo continues with canned responses.
+
+### D.3 The 3D canvas doesn't render
+
+The CanvasErrorBoundary catches and shows the 2D fallback. Demo continues with the SVG star-map.
+
+### D.4 The audio cues don't fire
+
+Audio is opt-in; if browser blocks AudioContext, cues are silent. Doesn't break demo. Acknowledge it explicitly: "the audio is muted by default in our demo, but it's available."
+
+### D.5 The bridge transition stutters
+
+The presenter can disable motion via `?nomotion=1`. Bridge collapses to a 0.2s fade. Less cinematic but functional.
+
+### D.6 The judge interrupts mid-demo
+
+Pause, answer, resume from where you stopped. Don't restart. Have stage indicator point to where you are.
+
+### D.7 The judge asks for a feature that doesn't exist
+
+"Yeah, that's on the roadmap — for the hackathon scope, we focused on [X]." Don't pretend the feature exists; don't apologize for not having it. The roadmap framing positions the absence as deliberate.
+
+### D.8 You forget your line
+
+Look at the screen. The screen has the answer. Read what's there: "and as you see, the URL composes itself..." Then continue.
+
+### D.9 The presenter freezes on stage
+
+Have a second person who can take over. Pre-coordinate the handoff line: "So [name]'s gonna walk you through the canvas." Smooth handoffs read as "team", not "panic."
+
+### D.10 The submission deadline approaches and the build is broken
+
+Revert to last known good. Submit that. A working demo that's slightly behind is infinitely better than a broken demo that's "almost there."
+
+---
+
+## APPENDIX E — A FINAL NOTE ON TASTE
+
+This document has been opinionated throughout. Taste is what separates the awwwards-floor from the godly-ceiling. Taste is not learned from reading a single document; it's cultivated through:
+
+- **Looking at premium work daily**: godly.website, awwwards, Kottke, Are.na, IT'S NICE THAT, Linear's marketing, Vercel's marketing, Stripe's docs, the Criterion Collection's catalog, A24's site, Apple's marketing.
+- **Reading editorial design**: print magazines (NYT Mag, Wired's print archive, Esquire's design history) — the editorial sensibility precedes web by 100 years.
+- **Watching films**: not for pleasure (well, also for pleasure), but for the visual language. How does a Roger Deakins frame land? What's the color grading on a Bradford Young shoot? How does Wes Anderson's symmetry differ from Yorgos Lanthimos's symmetry?
+- **Rejecting the "first idea"**: the first answer is usually the convention. The second answer is usually the slightly weirder, more interesting one. Push past the first idea consistently.
+- **Accumulating principles**: this document is one such accumulation. Build your own. Audit your own work against it.
+
+You will encounter situations this document doesn't cover. When you do, the meta-principles still apply:
+
+- Cinematic, not SaaS.
+- Restraint is a feature.
+- The cinematic register is built by deletion.
+- Generic is the enemy.
+- Would Nolan ship this?
+- Would this land on godly?
+
+Trust your taste. Verify in the browser. Ship.
+
+End of transmission. Truly this time.
+
 

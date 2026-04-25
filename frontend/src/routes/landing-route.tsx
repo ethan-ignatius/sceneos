@@ -201,22 +201,21 @@ export function LandingRoute() {
           className="ember-radial-breath pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_15%_85%,_rgba(240,168,104,0.07),_transparent_55%)]"
         />
 
-        {/* Top-corner microcopy — reads as a slate, not a logo. */}
+        {/* Top-corner slate — single mark, no coordinates, no date.
+            The previous version put eight small strings in two corners
+            (SceneOS, lat/long, LA Hacks 2026, date) — reading as
+            airport-departures-board, not editorial. Restraint is a feature
+            (§2.6). One mark, set in display italic, holds the corner. */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
-          className="absolute inset-x-0 top-0 z-10 flex items-start justify-between px-8 pt-7 sm:px-12"
+          className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-8 pt-7 sm:px-12"
         >
-          <div className="caption-track text-[10px] text-fg-tertiary">
-            <span>SceneOS</span>
-            <span className="mx-2 text-fg-tertiary/50">·</span>
-            <span>34.07° N · 118.45° W</span>
-          </div>
-          <div className="caption-track text-[10px] tabular-nums text-fg-tertiary">
-            <span className="hidden sm:inline">LA Hacks 2026 · </span>
-            <span>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date())}</span>
-          </div>
+          <span className="font-display text-[15px] italic leading-none text-fg-secondary">
+            SceneOS
+          </span>
+          <span className="caption-track text-[10px] text-fg-tertiary/70">LA Hacks 2026</span>
         </motion.div>
 
         {/* 12-col grid hero */}
@@ -257,15 +256,9 @@ export function LandingRoute() {
               </span>
             </h1>
 
-            {/* Sub-line, mono caps, restrained — the "tagline." */}
-            <motion.p
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.4 }}
-              className="caption-track mt-7 text-[10px] text-fg-tertiary"
-            >
-              You direct. We compose.
-            </motion.p>
+            {/* Sub-tagline removed — the headline says it (§19.15 "say once").
+                "Direct an idea. Render *a* cinematic." already carries
+                "you direct, we compose" without the chrome echo. */}
 
             {/* Form — input + Begin CTA. Left-aligned, not centered. */}
             <motion.form
@@ -340,7 +333,7 @@ export function LandingRoute() {
                 </span>
               </div>
 
-              <div className="mt-6 flex items-center gap-4">
+              <div className="mt-6">
                 <motion.button
                   type="submit"
                   disabled={!ready}
@@ -348,13 +341,13 @@ export function LandingRoute() {
                   data-ready={ready ? "true" : "false"}
                   className={cn(
                     "group inline-flex items-center gap-3 px-6 py-3 font-body text-base text-bg-base",
-                    "bg-brand-ember rounded-md transition-colors duration-200",
+                    "bg-brand-ember rounded-[2px] transition-colors duration-200",
                     "hover:bg-brand-ember/90",
                     "disabled:bg-bg-elev-2 disabled:text-fg-tertiary disabled:pointer-events-none",
                     ready && "magnetic-button",
                   )}
                 >
-                  <span>Start directing</span>
+                  <span>Begin</span>
                   <ArrowUpRight
                     size={16}
                     strokeWidth={1.5}
@@ -362,11 +355,9 @@ export function LandingRoute() {
                     className="transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
                   />
                 </motion.button>
-
-                {/* Caption next to CTA — answers "what kind of cinematic?" */}
-                <p className="caption-track text-[10px] text-fg-tertiary">
-                  Format · {VIDEO_TYPES.find((v) => v.value === videoType)?.hint}
-                </p>
+                {/* No "Format · 5 beats · ~60s" caption next to the CTA —
+                    the format picker on the right column already shows the
+                    same hint. §19.15 "say once". */}
               </div>
             </motion.form>
           </div>

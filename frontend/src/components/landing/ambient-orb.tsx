@@ -16,7 +16,11 @@ import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 export function AmbientOrb() {
   return (
     <Canvas
-      camera={{ position: [0, 0, 3.2], fov: 38 }}
+      // Pull the camera back from 3.2 to 4.4 so the atmosphere shell (1.2×
+      // the sphere radius) fits comfortably inside the 38° vfov frustum
+      // with margin. Previous setup had the halo's silhouette tangent to
+      // the canvas edge — visually clipped on every render.
+      camera={{ position: [0, 0, 4.4], fov: 38 }}
       dpr={[1, 1.75]}
       gl={{ antialias: true, alpha: true, powerPreference: "high-performance" }}
       style={{ width: "100%", height: "100%", pointerEvents: "none" }}
