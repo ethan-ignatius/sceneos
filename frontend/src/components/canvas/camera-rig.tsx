@@ -33,6 +33,17 @@ export interface OrbitState {
   didDrag: boolean;
 }
 
+/**
+ * Scroll-wheel zoom state. Lives outside React for the same reason pan +
+ * orbit do — wheel events shouldn't trigger route re-renders. Range is
+ * clamped to [-3, +5] world units of z-offset added to the overview Z.
+ * Negative = zoom in (camera closer); positive = zoom out (further away).
+ * Reset on Esc / Re-center.
+ */
+export interface ZoomState {
+  z: number;
+}
+
 interface CameraRigProps {
   beats: Beat[];
   /** Parallel array of [x, y, z] from `computeBeatPositions(beats)`. */
@@ -46,6 +57,8 @@ interface CameraRigProps {
   panRef?: MutableRefObject<PanState>;
   /** Orbit state ref written from BeatMap3D's left-mouse-on-empty handler. */
   orbitRef?: MutableRefObject<OrbitState>;
+  /** Zoom state ref written from BeatMap3D's wheel handler. */
+  zoomRef?: MutableRefObject<ZoomState>;
 }
 
 const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
@@ -66,12 +79,13 @@ const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
  * Rationale for not using GSAP: see docs/CANVAS_3D.md §2. Per-frame
  * lerping handles continuous, multi-source state better than tweens.
  */
-export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overviewZ = 5.5, panRef, orbitRef }: CameraRigProps) {
+export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overviewZ = 5.5, panRef, orbitRef, zoomRef }: CameraRigProps) {
   const { camera } = useThree();
+  // overviewPos is mutated each frame inside useFrame so it picks up the
+  // live wheel-zoom offset — reading zoomRef at render time only would
+  // freeze the scroll-wheel value (the ref updates outside React, so a
+  // wheel event won't trigger a re-render to refresh the closure).
   const overviewPos = useRef(new THREE.Vector3(0, 0.4, overviewZ));
-  // Keep overview position in sync with the dynamic overviewZ — without this,
-  // the rig would lock the camera to the initial z (5.5 was hardcoded before).
-  overviewPos.current.set(0, 0.4, overviewZ);
   const targetPos = useRef(overviewPos.current.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
   const reducedMotion = usePrefersReducedMotion();
@@ -89,6 +103,12 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
     const active = findPosition(activeBeatId);
     const hovered = findPosition(hoveredBeatId);
     const t = state.clock.elapsedTime;
+    // Read the LIVE zoom offset from the ref each frame. Wheel events
+    // mutate this ref directly without triggering a React render, so we
+    // can't capture it at render time.
+    const zoomOffset = zoomRef?.current.z ?? 0;
+    const effectiveZ = Math.max(2.5, overviewZ + zoomOffset);
+    overviewPos.current.set(0, 0.4, effectiveZ);
 
     // ── Pan: clear instantly when transitioning from no-active → active ──
     // Clicking a beat is a deliberate cinematographic move; any residual pan
@@ -101,12 +121,20 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
 
     if (active) {
       const [ax, ay, az] = active;
-      // Phase 3: closer orbit (+0.6 z instead of +1.2) so the planet fills
-      // more of the viewport. Slow azimuth drift adds a Nolan-style breath
-      // around the active subject.
+      // Drawer-aware offset: on desktop (md+, where the drawer is a fixed
+      // ~34rem panel anchored to the right edge), the active planet should
+      // sit in the LEFT half of the viewport so the drawer doesn't cover
+      // it. Shifting both camera position AND lookAt by the same amount
+      // preserves the look direction; only the framing shifts.
+      // 1.4 world units ≈ ~28% of the viewport width at our zoom — matches
+      // the drawer's screen footprint, so the planet ends up centered in
+      // the not-drawer area rather than behind it.
+      // On mobile, the drawer is a bottom sheet; no horizontal shift needed.
+      const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
+      const drawerOffsetX = isDesktop ? 1.4 : 0;
       const azimuth = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
-      targetPos.current.set(ax + 0.2 + azimuth, ay + 0.4, az + 0.6);
-      targetLook.current.set(ax, ay, az);
+      targetPos.current.set(ax + 0.35 + drawerOffsetX + azimuth, ay + 0.25, az + 1.9);
+      targetLook.current.set(ax + drawerOffsetX, ay, az);
     } else {
       // ── Free-orbit (left-drag on empty space) ──────────────────────
       // When the user drags on empty space, we orbit the camera around
@@ -116,7 +144,11 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
       const azimuth = orbitRef?.current.azimuth ?? 0;
       const polar = orbitRef?.current.polar ?? 0;
       if (azimuth !== 0 || polar !== 0) {
-        const rad = overviewZ;
+        // Orbit radius uses effectiveZ so wheel-zoom and orbit compose:
+        // user can rotate AND zoom simultaneously without one fighting
+        // the other. Without this the rotation would always be at the
+        // base distance and zoom-while-rotating felt broken.
+        const rad = effectiveZ;
         const cosPolar = Math.cos(polar);
         const x = rad * Math.sin(azimuth) * cosPolar;
         const z = rad * Math.cos(azimuth) * cosPolar;
@@ -128,22 +160,17 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
       targetLook.current.copy(OVERVIEW_LOOK);
 
       // ── Pan offset (additive, only on overview) ──────────────────────
-      // The pan signal lives outside React so middle-drag never re-renders
-      // the route tree; we just read & decay the ref each frame.
+      // STICKY pan: where you dragged to is where you stay. The previous
+      // build decayed the offset back to 0 over ~600ms post-release, which
+      // read as "the camera fights me" — exactly what the user flagged
+      // ("dragging behaviour is really hard"). Esc / Re-center / clicking
+      // a beat all reset the pan; nothing else does.
       if (panRef) {
         const [px, py] = panRef.current.offset;
         targetPos.current.x += px;
         targetPos.current.y += py;
-        // Look-at also pans so the user sees the panned target straight-on.
         targetLook.current.x += px;
         targetLook.current.y += py;
-        // Decay to 0 only when the user is NOT actively dragging.
-        // Lerp 0.04 ≈ ~600ms inertial release. Feels like a real camera
-        // settling, not a snap.
-        if (!panRef.current.active) {
-          panRef.current.offset[0] = THREE.MathUtils.lerp(px, 0, 0.04);
-          panRef.current.offset[1] = THREE.MathUtils.lerp(py, 0, 0.04);
-        }
       }
 
       // Hover offset (≤0.05 units) only when nothing is actively selected —

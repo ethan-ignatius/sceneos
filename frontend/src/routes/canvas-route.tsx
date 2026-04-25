@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
 import { LocateFixed } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
-import { usePromptStore } from "@/stores/prompt-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
 import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
@@ -27,7 +26,6 @@ export function CanvasRoute() {
   // drilling. Recent refactor; see beat-graph-store.ts.
   const stitchOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
   const setStitchOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
-  const { masterPrompt } = usePromptStore();
 
   // Ambient projector loop. Fades in over 0.8s, fades out over 0.6s.
   // Mute is checked at start time only — toggling mid-canvas doesn't
@@ -89,60 +87,51 @@ export function CanvasRoute() {
         </Suspense>
       </CanvasErrorBoundary>
 
-      {/* Chrome cards — stack vertically on <md (issue #153). On a 375px
-          viewport the master-prompt card (max-w-md) + stitch button width
-          collide; stacking puts master-prompt full-width and stitch under it. */}
+      {/* Apple-philosophy chrome: minimal, glass, only what's necessary.
+          Master-prompt card was decorative — the user typed it; surfacing
+          it as a header card was self-congratulatory chrome. Dropped.
+
+          Top-right: a single compact rounded-full pill — Stitch progress.
+          That's it. The decompose indicator floats as a thin top-edge bar
+          while the API call is in flight, then disappears. */}
       <motion.div
-        initial={{ opacity: 0, y: -8 }}
+        initial={{ opacity: 0, y: -4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between md:p-6"
+        className="pointer-events-none absolute right-4 top-4 z-20 md:right-6 md:top-5"
       >
-        <div className="pointer-events-auto w-full max-w-md rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)] transition-colors md:w-auto">
-          <div className="caption-track text-[10px] text-fg-tertiary">
-            <span className="text-brand-ember">●</span>
-            <span className="ml-2">{manifest.videoType}</span>
-          </div>
-          <p className="mt-1.5 line-clamp-1 max-w-prose font-display text-base italic leading-snug text-fg-primary md:line-clamp-2">
-            {masterPrompt}
-          </p>
-          <DecomposeIndicator />
-        </div>
-
         <button
+          type="button"
           onClick={() => setStitchOpen(!stitchOpen)}
           aria-label={`Open stitch tray — ${approvedCount} of ${totalCount} beats ready`}
-          className="pointer-events-auto group min-h-11 w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)] transition-colors duration-200 hover:border-brand-ember/60 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base md:w-auto"
+          className="pointer-events-auto group inline-flex min-h-9 items-center gap-2.5 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/70 px-3.5 py-1.5 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] transition-[border-color,background-color] duration-200 hover:border-brand-ember/45 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
         >
-          <div className="caption-track text-[10px] text-fg-tertiary transition-colors group-hover:text-brand-ember/90">
+          <span
+            aria-hidden
+            className={`h-1.5 w-1.5 flex-shrink-0 rounded-full transition-colors ${
+              approvedCount === totalCount && totalCount > 0
+                ? "bg-brand-ember"
+                : approvedCount > 0
+                  ? "bg-brand-ember/60"
+                  : "bg-fg-tertiary/40"
+            }`}
+          />
+          <span className="caption-track text-[10px] text-fg-secondary group-hover:text-brand-ember/90">
             Stitch
-          </div>
-          <div className="mt-1.5 font-display text-base italic text-fg-primary tabular-nums">
-            {approvedCount} of {totalCount}
-          </div>
+          </span>
+          <span className="font-mono text-[11px] tabular-nums text-fg-primary">
+            {approvedCount.toString().padStart(2, "0")}
+            <span className="text-fg-tertiary/50"> / </span>
+            {totalCount.toString().padStart(2, "0")}
+          </span>
         </button>
       </motion.div>
 
-      {/* Beat-status pips — sits ABOVE the persistent URL strip (URL strip is
-          bottom-12, pips at bottom-24) so the two don't crowd each other on
-          narrow viewports. The pips are aria-hidden because they duplicate
-          the same info as the stitch button "X of Y" count. */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 bottom-24 z-10 flex justify-center gap-1.5"
-      >
-        {manifest.beats.map((b) => (
-          <span
-            key={b.beatId}
-            className={`h-1 w-10 rounded-full transition-colors duration-300 ${
-              b.status === "approved"
-                ? "bg-brand-ember"
-                : b.status === "preview" || b.status === "generating"
-                ? "bg-brand-ember/50"
-                : "bg-fg-tertiary/30"
-            }`}
-          />
-        ))}
+      {/* Decompose status — a thin self-contained bar at the top edge.
+          Was nested inside the (now-removed) master-prompt card; floating
+          it free keeps the canvas clean while the work is happening. */}
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center md:top-4">
+        <DecomposeIndicator />
       </div>
 
       {/* Always-visible URL strip — Cloudinary track-hero feature is no
@@ -172,6 +161,28 @@ export function CanvasRoute() {
         </button>
       ) : null}
 
+      {/* Whisper-soft control hint along the bottom centre. Almost
+          invisible at idle (text-fg-tertiary/45), discoverable on hover.
+          Tells the user: scroll-zoom + drag-pan + shift-drag-orbit + Esc.
+          Hidden on mobile (no hover, no scroll-wheel) and behind the
+          stitch tray. */}
+      {!stitchOpen ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 bottom-4 z-10 hidden justify-center sm:flex"
+        >
+          <div className="caption-track flex items-center gap-3 text-[9.5px] text-fg-tertiary/45 transition-colors duration-300 hover:text-fg-tertiary">
+            <span>scroll · zoom</span>
+            <span className="h-1 w-1 rounded-full bg-fg-tertiary/30" />
+            <span>drag · pan</span>
+            <span className="h-1 w-1 rounded-full bg-fg-tertiary/30" />
+            <span>⇧ drag · orbit</span>
+            <span className="h-1 w-1 rounded-full bg-fg-tertiary/30" />
+            <span>⎋ recenter</span>
+          </div>
+        </div>
+      ) : null}
+
       <AnimatePresence>{activeBeatId ? <NodeDetailDrawer key={activeBeatId} /> : null}</AnimatePresence>
 
       <AnimatePresence>{stitchOpen ? <StitchTray onClose={() => setStitchOpen(false)} /> : null}</AnimatePresence>
@@ -180,11 +191,31 @@ export function CanvasRoute() {
   );
 }
 
+/**
+ * Loading state shown while the heavy R3F bundle + planet textures are
+ * fetching. Reads as a film crew getting ready for a take, not a spinner:
+ *   ●  Pulling focus.
+ *      Loading the scene.
+ *
+ * The ember pulse provides forward motion; the display-italic line gives
+ * the moment weight; the caption underneath says what's literally happening.
+ * "Pulling focus" is a film-set call ("hold for focus") that happens to
+ * also describe a 3D scene resolving — both meanings land.
+ */
 function CanvasFallback() {
   return (
-    <div className="grid h-full w-full place-items-center">
-      <div className="caption-track text-[10px] text-fg-tertiary">
-        Composing the canvas
+    <div className="grid h-full w-full place-items-center bg-bg-base">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <span
+          aria-hidden
+          className="ember-pulse h-2.5 w-2.5 rounded-full bg-brand-ember shadow-[0_0_24px_rgba(240,168,104,0.55)]"
+        />
+        <h2 className="font-display text-display-md italic leading-[1.0] text-fg-primary">
+          Pulling focus.
+        </h2>
+        <p className="caption-track text-[10px] text-fg-tertiary">
+          Loading the scene
+        </p>
       </div>
     </div>
   );

@@ -45,16 +45,14 @@ export function DecomposeIndicator() {
       {visible ? (
         <motion.div
           key={status}
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          exit={{ opacity: 0, height: 0 }}
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-          className="overflow-hidden"
+          className="pointer-events-none inline-flex items-center gap-2 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/70 px-3 py-1 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] caption-track text-[10px] text-fg-secondary"
         >
-          <div className="caption-track mt-2 flex items-center gap-2 text-[10px] text-fg-tertiary">
-            <span aria-hidden className={`h-1 w-1 flex-shrink-0 rounded-full ${dotClass}`} />
-            <span>{label}</span>
-          </div>
+          <span aria-hidden className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${dotClass}`} />
+          <span>{label}</span>
         </motion.div>
       ) : null}
     </AnimatePresence>

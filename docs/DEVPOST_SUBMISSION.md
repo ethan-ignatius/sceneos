@@ -14,7 +14,7 @@ Powerful filmmaking, reimagined for one. SceneOS turns one idea into a finished 
 
 ## Inspiration
 
-While travelling on a bus, Alex recalled a video from Cluely's CEO discussing the rapidly rising demand for AI video generation, and how the CEO was openly hiring people who were especially good at AI video content creation, asserting that even companies with 100x the budget of Cluely would be hopping on this trend tenfold over the next year.
+While travelling on a bus, Alex recalled a video from Cluely's CEO discussing the rapidly rising demand for AI video generation. The CEO was openly hiring for that specific skill set, asserting that even companies with 100x Cluely's budget would be hopping on the trend tenfold over the next year.
 
 Previously, for Alex's own startup, he had used Higgsfield AI to generate the scenes for a movie trailer promoting a food nutritional app, and the trailer leaned on a time-travel "come back to life" sequence that worked but required meticulous planning, scripting, and Alex reliving the inner cinematographer he had only pretentiously studied back in 8th grade. Even after the AI handed him the clips, the final 2-minute trailer still cost 24 hours of editing in post-production software.
 
@@ -78,4 +78,41 @@ SceneOS intends to expand into a full suite that uses video generation APIs as t
 
 **3. A multimodal director's notebook.** Today the conversation is text-led with voice and vision as progressive enhancements, but the next step is full multimodal direction: drop a reference reel and the agent learns the visual language from it, hum a melody and the agent picks a score direction, sketch a storyboard panel and the agent matches framing across beats, all with the same goal we started with, which is to lower the prerequisite-skill bar to zero while raising the ceiling of what one person can ship in a day.
 
-The longer arc is that SceneOS is a bet that the next decade of social-media content is dominated by individuals with cinematic taste and zero crew, and that the tooling layer between idea and finished cinematic is the one that defines who wins. We want to be that tooling layer.
+The longer arc: the next decade of social-media content belongs to individuals with cinematic taste and zero crew, and the tooling layer between idea and finished cinematic decides who wins. We are building that layer.
+
+---
+
+## Built with
+
+```
+react, vite, typescript, tailwindcss, motion, gsap, three.js, react-three-fiber, drei, zustand, lenis, cmdk, radix-ui, lucide, sonner, web-speech-api, web-audio-api, python, fastapi, langgraph, langchain, google-vertex-ai, veo, fal.ai, higgsfield, cloudinary
+```
+
+*Add `openai` or `anthropic` to the list if either is wired up as the LLM behind the LangGraph agent (the list above doesn't assume one).*
+
+---
+
+## "Try it out" links
+
+- **Live demo:** https://sceneos.us
+- **GitHub repo:** https://github.com/ethan-ignatius/sceneos
+
+---
+
+## Share feedback about any technology you interacted with at this hackathon
+
+Cloudinary's `fl_splice` URL composition is the most under-marketed feature in their product. The fact that we could stitch a multi-clip cinematic together as a pure URL transformation, with no server-side rendering pass and no FFmpeg in the loop, is the reason our pipeline ships in seconds instead of minutes, and the reason we can show a live-composing URL strip on our canvas as a track-hero demo moment. The documentation could surface this capability earlier and louder, because we found it on a deep-dive through the Cloudinary docs but a lot of teams will miss it on a first pass.
+
+Google Veo via Vertex AI was the cinematic-quality benchmark for us, but the latency on a single clip generation is too long for live demo, which is why we built a provider toggle to fal.ai for the speedrun path. fal.ai's response time is impressively fast and the quality holds for a 2-minute demo flow. If Veo could halve its generation time without compromising the cinematic output, it would be the unambiguous default for everything we do.
+
+Gemini was the model we used to generate our project thumbnail key art, and the quality of the output for a single well-prompted shot was strong, with a usable cinematic image arriving on the second iteration. Where it struggled was rendering text inside the image, which is a known limitation across all current image models, so we left typography for post-processing in Figma.
+
+GitHub remains the rock everything else stands on. No notes.
+
+---
+
+## Did you implement a generative AI model or API in your hack this weekend?
+
+Yes, at every layer of the pipeline. SceneOS's stack is a layered generative AI system where a LangGraph state machine over a beat graph orchestrates a director-toned conversation per scene, that conversation runs against a frontier LLM, and the per-beat clip generation hands off to a video generation model behind a provider toggle (Google's Veo via Vertex AI for the cinematic-quality path, fal.ai for the speedrun path, and Higgsfield AI for the highest-fidelity output when latency is not the constraint). Cloudinary's `fl_splice` URL transformation then stitches the approved clips into the final cinematic, which is composition rather than generation but is what makes the generative video output usable end to end without a render farm.
+
+We used these models because the entire premise of SceneOS depends on collapsing a film crew into one creator's hands: the director conversation absorbs the cinematographer's vocabulary so the user never has to learn it, the video generation models take the camera-tight prompts that come out of that conversation and produce the actual footage, and the stitching layer turns those clips into a single shareable cinematic without the user ever leaving the browser tab. Without generative AI at every layer, the product is a wrapper around a prompt textbox; with it, the product is a real production environment for one person, which is the entire pitch.

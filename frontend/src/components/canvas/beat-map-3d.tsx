@@ -1,13 +1,13 @@
 import { Canvas, useThree } from "@react-three/fiber";
 import { Stars, Environment } from "@react-three/drei";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
 import { computeBeatPositions } from "@/lib/beat-layout";
 import { NodeMesh } from "./node-mesh";
-import { CameraRig, type PanState, type OrbitState } from "./camera-rig";
+import { CameraRig, type PanState, type OrbitState, type ZoomState } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
 
@@ -89,10 +89,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   // position=…>` prop — which read on screen as the orbs blinking out.
   const positions = useMemo(() => computeBeatPositions(beats), [beats.length]);
 
-  // Camera distance scales with beat count (#161): default 5.5 fits 5 beats;
-  // 7 needs ~6.7, 12 needs ~10.5. Pull back so outer beats stay in frustum.
+  // Camera distance scales with beat count. The new wider spread (1.55x)
+  // means a 7-beat timeline is ~10.85 world-units wide; we need to be far
+  // enough back that all of them sit comfortably inside the 42° vertical
+  // frustum (which becomes a wider horizontal frustum at 16:9 aspect).
+  //   5 beats → cameraZ 9.25  → world half-width ≈ 6.3 → spread half 3.875 (margin 2.4)
+  //   7 beats → cameraZ 10.95 → world half-width ≈ 7.5 → spread half 5.43 (margin 2.0)
+  //   12 beats → cameraZ 15.2 → world half-width ≈ 10.4 → spread half 9.3 (margin 1.1)
   // FOV widens on portrait viewports (#152) — see `<ResponsiveCamera>` below.
-  const cameraZ = 4 + Math.max(beats.length, 5) * 0.6;
+  const cameraZ = 5 + Math.max(beats.length, 5) * 0.85;
 
   // ── Pan state ──────────────────────────────────────────────────────────
   // The pan ref lives outside React so middle-drag never triggers a route
@@ -101,14 +106,31 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   const panRef = useRef<PanState>({ offset: [0, 0], active: false });
   // Orbit state — left-click-and-hold on empty space. Sticky (Maya-convention).
   const orbitRef = useRef<OrbitState>({ azimuth: 0, polar: 0, active: false, didDrag: false });
+  // Zoom — scroll-wheel adjusts camera distance on the overview view.
+  // Sticky like orbit; reset on Esc / Re-center.
+  const zoomRef = useRef<ZoomState>({ z: 0 });
   // Closure-free mirror of hoveredBeatId — pointer handlers read this to
   // decide whether a left-down should start orbiting (only if NOT on a planet).
   const hoveredBeatIdRef = useRef<string | null>(null);
   useEffect(() => {
     hoveredBeatIdRef.current = hoveredBeatId;
   }, [hoveredBeatId]);
+  // Closure-free mirror of activeBeatId — wheel handler reads this to
+  // decide whether wheel = zoom (overview) or wheel = ignored (active beat).
+  const activeBeatIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeBeatIdRef.current = activeBeatId;
+  }, [activeBeatId]);
 
-  // Middle-button drag → world-unit translation on the XY plane.
+  // Pointer bindings (Figma/Miro convention):
+  //   Left drag on empty       → pan
+  //   Shift + left drag        → orbit (power-user)
+  //   Middle drag              → pan (still works for trackball mice)
+  //   Wheel                    → zoom
+  //
+  // Left drag on a planet does nothing here (planet's onClick handles
+  // activation). Click-vs-drag is decided by a 4 px threshold; below that
+  // the click reaches onPointerMissed → toggle active beat.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -117,11 +139,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     let anchorY = 0;
     let startOffsetX = 0;
     let startOffsetY = 0;
-    // Left-drag (orbit) anchor; tracked separately from middle-drag so the
-    // two can't get tangled if the user does both within the same gesture.
-    let leftAnchorX = 0;
-    let leftAnchorY = 0;
-    const ROTATE_THRESHOLD_PX = 4;
+    const DRAG_THRESHOLD_PX = 4;
 
     // World units per screen pixel at z=0, given current camera distance + fov.
     // worldHeightAtZ0 = 2 * camDist * tan(vfov/2). Width = height * aspect.
@@ -136,29 +154,28 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button === 1) {
-        // Middle button — pan.
-        e.preventDefault(); // suppress browser auto-scroll cursor
-        panRef.current.active = true;
-        setPanning(true);
-        anchorX = e.clientX;
-        anchorY = e.clientY;
-        startOffsetX = panRef.current.offset[0];
-        startOffsetY = panRef.current.offset[1];
-        el.setPointerCapture(e.pointerId);
-        document.body.style.cursor = "grabbing";
-      } else if (e.button === 0) {
-        // Left button — orbit (only when NOT on a planet; a planet's
-        // hover means its onClick will activate the beat). Click-vs-drag
-        // is decided by the threshold in onPointerMove.
-        if (hoveredBeatIdRef.current !== null) return;
-        leftAnchorX = e.clientX;
-        leftAnchorY = e.clientY;
+      const isMiddle = e.button === 1;
+      // Left on empty: pan (default) or orbit (with shift). Left on a
+      // planet is reserved for the planet's onClick to activate the beat.
+      const isLeftEmpty = e.button === 0 && hoveredBeatIdRef.current === null;
+      if (!isMiddle && !isLeftEmpty) return;
+
+      anchorX = e.clientX;
+      anchorY = e.clientY;
+      el.setPointerCapture(e.pointerId);
+
+      if (isLeftEmpty && e.shiftKey) {
         orbitRef.current.active = true;
         orbitRef.current.didDrag = false;
-        el.setPointerCapture(e.pointerId);
-        // No cursor change yet — wait until threshold is crossed so a
-        // genuine click-on-empty-space still feels like a click.
+      } else {
+        // Pan. Middle-button preventDefault suppresses the browser's
+        // auto-scroll cursor; left-button works without it.
+        if (isMiddle) e.preventDefault();
+        panRef.current.active = true;
+        setPanning(true);
+        startOffsetX = panRef.current.offset[0];
+        startOffsetY = panRef.current.offset[1];
+        document.body.style.cursor = "grabbing";
       }
     };
 
@@ -172,34 +189,30 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         return;
       }
       if (orbitRef.current.active) {
-        const dx = e.clientX - leftAnchorX;
-        const dy = e.clientY - leftAnchorY;
+        const dx = e.clientX - anchorX;
+        const dy = e.clientY - anchorY;
         if (
           !orbitRef.current.didDrag &&
-          (Math.abs(e.clientX - leftAnchorX + (orbitRef.current.azimuth || 0)) > ROTATE_THRESHOLD_PX ||
-            Math.abs(dx) > ROTATE_THRESHOLD_PX ||
-            Math.abs(dy) > ROTATE_THRESHOLD_PX)
+          (Math.abs(dx) > DRAG_THRESHOLD_PX || Math.abs(dy) > DRAG_THRESHOLD_PX)
         ) {
           orbitRef.current.didDrag = true;
           document.body.style.cursor = "grabbing";
         }
         if (orbitRef.current.didDrag) {
-          // 0.005 rad/px feels right at typical viewport sizes —
-          // ~0.6 rad (≈35°) for a 120 px drag.
           orbitRef.current.azimuth += dx * 0.005;
           orbitRef.current.polar = THREE.MathUtils.clamp(
             orbitRef.current.polar + dy * 0.005,
             -0.6,
             0.6,
           );
-          leftAnchorX = e.clientX;
-          leftAnchorY = e.clientY;
+          anchorX = e.clientX;
+          anchorY = e.clientY;
         }
       }
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (e.button === 1 && panRef.current.active) {
+      if (panRef.current.active) {
         panRef.current.active = false;
         setPanning(false);
         try {
@@ -210,10 +223,10 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         document.body.style.cursor = "";
         return;
       }
-      if (e.button === 0 && orbitRef.current.active) {
+      if (orbitRef.current.active) {
         orbitRef.current.active = false;
-        // Leave didDrag set; onPointerMissed checks it to suppress the
-        // click→deactivate behavior. It'll be reset on next pointerdown.
+        // Leave didDrag set so onPointerMissed can suppress the
+        // click-deactivates-beat behavior; reset on next pointerdown.
         try {
           el.releasePointerCapture(e.pointerId);
         } catch {
@@ -223,12 +236,25 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       }
     };
 
+    // Wheel — zoom on overview view only. When a beat is active we let the
+    // event bubble (no preventDefault), so wheel-during-zoom doesn't fight
+    // the camera glide. Negative deltaY = wheel up = zoom in; positive =
+    // out. Clamped [-3, +5] so the user can't fly behind the planets nor
+    // zoom out into deep space and lose them.
+    const onWheel = (e: WheelEvent) => {
+      if (activeBeatIdRef.current !== null) return;
+      e.preventDefault();
+      const delta = e.deltaY * 0.004;
+      zoomRef.current.z = THREE.MathUtils.clamp(zoomRef.current.z + delta, -3, 5);
+    };
+
     el.addEventListener("pointerdown", onPointerDown);
     el.addEventListener("pointermove", onPointerMove);
     el.addEventListener("pointerup", onPointerUp);
     el.addEventListener("pointercancel", onPointerUp);
+    el.addEventListener("wheel", onWheel, { passive: false });
 
-    // External reset (Esc / Re-center button) — zero pan + orbit.
+    // External reset (Esc / Re-center button) — zero pan + orbit + zoom.
     const onReset = () => {
       panRef.current.offset[0] = 0;
       panRef.current.offset[1] = 0;
@@ -237,6 +263,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       orbitRef.current.polar = 0;
       orbitRef.current.active = false;
       orbitRef.current.didDrag = false;
+      zoomRef.current.z = 0;
       setPanning(false);
       document.body.style.cursor = "";
     };
@@ -261,6 +288,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerUp);
+      el.removeEventListener("wheel", onWheel);
       window.removeEventListener(RESET_CAMERA_EVENT, onReset);
       window.removeEventListener(GOTO_CAMERA_EVENT, onGoto);
     };
@@ -300,21 +328,33 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
         <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
-        {/* `background={false}` keeps the HDR for reflections only — we keep
-            our explicit warm-near-black `<color>` background. */}
-        <Environment preset="night" background={false} />
-        <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} fade speed={0.3} />
+        {/* INNER Suspense boundary — critical. Without this, any texture or
+            HDR load that suspends inside the Canvas (Environment HDR, planet
+            textures, ring alpha) propagates UP through the React tree to the
+            outer Suspense in canvas-route.tsx, which unmounts the WHOLE
+            BeatMap3D and shows "Composing the canvas." Result: planets pop
+            in, then a transient cache miss on a single texture takes them
+            all down. Localising the boundary here means a re-suspension only
+            briefly hides the suspended subtree, never the entire canvas.
+            Fallback is null (an invisible WebGL "gap") because we never want
+            DOM chrome to flash inside the GL surface. */}
+        <Suspense fallback={null}>
+          {/* `background={false}` keeps the HDR for reflections only — we keep
+              our explicit warm-near-black `<color>` background. */}
+          <Environment preset="night" background={false} />
+          <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} fade speed={0.3} />
 
-        <ConnectingPath positions={positions} />
+          <ConnectingPath positions={positions} />
 
-        {beats.map((beat, i) => (
-          <NodeMesh
-            key={beat.beatId}
-            beat={beat}
-            position={positions[i]}
-            onHoverChange={setHoveredBeatId}
-          />
-        ))}
+          {beats.map((beat, i) => (
+            <NodeMesh
+              key={beat.beatId}
+              beat={beat}
+              position={positions[i]}
+              onHoverChange={setHoveredBeatId}
+            />
+          ))}
+        </Suspense>
 
         <AmbientParticles velocityRef={velocityRef} />
 
@@ -326,6 +366,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           overviewZ={cameraZ}
           panRef={panRef}
           orbitRef={orbitRef}
+          zoomRef={zoomRef}
         />
 
         {/* Postprocessing stack:

@@ -21,10 +21,13 @@ const PROVIDER_LABEL: Record<GenerationProvider, string> = {
   cached: "Cached · demo",
 };
 
+// Sentence-case stage labels. The previous tracked-uppercase variants
+// ("STORYBOARD GENERATED", etc.) read as legacy enterprise dashboard chrome —
+// loud, dated, and fighting the rest of the UI's quieter sentence-case voice.
 const STAGES = [
-  { id: "storyboard", label: "Storyboard generated", end: 0.5 },
-  { id: "render", label: "Clip rendering", end: 1.4 },
-  { id: "upload", label: "Uploading to Cloudinary", end: Infinity },
+  { id: "storyboard", label: "Storyboard set.", end: 0.5 },
+  { id: "render", label: "Clip rendering.", end: 1.4 },
+  { id: "upload", label: "Uploading to Cloudinary.", end: Infinity },
 ] as const;
 
 /**
@@ -60,12 +63,13 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
 
   return (
     <div className="flex h-full flex-col gap-5">
-      {/* 16:9 blur-pulse placeholder. */}
-      <div className="relative aspect-video overflow-hidden rounded-md border border-brand-ember/30 bg-bg-elev-2">
+      {/* 16:9 blur-pulse placeholder. Display-italic line replaces the
+          tracked-uppercase mono label — same information, less shouty.  */}
+      <div className="relative aspect-video overflow-hidden rounded-lg border border-brand-ember/25 bg-bg-elev-2">
         <div className="animate-blur-pulse absolute inset-0" />
         <div className="absolute inset-0 grid place-items-center">
-          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-brand-ember/80">
-            Composing the frame
+          <div className="font-display text-[15px] italic text-brand-ember/85">
+            Composing the frame.
           </div>
         </div>
         {/* Faint progress streak across the bottom edge. */}
@@ -76,7 +80,8 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
         />
       </div>
 
-      {/* Three steppers. */}
+      {/* Three steppers — sentence-case body type. The active row's ember dot
+          slides between siblings via Motion's layoutId. */}
       <ul className="space-y-1">
         {STAGES.map((stage, i) => {
           const done = i < activeIndex;
@@ -85,14 +90,12 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
             <li
               key={stage.id}
               className={cn(
-                "relative flex items-center gap-3 rounded-md px-3 py-2 font-mono text-[11px] uppercase tracking-[0.18em]",
+                "relative flex items-center gap-3 rounded-md px-3 py-2 font-body text-[12.5px]",
                 done && "text-fg-secondary",
                 active && "text-brand-ember",
                 !done && !active && "text-fg-tertiary",
               )}
             >
-              {/* Sliding ember dot — only the active row renders the layoutId
-                  span, so Motion morphs it between siblings. */}
               {active ? (
                 <motion.span
                   layoutId="gen-active-dot"
@@ -116,16 +119,15 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
         })}
       </ul>
 
-      {/* Live timer. */}
-      <div className="flex items-baseline justify-between border-t border-fg-tertiary/30 pt-3 font-mono text-xs text-fg-tertiary">
+      {/* Live timer. Provider label lifted out of all-caps tracking — sit it
+          in mono small-caps territory but no uppercase-transform shouting. */}
+      <div className="flex items-baseline justify-between border-t border-fg-tertiary/20 pt-3 font-body text-[11.5px] text-fg-tertiary">
         <span>
-          <span className="text-fg-secondary tabular-nums">{formatTime(elapsed)}</span>
+          <span className="font-mono tabular-nums text-fg-secondary">{formatTime(elapsed)}</span>
           <span className="mx-2 text-fg-tertiary/60">/</span>
-          <span className="tabular-nums">~{formatTime(totalEst)}</span>
+          <span className="font-mono tabular-nums">~{formatTime(totalEst)}</span>
         </span>
-        <span className="uppercase tracking-[0.18em]">
-          {provider ? PROVIDER_LABEL[provider] : "Connecting…"}
-        </span>
+        <span>{provider ? PROVIDER_LABEL[provider] : "Connecting…"}</span>
       </div>
     </div>
   );

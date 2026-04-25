@@ -30,6 +30,26 @@ export function CrumpleBridgeRoute() {
   // GSAP-mutated ref bridge into the shader. Avoids per-frame React renders.
   const progressRef = useRef({ value: 0 });
 
+  // Second-line texture preload. Landing fires its preload on mount, but if
+  // the user typed and submitted in <2s the network may not have pulled all
+  // 9 planet textures yet. The bridge plays for 1.6s — that's a free
+  // window to keep warming the cache so the canvas opens with everything
+  // resident. Idempotent: drei's loader cache short-circuits already-loaded
+  // urls, so this is a no-op when landing's preload already finished.
+  useEffect(() => {
+    void Promise.all([
+      import("@react-three/drei"),
+      import("@/lib/planet-templates"),
+    ])
+      .then(([{ useTexture }, { PLANET_TEXTURE_PRELOAD_LIST, SATURN_RING_TEXTURE }]) => {
+        useTexture.preload([...PLANET_TEXTURE_PRELOAD_LIST, SATURN_RING_TEXTURE]);
+      })
+      .catch(() => {});
+    // Also warm the canvas + node-mesh JS chunks so the lazy() in
+    // canvas-route.tsx doesn't pay a parse cost on top of texture loads.
+    void import("@/components/canvas/beat-map-3d").catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
