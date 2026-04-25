@@ -9,6 +9,7 @@ import { StitchTray } from "@/components/stitch/stitch-tray";
 import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
+import { Minimap } from "@/components/canvas/minimap";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
@@ -147,6 +148,11 @@ export function CanvasRoute() {
       {/* Always-visible URL strip — Cloudinary track-hero feature is no
           longer hidden behind the stitch tray (VIABILITY V2 / issue #072). */}
       <PersistentUrlStrip onOpenTray={() => setStitchOpen(true)} />
+
+      {/* 2D top-down minimap — the React-Flow-style overview. Click a beat
+          to fly the camera to it. Hidden when the stitch tray is open
+          (it would overlap on smaller viewports). */}
+      {!stitchOpen ? <Minimap beats={manifest.beats} activeBeatId={activeBeatId} /> : null}
 
       {/* Re-center affordance — bottom-right corner. Subdued by default,
           ember on hover. Always available; the keyboard shortcut (Esc) is

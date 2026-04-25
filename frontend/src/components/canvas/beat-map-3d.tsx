@@ -18,6 +18,13 @@ import { AmbientParticles } from "./ambient-particles";
  */
 export const RESET_CAMERA_EVENT = "sceneos:camera:reset";
 
+/**
+ * Minimap → camera bridge. Detail: { beatId } activates that beat (camera
+ * arcs into orbit). Same one-shot CustomEvent pattern as RESET; lives at
+ * the same level so the minimap stays decoupled from the WebGL tree.
+ */
+export const GOTO_CAMERA_EVENT = "sceneos:camera:goto";
+
 interface BeatMap3DProps {
   beats: Beat[];
 }
@@ -167,12 +174,27 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
     window.addEventListener(RESET_CAMERA_EVENT, onReset);
 
+    // Minimap → camera-rig bridge. The minimap dispatches a CustomEvent
+    // with { beatId } as detail; we activate that beat in the store, which
+    // CameraRig already reacts to (it arcs into orbit).
+    const onGoto = (e: Event) => {
+      const detail = (e as CustomEvent<{ beatId?: string }>).detail;
+      if (detail?.beatId) {
+        // Clear pan first so the orbit lands on the beat center.
+        panRef.current.offset[0] = 0;
+        panRef.current.offset[1] = 0;
+        useBeatGraphStore.getState().setActiveBeat(detail.beatId);
+      }
+    };
+    window.addEventListener(GOTO_CAMERA_EVENT, onGoto);
+
     return () => {
       el.removeEventListener("pointerdown", onPointerDown);
       el.removeEventListener("pointermove", onPointerMove);
       el.removeEventListener("pointerup", onPointerUp);
       el.removeEventListener("pointercancel", onPointerUp);
       window.removeEventListener(RESET_CAMERA_EVENT, onReset);
+      window.removeEventListener(GOTO_CAMERA_EVENT, onGoto);
     };
   }, [cameraZ]);
 
