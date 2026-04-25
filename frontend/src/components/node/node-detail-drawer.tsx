@@ -157,9 +157,12 @@ export function NodeDetailDrawer() {
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 24, opacity: 0 }}
       transition={SPRING.drawer}
-      // Bottom-sheet on <md, side-drawer on >=md (issue #155). Mobile gets
-      // 85svh max so the canvas peek behind the sheet stays visible.
-      className="fixed inset-x-0 bottom-0 z-40 flex max-h-[85svh] w-full flex-col rounded-t-md border-t border-fg-tertiary/15 bg-[#14110f]/[0.97] backdrop-blur-2xl md:absolute md:inset-y-0 md:right-0 md:bottom-auto md:top-0 md:max-h-none md:w-full md:max-w-[36rem] md:rounded-none md:border-l md:border-t-0"
+      // Floating panel — credit-card / Phantom / Wealthsimple geometry.
+      // Mobile: bottom sheet that floats above the URL strip (still has
+      // its own rounded corners). Desktop: a free-floating right panel
+      // with margin from every viewport edge, rounded-2xl, soft shadow.
+      // No more edge-to-edge "stuck" feel.
+      className="fixed inset-x-3 bottom-3 z-40 flex max-h-[85svh] w-auto flex-col rounded-2xl border border-fg-tertiary/15 bg-[#14110f]/[0.92] backdrop-blur-2xl shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)] md:absolute md:inset-x-auto md:bottom-4 md:right-4 md:top-20 md:max-h-none md:w-[34rem] md:max-w-[calc(100vw-2rem)]"
     >
       <motion.div
         initial="hidden"

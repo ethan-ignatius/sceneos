@@ -163,85 +163,68 @@ export function LandingRoute() {
 
         {/* Content — single centered composition. No nav. No corners. No chrome. */}
         <section className="relative z-10 flex min-h-[100svh] flex-col items-center justify-center px-6 py-16 sm:px-10">
-          {/* Headline. One line, four words, sparkles drifting over.
-              Italic on the connective per the editorial rule. */}
-          <motion.h1
-            initial="hidden"
-            animate="visible"
-            className="relative inline-flex flex-wrap items-baseline justify-center text-center font-display font-medium leading-[0.95] tracking-[-0.045em]"
-            style={{
-              fontSize: "clamp(3rem, 11vw, 9rem)",
-              color: "#f5efe7",
-            }}
-          >
-            <SparkleField count={14} className="text-brand-ember" />
-            {["Direct", "a", "cinematic."].map((word, i) => {
-              const isItalic = word === "a";
-              return (
-                <motion.span
-                  key={i}
-                  initial={{ y: 28, opacity: 0, filter: "blur(8px)" }}
-                  animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
-                  transition={{
-                    duration: 0.9,
-                    delay: 0.3 + i * 0.12,
-                    ease: [0.16, 1, 0.3, 1],
-                  }}
-                  className={cn(
-                    "relative inline-block",
-                    isItalic && "italic text-fg-secondary",
-                  )}
-                  style={{ marginRight: i < 2 ? "0.28em" : 0 }}
-                >
-                  {word}
-                </motion.span>
-              );
-            })}
-          </motion.h1>
+          {/* Headline. One line, no wrap. Cap reduced from 9rem→6.5rem so
+              it never overshoots the viewport vertically and the "Direct a
+              cinematic." reads as a single composed line rather than a
+              wrapped marquee. Sparkles are pinned to a relative wrapper
+              so they drift over the headline area and only the headline. */}
+          <div className="relative">
+            <SparkleField count={12} className="text-brand-ember/85" />
+            <motion.h1
+              initial="hidden"
+              animate="visible"
+              className="whitespace-nowrap text-center font-display font-medium leading-[0.96] tracking-[-0.04em]"
+              style={{
+                fontSize: "clamp(2.5rem, 8.5vw, 6.5rem)",
+                color: "#f5efe7",
+              }}
+            >
+              {["Direct", "a", "cinematic."].map((word, i) => {
+                const isItalic = word === "a";
+                return (
+                  <motion.span
+                    key={i}
+                    initial={{ y: 28, opacity: 0, filter: "blur(8px)" }}
+                    animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
+                    transition={{
+                      duration: 0.9,
+                      delay: 0.3 + i * 0.12,
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
+                    className={cn(
+                      "inline-block",
+                      isItalic && "italic text-fg-secondary",
+                    )}
+                    style={{ marginRight: i < 2 ? "0.28em" : 0 }}
+                  >
+                    {word}
+                  </motion.span>
+                );
+              })}
+            </motion.h1>
+          </div>
 
-          {/* Combined input pill — text + voice + submit, all one element.
-              Pattern adapted from the PromptInputBox reference: rounded-3xl,
-              dark surface, mic on the left, submit on the right. The
-              auto-grow textarea avoids the "input vs textarea" choice. */}
+          {/* Combined input pill — actions row BELOW the textarea so the
+              mic doesn't drift down with the textarea as it grows.
+              Matches the PromptInputBox reference exactly: textarea on top,
+              flex-row beneath with mic on the left, submit on the right. */}
           <motion.form
             onSubmit={submit}
             initial={{ y: 24, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: 0.8, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-12 w-full max-w-[40rem]"
+            className="mt-10 w-full max-w-[40rem]"
           >
             <div
               className={cn(
-                "relative flex items-end gap-2 rounded-[1.75rem] border bg-bg-elev-1/80 p-2 pl-3.5 backdrop-blur-xl transition-all duration-300",
+                "rounded-[1.75rem] border bg-bg-elev-1/80 p-3 backdrop-blur-xl transition-all duration-300",
                 "shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)]",
                 focused
-                  ? "border-brand-ember/45 shadow-[0_0_0_1px_rgba(240,168,104,0.25),_0_24px_60px_-20px_rgba(0,0,0,0.7)]"
-                  : "border-fg-tertiary/25",
+                  ? "border-brand-ember/45 shadow-[0_0_0_1px_rgba(240,168,104,0.22),_0_24px_60px_-20px_rgba(0,0,0,0.7)]"
+                  : "border-fg-tertiary/22",
                 speech.listening && "border-brand-ember/60",
               )}
             >
-              {/* Mic — toggles dictation. */}
-              {speech.supported ? (
-                <button
-                  type="button"
-                  onClick={toggleVoice}
-                  aria-label={speech.listening ? "Stop dictation" : "Speak your idea"}
-                  aria-pressed={speech.listening}
-                  className={cn(
-                    "grid h-10 w-10 flex-shrink-0 place-items-center rounded-full transition-colors duration-200",
-                    speech.listening
-                      ? "bg-brand-ember/15 text-brand-ember"
-                      : "text-fg-tertiary hover:bg-bg-elev-2 hover:text-fg-secondary",
-                  )}
-                >
-                  {speech.listening ? (
-                    <MicOff size={16} strokeWidth={1.6} aria-hidden="true" />
-                  ) : (
-                    <Mic size={16} strokeWidth={1.6} aria-hidden="true" />
-                  )}
-                </button>
-              ) : null}
-
               <textarea
                 ref={inputRef}
                 autoFocus
@@ -261,33 +244,79 @@ export function LandingRoute() {
                     ? "listening…"
                     : "tell me a moment you can't get out of your head…"
                 }
-                className={cn(
-                  "flex-1 resize-none self-center bg-transparent py-2.5 text-base leading-snug text-fg-primary placeholder:text-fg-tertiary/80",
-                  "focus:outline-none",
-                )}
-                style={{ maxHeight: 200 }}
+                className="block w-full resize-none bg-transparent px-2 pt-1.5 pb-1 text-base leading-snug text-fg-primary placeholder:text-fg-tertiary/80 focus:outline-none"
+                style={{ maxHeight: 220 }}
               />
 
-              {/* Submit — circular ember when ready, ghost otherwise. */}
-              <motion.button
-                type="submit"
-                disabled={!ready}
-                aria-label="Begin"
-                whileTap={ready ? { scale: 0.94 } : undefined}
-                className={cn(
-                  "grid h-10 w-10 flex-shrink-0 place-items-center rounded-full transition-all duration-200",
-                  ready
-                    ? "bg-brand-ember text-bg-base shadow-[0_0_18px_rgba(240,168,104,0.45)] hover:bg-brand-ember/90"
-                    : "bg-fg-tertiary/15 text-fg-tertiary",
-                )}
-              >
-                <ArrowUp size={16} strokeWidth={2} aria-hidden="true" />
-              </motion.button>
+              {/* Action row. Mic on the left (when supported); submit on the
+                  right. `mt-1` keeps a tight gap; the row is fixed-height so
+                  the textarea can grow above without disturbing the mic
+                  position — the bug the user flagged from the previous pass. */}
+              <div className="mt-1 flex items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-1.5">
+                  {speech.supported ? (
+                    <button
+                      type="button"
+                      onClick={toggleVoice}
+                      aria-label={speech.listening ? "Stop dictation" : "Speak your idea"}
+                      aria-pressed={speech.listening}
+                      className={cn(
+                        "grid h-9 w-9 place-items-center rounded-full transition-colors duration-200",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base",
+                        speech.listening
+                          ? "bg-brand-ember/15 text-brand-ember"
+                          : "text-fg-tertiary hover:bg-bg-elev-2 hover:text-fg-secondary",
+                      )}
+                    >
+                      {speech.listening ? (
+                        <MicOff size={15} strokeWidth={1.7} aria-hidden="true" />
+                      ) : (
+                        <Mic size={15} strokeWidth={1.7} aria-hidden="true" />
+                      )}
+                    </button>
+                  ) : null}
+
+                  {/* Live listening indicator — three thin bars pulsing in
+                      sequence. Only renders while the engine is active. */}
+                  {speech.listening ? (
+                    <div className="flex items-center gap-[3px] pl-1" aria-hidden="true">
+                      {[0, 1, 2].map((i) => (
+                        <motion.span
+                          key={i}
+                          className="block w-[2px] rounded-full bg-brand-ember"
+                          animate={{ height: [6, 14, 6] }}
+                          transition={{
+                            duration: 0.85,
+                            repeat: Infinity,
+                            delay: i * 0.12,
+                            ease: "easeInOut",
+                          }}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <motion.button
+                  type="submit"
+                  disabled={!ready}
+                  aria-label="Begin"
+                  whileTap={ready ? { scale: 0.94 } : undefined}
+                  className={cn(
+                    "grid h-9 w-9 place-items-center rounded-full transition-all duration-200",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base",
+                    ready
+                      ? "bg-brand-ember text-bg-base shadow-[0_0_18px_rgba(240,168,104,0.45)] hover:bg-brand-ember/90"
+                      : "bg-fg-tertiary/15 text-fg-tertiary",
+                  )}
+                >
+                  <ArrowUp size={15} strokeWidth={2.2} aria-hidden="true" />
+                </motion.button>
+              </div>
             </div>
 
             {/* Microhint — one line, fades in after the input lands. The
-                only secondary copy on the page; reads as a director's
-                whisper, not a tooltip. */}
+                only secondary copy on the page. */}
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -296,9 +325,7 @@ export function LandingRoute() {
             >
               {!reducedMotion ? (
                 <>
-                  press{" "}
-                  <span className="font-mono text-fg-secondary">enter</span>
-                  {" "}or speak.
+                  press <span className="font-mono text-fg-secondary">enter</span> or speak.
                 </>
               ) : (
                 <>press enter or speak.</>

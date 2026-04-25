@@ -16,6 +16,23 @@ export interface PanState {
   active: boolean;
 }
 
+/**
+ * Free-orbit state. Left-click-and-hold on empty space rotates the camera
+ * around the scene origin (Maya / Blender convention). Sticky — does NOT
+ * decay on release; only Esc / Re-center zeros it.
+ *   azimuth   horizontal rotation, radians
+ *   polar     vertical rotation, radians, clamped ±0.6 to avoid flipping
+ *   didDrag   set true when the gesture exceeded the click-vs-drag threshold;
+ *             read by R3F's onPointerMissed to suppress the
+ *             "click-on-empty-deactivates-beat" behaviour after a drag.
+ */
+export interface OrbitState {
+  azimuth: number;
+  polar: number;
+  active: boolean;
+  didDrag: boolean;
+}
+
 interface CameraRigProps {
   beats: Beat[];
   /** Parallel array of [x, y, z] from `computeBeatPositions(beats)`. */
@@ -27,6 +44,8 @@ interface CameraRigProps {
   overviewZ?: number;
   /** Pan state ref written from BeatMap3D's middle-mouse handler. */
   panRef?: MutableRefObject<PanState>;
+  /** Orbit state ref written from BeatMap3D's left-mouse-on-empty handler. */
+  orbitRef?: MutableRefObject<OrbitState>;
 }
 
 const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
@@ -47,7 +66,7 @@ const OVERVIEW_LOOK = new THREE.Vector3(0, 0, 0);
  * Rationale for not using GSAP: see docs/CANVAS_3D.md §2. Per-frame
  * lerping handles continuous, multi-source state better than tweens.
  */
-export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overviewZ = 5.5, panRef }: CameraRigProps) {
+export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overviewZ = 5.5, panRef, orbitRef }: CameraRigProps) {
   const { camera } = useThree();
   const overviewPos = useRef(new THREE.Vector3(0, 0.4, overviewZ));
   // Keep overview position in sync with the dynamic overviewZ — without this,
@@ -89,7 +108,23 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
       targetPos.current.set(ax + 0.2 + azimuth, ay + 0.4, az + 0.6);
       targetLook.current.set(ax, ay, az);
     } else {
-      targetPos.current.copy(overviewPos.current);
+      // ── Free-orbit (left-drag on empty space) ──────────────────────
+      // When the user drags on empty space, we orbit the camera around
+      // the scene origin (look-at stays at OVERVIEW_LOOK). Spherical
+      // coords: rotate position by azimuth (Y axis) and polar (X axis,
+      // clamped). Sticky — no decay; Esc / Re-center zeros it.
+      const azimuth = orbitRef?.current.azimuth ?? 0;
+      const polar = orbitRef?.current.polar ?? 0;
+      if (azimuth !== 0 || polar !== 0) {
+        const rad = overviewZ;
+        const cosPolar = Math.cos(polar);
+        const x = rad * Math.sin(azimuth) * cosPolar;
+        const z = rad * Math.cos(azimuth) * cosPolar;
+        const y = 0.4 + rad * Math.sin(polar) * 0.4;
+        targetPos.current.set(x, y, z);
+      } else {
+        targetPos.current.copy(overviewPos.current);
+      }
       targetLook.current.copy(OVERVIEW_LOOK);
 
       // ── Pan offset (additive, only on overview) ──────────────────────

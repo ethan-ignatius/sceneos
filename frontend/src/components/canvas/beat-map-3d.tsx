@@ -7,7 +7,7 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
 import { computeBeatPositions } from "@/lib/beat-layout";
 import { NodeMesh } from "./node-mesh";
-import { CameraRig, type PanState } from "./camera-rig";
+import { CameraRig, type PanState, type OrbitState } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
 
@@ -99,6 +99,14 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   // re-render. CameraRig reads it each frame; this component writes to it
   // from pointer events. RESET_CAMERA_EVENT (Esc / Re-center) zeros it.
   const panRef = useRef<PanState>({ offset: [0, 0], active: false });
+  // Orbit state — left-click-and-hold on empty space. Sticky (Maya-convention).
+  const orbitRef = useRef<OrbitState>({ azimuth: 0, polar: 0, active: false, didDrag: false });
+  // Closure-free mirror of hoveredBeatId — pointer handlers read this to
+  // decide whether a left-down should start orbiting (only if NOT on a planet).
+  const hoveredBeatIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    hoveredBeatIdRef.current = hoveredBeatId;
+  }, [hoveredBeatId]);
 
   // Middle-button drag → world-unit translation on the XY plane.
   useEffect(() => {
@@ -109,6 +117,11 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     let anchorY = 0;
     let startOffsetX = 0;
     let startOffsetY = 0;
+    // Left-drag (orbit) anchor; tracked separately from middle-drag so the
+    // two can't get tangled if the user does both within the same gesture.
+    let leftAnchorX = 0;
+    let leftAnchorY = 0;
+    const ROTATE_THRESHOLD_PX = 4;
 
     // World units per screen pixel at z=0, given current camera distance + fov.
     // worldHeightAtZ0 = 2 * camDist * tan(vfov/2). Width = height * aspect.
@@ -123,40 +136,91 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
 
     const onPointerDown = (e: PointerEvent) => {
-      // Middle button only. Left = node click; right = browser default.
-      if (e.button !== 1) return;
-      e.preventDefault(); // suppress browser auto-scroll cursor
-      panRef.current.active = true;
-      setPanning(true);
-      anchorX = e.clientX;
-      anchorY = e.clientY;
-      startOffsetX = panRef.current.offset[0];
-      startOffsetY = panRef.current.offset[1];
-      el.setPointerCapture(e.pointerId);
-      document.body.style.cursor = "grabbing";
+      if (e.button === 1) {
+        // Middle button — pan.
+        e.preventDefault(); // suppress browser auto-scroll cursor
+        panRef.current.active = true;
+        setPanning(true);
+        anchorX = e.clientX;
+        anchorY = e.clientY;
+        startOffsetX = panRef.current.offset[0];
+        startOffsetY = panRef.current.offset[1];
+        el.setPointerCapture(e.pointerId);
+        document.body.style.cursor = "grabbing";
+      } else if (e.button === 0) {
+        // Left button — orbit (only when NOT on a planet; a planet's
+        // hover means its onClick will activate the beat). Click-vs-drag
+        // is decided by the threshold in onPointerMove.
+        if (hoveredBeatIdRef.current !== null) return;
+        leftAnchorX = e.clientX;
+        leftAnchorY = e.clientY;
+        orbitRef.current.active = true;
+        orbitRef.current.didDrag = false;
+        el.setPointerCapture(e.pointerId);
+        // No cursor change yet — wait until threshold is crossed so a
+        // genuine click-on-empty-space still feels like a click.
+      }
     };
 
     const onPointerMove = (e: PointerEvent) => {
-      if (!panRef.current.active) return;
-      const { x: wpxX, y: wpxY } = worldPerPx();
-      // Drag-right moves camera target right → scene drifts left. Match
-      // common 3D-tool convention where dragging brings the world with you.
-      const dx = (e.clientX - anchorX) * wpxX;
-      const dy = (e.clientY - anchorY) * wpxY;
-      panRef.current.offset[0] = startOffsetX - dx;
-      panRef.current.offset[1] = startOffsetY + dy; // screen-y is flipped
+      if (panRef.current.active) {
+        const { x: wpxX, y: wpxY } = worldPerPx();
+        const dx = (e.clientX - anchorX) * wpxX;
+        const dy = (e.clientY - anchorY) * wpxY;
+        panRef.current.offset[0] = startOffsetX - dx;
+        panRef.current.offset[1] = startOffsetY + dy; // screen-y flipped
+        return;
+      }
+      if (orbitRef.current.active) {
+        const dx = e.clientX - leftAnchorX;
+        const dy = e.clientY - leftAnchorY;
+        if (
+          !orbitRef.current.didDrag &&
+          (Math.abs(e.clientX - leftAnchorX + (orbitRef.current.azimuth || 0)) > ROTATE_THRESHOLD_PX ||
+            Math.abs(dx) > ROTATE_THRESHOLD_PX ||
+            Math.abs(dy) > ROTATE_THRESHOLD_PX)
+        ) {
+          orbitRef.current.didDrag = true;
+          document.body.style.cursor = "grabbing";
+        }
+        if (orbitRef.current.didDrag) {
+          // 0.005 rad/px feels right at typical viewport sizes —
+          // ~0.6 rad (≈35°) for a 120 px drag.
+          orbitRef.current.azimuth += dx * 0.005;
+          orbitRef.current.polar = THREE.MathUtils.clamp(
+            orbitRef.current.polar + dy * 0.005,
+            -0.6,
+            0.6,
+          );
+          leftAnchorX = e.clientX;
+          leftAnchorY = e.clientY;
+        }
+      }
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (e.button !== 1 || !panRef.current.active) return;
-      panRef.current.active = false;
-      setPanning(false);
-      try {
-        el.releasePointerCapture(e.pointerId);
-      } catch {
-        /* released already; no-op */
+      if (e.button === 1 && panRef.current.active) {
+        panRef.current.active = false;
+        setPanning(false);
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* released already; no-op */
+        }
+        document.body.style.cursor = "";
+        return;
       }
-      document.body.style.cursor = "";
+      if (e.button === 0 && orbitRef.current.active) {
+        orbitRef.current.active = false;
+        // Leave didDrag set; onPointerMissed checks it to suppress the
+        // click→deactivate behavior. It'll be reset on next pointerdown.
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* noop */
+        }
+        document.body.style.cursor = "";
+      }
     };
 
     el.addEventListener("pointerdown", onPointerDown);
@@ -164,11 +228,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     el.addEventListener("pointerup", onPointerUp);
     el.addEventListener("pointercancel", onPointerUp);
 
-    // External reset (Esc / Re-center button) — zero the pan offset.
+    // External reset (Esc / Re-center button) — zero pan + orbit.
     const onReset = () => {
       panRef.current.offset[0] = 0;
       panRef.current.offset[1] = 0;
       panRef.current.active = false;
+      orbitRef.current.azimuth = 0;
+      orbitRef.current.polar = 0;
+      orbitRef.current.active = false;
+      orbitRef.current.didDrag = false;
       setPanning(false);
       document.body.style.cursor = "";
     };
@@ -210,23 +278,25 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           gl.toneMapping = THREE.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.0;
         }}
-        // Click on empty canvas (the missed event) returns to overview.
+        // Click on empty canvas (the missed event) returns to overview —
+        // BUT only if we didn't just rotate. orbitRef.didDrag stays true
+        // from the drag's pointerup until the next pointerdown, so this
+        // check correctly tells "click" from "drag-then-release."
         onPointerMissed={() => {
+          if (orbitRef.current.didDrag) return;
           if (activeBeatId) setActiveBeat(null);
         }}
       >
         <color attach="background" args={["#0a0908"]} />
         <ResponsiveCamera baseFov={42} baseZ={cameraZ} />
 
-        {/* Lighting recalibrated for textured planet bodies (Phase 2):
-              ambient 0.6→0.35 — textures carry their own tonal range; over-
-                lighting them flattens detail. Keep enough fill that the
-                shadowed crescent still reads.
-              warm key 2.4 — Sun-side accent; matches our "ember is the only
-                hue language" rule (PHILOSOPHY §3).
-              cool fill 1.0 — counterweight, prevents the dark side from
-                disappearing into bg-base. */}
-        <ambientLight intensity={0.35} />
+        {/* Lighting — pending planets must read clearly even with no emissive
+            or atmosphere (per user: "initially none should be lit"). The
+            previous 0.35 ambient was leaving Mercury and Moon at ~0.10
+            brightness against bg-base 0.04 — borderline invisible. Bumped
+            to 0.55 so non-luminous planets stay readable from texture +
+            ambient alone, before they ever earn a glow. */}
+        <ambientLight intensity={0.55} />
         <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
         <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
@@ -255,6 +325,7 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           hoveredBeatId={hoveredBeatId}
           overviewZ={cameraZ}
           panRef={panRef}
+          orbitRef={orbitRef}
         />
 
         {/* Postprocessing stack:

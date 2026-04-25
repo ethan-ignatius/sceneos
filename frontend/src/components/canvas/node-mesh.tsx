@@ -155,27 +155,32 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     // Per-status emissive ramp. The Sun (planet.isEmissive) carries the
     // texture as its emissive map, so its "off" state still has presence;
     // other planets ramp emissive from 0 (todo) up to 0.6 (approved).
+    // Hard rule per user: ONLY completed beats glow. Pending + questioning
+    // planets read as cold textured spheres lit by ambient + key/fill lights
+    // alone. The previous "Sun pending = 0.55" baseline was leaving exactly
+    // ONE planet visibly hot when none should be — fixed.
     let baseEmissive: number;
     if (planet.isEmissive) {
-      // Sun-like body: never goes fully cold. Texture-as-emissive plus a
-      // multiplier that maps cleanly to "how bright is the corona."
+      // Sun: emissive is what makes it "the sun." Pending Sun = pre-dawn (no
+      // emission). Approved Sun = full corona.
       if (isActive) baseEmissive = 1.15;
       else if (isApproved) baseEmissive = 1.0;
-      else if (isPreviewState) baseEmissive = 0.9;
-      else if (isGenerating) baseEmissive = 0.85;
-      else if (isReady) baseEmissive = 0.8;
-      else if (hover) baseEmissive = 0.65;
-      else baseEmissive = 0.55; // todo Sun — visibly the Sun, not glowing
+      else if (isPreviewState) baseEmissive = 0.85;
+      else if (isGenerating) baseEmissive = 0.7;
+      else if (isReady) baseEmissive = 0.55;
+      else if (hover) baseEmissive = 0.25;
+      else baseEmissive = 0; // pending + questioning — DARK
     } else {
-      // Non-luminous body: emissive is the "ember haze" we layer onto a
-      // textured planet to communicate "this beat is in progress / done."
-      if (isActive) baseEmissive = 0.55;
-      else if (isApproved) baseEmissive = 0.5;
+      // Non-luminous body: ember haze layered onto the texture. Zero until
+      // the user has clipped the beat (preview/approved). Active/ready get
+      // a small lift for "you're working on this."
+      if (isActive) baseEmissive = 0.45;
+      else if (isApproved) baseEmissive = 0.55;
       else if (isPreviewState) baseEmissive = 0.4;
-      else if (isGenerating) baseEmissive = 0.35;
-      else if (isReady) baseEmissive = 0.28;
-      else if (hover) baseEmissive = 0.18;
-      else baseEmissive = 0.0; // todo — no glow, the texture stands alone
+      else if (isGenerating) baseEmissive = 0.3;
+      else if (isReady) baseEmissive = 0.22;
+      else if (hover) baseEmissive = 0.12;
+      else baseEmissive = 0; // pending + questioning — DARK
     }
     // Pulses layered on the active states. ready = anticipation pulse;
     // generating = breathing pulse (faster, more present).
@@ -189,6 +194,9 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     // Atmosphere opacity carries the strongest "glow" signal. Pending /
     // questioning planets have a near-invisible halo (0–0.16) — they read
     // as "to do" without disappearing. Ready+ states light up.
+    // Atmosphere — strongest "this beat is alive" signal. Zero on pending
+    // (no halo at all → planet reads as inert) so the user sees ONLY the
+    // completed beats glowing.
     const auni = atmosphereMat.uniforms;
     if (auni) {
       let baseOpacity: number;
@@ -196,9 +204,9 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
       else if (isApproved) baseOpacity = 0.62;
       else if (isPreviewState) baseOpacity = 0.55;
       else if (isGenerating) baseOpacity = 0.48;
-      else if (isReady) baseOpacity = 0.45;
-      else if (isQuestioning) baseOpacity = hover ? 0.28 : 0.16;
-      else baseOpacity = hover ? 0.22 : 0.1; // pending
+      else if (isReady) baseOpacity = 0.4;
+      else if (isQuestioning) baseOpacity = hover ? 0.18 : 0.06;
+      else baseOpacity = hover ? 0.12 : 0; // pending — completely dark
       const pulse =
         (isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.06 + 0.06 : 0) +
         (isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.05 + 0.05 : 0);
@@ -287,16 +295,17 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
       {/* Floating label — hidden whenever an overlay is layered above the
           canvas, since drei <Html> renders DOM siblings of the Canvas and
           would otherwise bleed through translucent panels. Untouched beats
-          drop to a cool grey so the to-do state reads in 2D as well as 3D. */}
+          drop to a cool grey so the to-do state reads in 2D as well as 3D.
+          Approved beats get an explicit "✓" prefix so the completion state
+          is unmistakable from any distance. */}
       {!labelsHidden ? (
         <Html center position={[0, 1.05, 0]} style={{ pointerEvents: "none" }}>
           <div
-            className="whitespace-nowrap font-body text-[14px] font-medium tracking-[-0.005em]"
+            className="flex items-center gap-1.5 whitespace-nowrap font-body text-[14px] font-medium tracking-[-0.005em]"
             style={{
-              // Label color reads the same status mapping as the planet:
-              // todo planets get a dim grey label so the to-do state is
-              // visible in 2D as well as 3D.
-              color: isActive || isApproved
+              color: isApproved
+                ? "#f0a868"
+                : isActive
                 ? "#f0a868"
                 : isPreviewState || isGenerating
                 ? "#f0a868"
@@ -309,7 +318,16 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
               transition: "color 220ms ease",
             }}
           >
-            {beat.beatName}
+            {isApproved ? (
+              <span
+                aria-label="Approved"
+                className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-brand-ember/90 text-[10px] font-bold leading-none text-bg-base"
+                style={{ boxShadow: "0 0 12px rgba(240,168,104,0.6)" }}
+              >
+                ✓
+              </span>
+            ) : null}
+            <span>{beat.beatName}</span>
           </div>
         </Html>
       ) : null}
