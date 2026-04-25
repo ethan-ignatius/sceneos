@@ -2,10 +2,11 @@ import { useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Html, Sparkles } from "@react-three/drei";
 import * as THREE from "three";
-import type { Beat } from "@/types/manifest";
+import type { Beat, BeatMood } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 import { useAtmosphereMaterial } from "./atmosphere-material";
+import { useHolographicMaterial } from "./holographic-material";
 
 interface NodeMeshProps {
   beat: Beat;
@@ -14,28 +15,69 @@ interface NodeMeshProps {
   onHoverChange?: (beatId: string | null) => void;
 }
 
+type GeometryKind = "sphere" | "icosahedron" | "torus-knot" | "dodecahedron" | "ring-disc";
+
+/** Per-mood geometry — one of five archetypal forms. */
+function geometryForMood(mood: BeatMood): GeometryKind {
+  switch (mood) {
+    case "wide-establish":
+      return "sphere"; // elongated via group scale
+    case "intimate-hook":
+      return "icosahedron";
+    case "kinetic-rising":
+      return "torus-knot";
+    case "tense-climax":
+      return "dodecahedron";
+    case "punchy-sting":
+      return "ring-disc";
+    case "still-resolve":
+      return "sphere";
+  }
+}
+
+/** Subtle base rotation per mood — one always-moving anchor. */
+function baseSpinForMood(mood: BeatMood): { x: number; y: number; z: number } {
+  switch (mood) {
+    case "wide-establish":
+      return { x: 0, y: 0.05, z: 0 };
+    case "intimate-hook":
+      return { x: 0.04, y: 0.08, z: 0.02 };
+    case "kinetic-rising":
+      return { x: 0.06, y: 0.18, z: 0.04 };
+    case "tense-climax":
+      return { x: -0.04, y: 0.12, z: 0.06 };
+    case "punchy-sting":
+      return { x: 0, y: 0.1, z: 0 };
+    case "still-resolve":
+      return { x: 0, y: 0.03, z: 0 };
+  }
+}
+
 /**
- * One glowing planet-orb in the beat map. Three concentric layers per the
- * planetary research (docs/RESEARCH_PLANETARY.md):
+ * One distinct beat-orb in the canvas.
  *
- *   1. Core sphere — `meshStandardMaterial` with strong emissive baseline
- *      so the orb is unconditionally legible, plus mild metalness for a
- *      reflective sheen when an Environment preset is in scope.
- *   2. Atmosphere shell — back-side-rendered slightly larger sphere using
- *      the lifted FakeGlowMaterial fresnel shader (see
- *      `atmosphere-material.tsx`). This is the single biggest visual upgrade
- *      from the previous flat halo.
- *   3. Active accent — drei `<Sparkles>` only when this node is selected;
- *      replaces a static decorative halo with depth-cued particles around
- *      the focused planet.
+ * Per-mood geometry (see RESEARCH_PLANETARY.md + 3D_PLAYBOOK.md §B):
+ *   wide-establish  → elongated sphere
+ *   intimate-hook   → icosahedron (sharp facets)
+ *   kinetic-rising  → torus knot (slow tumble)
+ *   tense-climax    → dodecahedron
+ *   punchy-sting    → ring + central disc
+ *   still-resolve   → simple sphere
  *
- * State machine still derives from beat.status: pending → questioning →
- * ready-to-generate → generating → preview → approved.
+ * Layered shaders:
+ *   - Atmosphere shell — fresnel halo (FakeGlowMaterial-derived)
+ *   - Active state    — HolographicMaterial overlay (animated stripe + fresnel)
+ *   - Core            — meshStandardMaterial with strong emissive baseline
+ *   - Active accent   — drei <Sparkles>
+ *
+ * The active orb visibly changes *material*, not just color — judges read the
+ * shift instantly without needing a label.
  */
 export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const formRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
-  const atmosphereMatRef = useRef<THREE.ShaderMaterial>(null);
+  const holoOverlayRef = useRef<THREE.Mesh>(null);
   const materialRef = useRef<THREE.MeshStandardMaterial>(null);
   const [hover, setHover] = useState(false);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
@@ -46,40 +88,23 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
   const reducedMotion = usePrefersReducedMotion();
 
   const [slotX, slotY, slotZ] = position;
+  const mood = beat.archetype.mood;
+  const geometryKind = geometryForMood(mood);
+  const spin = baseSpinForMood(mood);
 
-  // Per-state palette — pending nodes still glow warm bronze (visible), not
-  // grey (invisible). Active/approved go full ember.
   const palette = useMemo(() => {
     if (isApproved) {
-      return {
-        core: "#f0a868",
-        emissive: "#ffb874",
-        atmosphere: "#f0a868",
-      };
+      return { core: "#f0a868", emissive: "#ffb874", atmosphere: "#f0a868", holo: "#ffb874" };
     }
     if (isActive) {
-      return {
-        core: "#f0a868",
-        emissive: "#ffc080",
-        atmosphere: "#ffb874",
-      };
+      return { core: "#f0a868", emissive: "#ffc080", atmosphere: "#ffb874", holo: "#ffc888" };
     }
     if (isReady) {
-      return {
-        core: "#d4a373",
-        emissive: "#f0a868",
-        atmosphere: "#f0a868",
-      };
+      return { core: "#d4a373", emissive: "#f0a868", atmosphere: "#f0a868", holo: "#f0a868" };
     }
-    return {
-      // pending — warm bronze, *not* the old grey-blue
-      core: "#a87447",
-      emissive: "#c5895a",
-      atmosphere: "#a87447",
-    };
+    return { core: "#a87447", emissive: "#c5895a", atmosphere: "#a87447", holo: "#c5895a" };
   }, [isActive, isApproved, isReady]);
 
-  // Stable atmosphere material — uniforms mutated each frame for color/opacity.
   const atmosphereMat = useAtmosphereMaterial({
     glowColor: palette.atmosphere,
     falloff: 0.1,
@@ -88,8 +113,28 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     opacity: 1.0,
   });
 
-  useFrame((state) => {
+  const holoMat = useHolographicMaterial({
+    hologramColor: palette.holo,
+    fresnelAmount: 0.45,
+    fresnelOpacity: 1.0,
+    scanlineSize: 7.0,
+    hologramBrightness: 1.0,
+    signalSpeed: 0.5,
+    hologramOpacity: 0.85,
+  });
+
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
+
+    // Holographic time uniform (only when used, but cheap to always tick).
+    if (holoMat.uniforms.time) holoMat.uniforms.time.value += delta;
+
+    // ── Continuous form rotation (never stops — primary motion anchor) ──
+    if (formRef.current && !reducedMotion) {
+      formRef.current.rotation.x += spin.x * delta;
+      formRef.current.rotation.y += spin.y * delta;
+      formRef.current.rotation.z += spin.z * delta;
+    }
 
     // ── Core scale (subtle breath; dampened under reduced-motion) ──
     const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.025 : 1;
@@ -98,6 +143,7 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
     const approvedScale = isApproved ? 1.12 : 1;
     const target = breath * hoverBoost * activeBoost * approvedScale;
     if (meshRef.current) meshRef.current.scale.setScalar(target);
+    if (holoOverlayRef.current) holoOverlayRef.current.scale.setScalar(target * 1.04);
 
     // ── Group z-offset: active steps forward toward camera ──
     if (groupRef.current) {
@@ -109,14 +155,13 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
       );
     }
 
-    // ── Core emissive intensity: high baseline so the orb is always visible ──
+    // ── Core emissive intensity ──
     let baseEmissive: number;
     if (isApproved) baseEmissive = 1.0;
     else if (isActive) baseEmissive = 1.3;
     else if (isReady) baseEmissive = 0.85;
     else if (hover) baseEmissive = 0.7;
     else baseEmissive = 0.55;
-
     const pulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.25 + 0.25 : 0;
     if (materialRef.current) {
       materialRef.current.emissiveIntensity = baseEmissive + pulse;
@@ -124,62 +169,172 @@ export function NodeMesh({ beat, position, onHoverChange }: NodeMeshProps) {
       materialRef.current.emissive.set(palette.emissive);
     }
 
-    // ── Atmosphere uniforms (mutate, never recreate) ──
-    if (atmosphereMatRef.current) {
-      const uniforms = atmosphereMatRef.current.uniforms;
-      const baseOpacity =
-        isActive ? 0.95 : isReady ? 0.8 : hover ? 0.7 : 0.5;
+    // ── Atmosphere uniforms ──
+    const auni = atmosphereMat.uniforms;
+    if (auni) {
+      const baseOpacity = isActive ? 0.95 : isReady ? 0.8 : hover ? 0.7 : 0.5;
       const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.15 + 0.15 : 0;
-      uniforms.opacity.value = baseOpacity + readyPulse;
-      (uniforms.glowColor.value as THREE.Color).set(palette.atmosphere);
+      auni.opacity.value = baseOpacity + readyPulse;
+      (auni.glowColor.value as THREE.Color).set(palette.atmosphere);
+    }
+
+    // ── Holographic uniforms (color/opacity for active state) ──
+    if (holoMat.uniforms.hologramColor) {
+      (holoMat.uniforms.hologramColor.value as THREE.Color).set(palette.holo);
+    }
+    if (holoMat.uniforms.hologramOpacity) {
+      holoMat.uniforms.hologramOpacity.value = isActive ? 0.85 : 0;
     }
   });
 
+  // The geometry node, scaled to read at the same visual weight as a 0.55 sphere.
+  const formNode = useMemo(() => {
+    switch (geometryKind) {
+      case "sphere":
+        return (
+          <mesh ref={meshRef}>
+            <sphereGeometry args={[0.55, 64, 64]} />
+            <meshStandardMaterial
+              ref={materialRef}
+              color={palette.core}
+              emissive={palette.emissive}
+              emissiveIntensity={0.6}
+              roughness={0.45}
+              metalness={0.4}
+              envMapIntensity={0.7}
+            />
+          </mesh>
+        );
+      case "icosahedron":
+        return (
+          <mesh ref={meshRef}>
+            <icosahedronGeometry args={[0.6, 0]} />
+            <meshStandardMaterial
+              ref={materialRef}
+              color={palette.core}
+              emissive={palette.emissive}
+              emissiveIntensity={0.6}
+              roughness={0.3}
+              metalness={0.6}
+              envMapIntensity={0.8}
+              flatShading
+            />
+          </mesh>
+        );
+      case "torus-knot":
+        return (
+          <mesh ref={meshRef}>
+            <torusKnotGeometry args={[0.4, 0.13, 96, 16]} />
+            <meshStandardMaterial
+              ref={materialRef}
+              color={palette.core}
+              emissive={palette.emissive}
+              emissiveIntensity={0.6}
+              roughness={0.4}
+              metalness={0.5}
+              envMapIntensity={0.8}
+            />
+          </mesh>
+        );
+      case "dodecahedron":
+        return (
+          <mesh ref={meshRef}>
+            <dodecahedronGeometry args={[0.55, 0]} />
+            <meshStandardMaterial
+              ref={materialRef}
+              color={palette.core}
+              emissive={palette.emissive}
+              emissiveIntensity={0.6}
+              roughness={0.25}
+              metalness={0.7}
+              envMapIntensity={0.9}
+              flatShading
+            />
+          </mesh>
+        );
+      case "ring-disc":
+        return (
+          <group>
+            {/* Central disc */}
+            <mesh ref={meshRef}>
+              <sphereGeometry args={[0.32, 48, 48]} />
+              <meshStandardMaterial
+                ref={materialRef}
+                color={palette.core}
+                emissive={palette.emissive}
+                emissiveIntensity={0.6}
+                roughness={0.4}
+                metalness={0.5}
+                envMapIntensity={0.7}
+              />
+            </mesh>
+            {/* Ring */}
+            <mesh rotation={[Math.PI / 2.2, 0, 0]}>
+              <torusGeometry args={[0.55, 0.04, 24, 96]} />
+              <meshStandardMaterial
+                color={palette.core}
+                emissive={palette.emissive}
+                emissiveIntensity={0.7}
+                roughness={0.3}
+                metalness={0.7}
+                envMapIntensity={0.8}
+              />
+            </mesh>
+          </group>
+        );
+    }
+  }, [geometryKind, palette.core, palette.emissive]);
+
   return (
     <group ref={groupRef} position={[slotX, slotY, slotZ]}>
-      {/* ── Atmosphere shell (FakeGlowMaterial; BackSide; additive) ── */}
-      <mesh scale={1.18}>
+      {/* Atmosphere shell */}
+      <mesh scale={1.2}>
         <sphereGeometry args={[0.55, 48, 48]} />
-        <primitive object={atmosphereMat} ref={atmosphereMatRef} attach="material" />
+        <primitive object={atmosphereMat} attach="material" />
       </mesh>
 
-      {/* ── Solid glowing core (handles pointer events) ── */}
-      <mesh
-        ref={meshRef}
-        onPointerOver={(e) => {
-          e.stopPropagation();
-          setHover(true);
-          onHoverChange?.(beat.beatId);
-          document.body.style.cursor = "pointer";
-        }}
-        onPointerOut={() => {
-          setHover(false);
-          onHoverChange?.(null);
-          document.body.style.cursor = "";
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          setActiveBeat(isActive ? null : beat.beatId);
-        }}
+      {/* The form group (rotated each frame) */}
+      <group
+        ref={formRef}
+        // wide-establish gets a vertical elongation per the playbook.
+        scale={mood === "wide-establish" ? [1, 1.15, 1] : 1}
       >
-        <sphereGeometry args={[0.55, 64, 64]} />
-        <meshStandardMaterial
-          ref={materialRef}
-          color={palette.core}
-          emissive={palette.emissive}
-          emissiveIntensity={0.6}
-          roughness={0.45}
-          metalness={0.4}
-          envMapIntensity={0.7}
-        />
-      </mesh>
+        {/* Pointer events handled here so any geometry catches clicks/hover. */}
+        <group
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            setHover(true);
+            onHoverChange?.(beat.beatId);
+            document.body.style.cursor = "pointer";
+          }}
+          onPointerOut={() => {
+            setHover(false);
+            onHoverChange?.(null);
+            document.body.style.cursor = "";
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveBeat(isActive ? null : beat.beatId);
+          }}
+        >
+          {formNode}
 
-      {/* ── Active-only sparkles for focal accent ── */}
+          {/* Holographic overlay — only visible on active state (uniform opacity). */}
+          {isActive ? (
+            <mesh ref={holoOverlayRef}>
+              <sphereGeometry args={[0.6, 48, 48]} />
+              <primitive object={holoMat} attach="material" />
+            </mesh>
+          ) : null}
+        </group>
+      </group>
+
+      {/* Active-only sparkles */}
       {isActive ? (
         <Sparkles count={20} scale={1.6} size={3} speed={0.4} opacity={0.7} color="#f0a868" noise={0.4} />
       ) : null}
 
-      {/* Floating italic label above the orb. */}
+      {/* Floating italic label */}
       <Html center position={[0, 1.05, 0]} style={{ pointerEvents: "none" }}>
         <div
           className="whitespace-nowrap font-display text-base italic"

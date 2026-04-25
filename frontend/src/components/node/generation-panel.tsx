@@ -59,7 +59,7 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
   return (
     <div className="flex h-full flex-col gap-5">
       {/* 16:9 blur-pulse placeholder. */}
-      <div className="relative aspect-video overflow-hidden rounded-lg border border-brand-ember/30 bg-bg-elev-2">
+      <div className="relative aspect-video overflow-hidden rounded-md border border-brand-ember/30 bg-bg-elev-2">
         <div className="animate-blur-pulse absolute inset-0" />
         <div className="absolute inset-0 grid place-items-center">
           <div className="font-mono text-[10px] uppercase tracking-[0.32em] text-brand-ember/80">

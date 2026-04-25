@@ -1,44 +1,102 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
 
 interface ConnectingPathProps {
   positions: Array<[number, number, number]>;
 }
 
 /**
- * Quiet dotted path threading through the beat nodes.
+ * Animated dashed-flow path threading through the beat nodes.
  *
- * THREE.CatmullRomCurve3 generates a smooth spline through the input points;
- * `getPoints(n)` samples evenly along that curve. We render those samples as
- * <points> with a small pointsMaterial — the result reads as a faint trail,
- * not a wireframe line.
+ * Catmull-Rom spline → sampled `<points>` with a custom shader that
+ * pulses a wave along the curve (per-vertex alpha modulated by
+ * sin(progress*N - time*speed)). Reads as a flowing film-reel sprocket
+ * pointing the eye L→R.
  *
- * Rendering choices:
- *   - sizeAttenuation true → nearer dots larger, gives perspective.
- *   - opacity 0.3 → background quietly teaches beat order without competing.
- *   - color matches fg-tertiary so it sits behind ember nodes.
+ * Reduced-motion: wave freezes (time uniform stops advancing).
  */
 export function ConnectingPath({ positions }: ConnectingPathProps) {
-  const geometry = useMemo(() => {
-    if (positions.length < 2) return null;
+  const matRef = useRef<THREE.ShaderMaterial>(null);
+  const reducedMotion = usePrefersReducedMotion();
+
+  const { geometry, sampleCount } = useMemo(() => {
+    if (positions.length < 2) return { geometry: null, sampleCount: 0 };
     const vectorPoints = positions.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     const curve = new THREE.CatmullRomCurve3(vectorPoints);
-    const samples = curve.getPoints(positions.length * 8);
-    return new THREE.BufferGeometry().setFromPoints(samples);
+    const n = positions.length * 12;
+    const samples = curve.getPoints(n);
+
+    // Per-vertex parameter t in [0..1] along the curve, written into the
+    // `aProgress` attribute the shader reads.
+    const progress = new Float32Array(samples.length);
+    for (let i = 0; i < samples.length; i++) {
+      progress[i] = i / Math.max(samples.length - 1, 1);
+    }
+
+    const geo = new THREE.BufferGeometry().setFromPoints(samples);
+    geo.setAttribute("aProgress", new THREE.BufferAttribute(progress, 1));
+    return { geometry: geo, sampleCount: samples.length };
   }, [positions]);
 
-  if (!geometry) return null;
+  const material = useMemo(() => {
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uSize: { value: 4.0 },
+        uColorBase: { value: new THREE.Color("#9aa6ad") },
+        uColorAccent: { value: new THREE.Color("#f0a868") },
+      },
+      vertexShader: /* glsl */ `
+        attribute float aProgress;
+        uniform float uTime;
+        uniform float uSize;
+        varying float vProgress;
+        varying float vWave;
+        void main() {
+          vProgress = aProgress;
+          vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+          // Size attenuation; nearer points larger.
+          gl_PointSize = uSize * (250.0 / -mvPos.z);
+          // Wave: a soft sin pulse that travels along the curve.
+          float wave = sin(aProgress * 8.0 - uTime * 2.0);
+          vWave = smoothstep(0.4, 1.0, wave) * 0.85 + 0.15;
+          gl_Position = projectionMatrix * mvPos;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColorBase;
+        uniform vec3 uColorAccent;
+        varying float vWave;
+        void main() {
+          // Round, soft-edged points.
+          vec2 xy = gl_PointCoord - 0.5;
+          float r = length(xy);
+          if (r > 0.5) discard;
+          float alpha = smoothstep(0.5, 0.0, r);
+          vec3 color = mix(uColorBase, uColorAccent, vWave);
+          gl_FragColor = vec4(color, alpha * (0.25 + vWave * 0.55));
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+  }, []);
+
+  useFrame((state, delta) => {
+    if (matRef.current && !reducedMotion) {
+      matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    }
+    void delta; // marker
+  });
+
+  if (!geometry || sampleCount === 0) return null;
 
   return (
     <points geometry={geometry}>
-      <pointsMaterial
-        size={0.04}
-        color="#9aa6ad"
-        transparent
-        opacity={0.3}
-        sizeAttenuation
-        depthWrite={false}
-      />
+      <primitive object={material} ref={matRef} attach="material" />
     </points>
   );
 }

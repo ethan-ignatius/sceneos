@@ -1,6 +1,6 @@
 import { Canvas } from "@react-three/fiber";
 import { Stars, Environment } from "@react-three/drei";
-import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
+import { EffectComposer, Bloom, Vignette, DepthOfField } from "@react-three/postprocessing";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -90,12 +90,25 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
           hoveredBeatId={hoveredBeatId}
         />
 
-        {/* Bloom intensity dropped from 0.9 → 0.55 because the atmosphere
-            shells now carry most of the glow. Keeping bloom at the previous
-            level over-blooms the halos. See RESEARCH_PLANETARY.md §5. */}
+        {/* Postprocessing stack:
+              - Bloom: keeps the atmosphere shells glowing without over-blooming halos.
+              - DepthOfField: focuses on the active node (pulled toward camera at z+0.4
+                in NodeMesh). Subtle blur on the rest reads as a camera, not a viewport.
+              - Vignette: soft edge fall-off; tightens the eye to the centre.
+              See RESEARCH_PLANETARY.md §5 + 3D_PLAYBOOK.md §6. */}
         <EffectComposer>
-          <Bloom intensity={0.55} luminanceThreshold={0.18} luminanceSmoothing={0.3} mipmapBlur />
-          <Vignette eskil={false} offset={0.25} darkness={0.7} />
+          <Bloom
+            intensity={activeBeatId ? 0.75 : 0.5}
+            luminanceThreshold={0.18}
+            luminanceSmoothing={0.3}
+            mipmapBlur
+          />
+          <DepthOfField
+            focusDistance={activeBeatId ? 0.012 : 0.02}
+            focalLength={activeBeatId ? 0.05 : 0.08}
+            bokehScale={activeBeatId ? 3.0 : 1.5}
+          />
+          <Vignette eskil={false} offset={0.25} darkness={activeBeatId ? 0.85 : 0.7} />
         </EffectComposer>
       </Canvas>
     </div>

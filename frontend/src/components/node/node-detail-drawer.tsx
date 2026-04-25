@@ -170,7 +170,7 @@ export function NodeDetailDrawer() {
           >
             <div
               className={cn(
-                "rounded-lg border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.24em] transition-colors duration-300",
+                "rounded-md border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.24em] transition-colors duration-300",
                 isReadyToGenerate
                   ? "border-brand-ember/60 bg-brand-ember/10 text-brand-ember"
                   : "border-fg-tertiary/40 text-fg-tertiary",

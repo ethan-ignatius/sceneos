@@ -90,17 +90,60 @@ export function FinalDeliveryRoute() {
   const beatList = manifest.beats;
 
   return (
-    // MotionConfig reducedMotion="user" makes every motion.X inside this
-    // route auto-degrade transform animations to opacity when the user
-    // prefers reduced motion. Opacity-only fades are WCAG-acceptable; the
-    // transforms (y: 24, scale: 0.985) are the parts we suppress.
+    // MotionConfig reducedMotion="user" auto-degrades transform animations
+    // to opacity when the user prefers reduced motion.
     <MotionConfig reducedMotion="user">
-      <main className="film-grain relative min-h-screen overflow-x-hidden bg-bg-base px-6 py-16">
+      <main className="film-grain relative min-h-screen overflow-x-hidden bg-black px-6 py-16">
+        {/* Letterbox bars — top + bottom, 12vh each, slide-in for the
+            "fade-to-cinema" reveal. Full-screen black film frame. */}
+        <motion.div
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
+          className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[10vh] origin-top bg-black"
+          aria-hidden="true"
+        />
+        <motion.div
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-40 h-[10vh] origin-bottom bg-black"
+          aria-hidden="true"
+        />
+        {/* End-card slate microcopy in the letterbox — top-left + top-right + bottom-left */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
+          className="pointer-events-none fixed inset-x-0 top-0 z-50 flex h-[10vh] items-center justify-between px-8 sm:px-12"
+        >
+          <div className="caption-track text-[9px] text-fg-tertiary/80">
+            <span className="text-brand-ember">●</span>
+            <span className="ml-2">A SceneOS Production</span>
+          </div>
+          <div className="caption-track text-[9px] text-fg-tertiary/80">
+            {manifest.videoType.toUpperCase()} · {formatDuration(manifest.durationSeconds)}
+          </div>
+        </motion.div>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex h-[10vh] items-center justify-between px-8 sm:px-12"
+        >
+          <div className="caption-track text-[9px] text-fg-tertiary/80">
+            Cloudinary · fl_splice
+          </div>
+          <div className="caption-track text-[9px] tabular-nums text-fg-tertiary/80">
+            {new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric" }).format(new Date())}
+          </div>
+        </motion.div>
+
         <motion.section
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: DURATIONS.quick, ease: EASE.outQuart }}
-          className="relative z-10 mx-auto flex max-w-[80rem] flex-col items-center gap-10 text-center"
+          transition={{ duration: DURATIONS.quick, ease: EASE.outQuart, delay: 0.4 }}
+          className="relative z-10 mx-auto flex min-h-screen max-w-[80rem] flex-col items-center justify-center gap-10 text-center"
         >
           <div className="space-y-3">
             <motion.p
@@ -222,8 +265,8 @@ export function FinalDeliveryRoute() {
           animate={{ opacity: 1 }}
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.0 }}
           className={cn(
-            "btn--edge-underline group fixed bottom-6 right-6 z-20 inline-flex items-center gap-2",
-            "rounded-md px-3 py-2 font-mono text-[11px] uppercase tracking-[0.28em]",
+            "btn--edge-underline group fixed right-8 top-[3.5vh] z-[60] inline-flex items-center gap-2",
+            "rounded-md px-3 py-1.5 caption-track text-[10px]",
             "text-fg-tertiary transition-colors duration-200 hover:text-fg-primary",
           )}
         >

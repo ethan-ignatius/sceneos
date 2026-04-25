@@ -129,7 +129,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       transition={SPRING.drawer}
       className={cn(
         "absolute right-6 top-20 bottom-6 z-40 flex w-[40rem] max-w-[calc(100vw-3rem)] flex-col",
-        "overflow-hidden rounded-2xl",
+        "overflow-hidden rounded-md",
         "border border-brand-ember-dim/30",
         "bg-bg-elev-1/85 backdrop-blur-2xl",
         "shadow-[0_40px_80px_-24px_rgba(0,0,0,0.7),_0_0_0_1px_rgba(240,168,104,0.06)]",
@@ -174,7 +174,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
               "flex cursor-grab gap-3 overflow-x-auto pb-2 select-none",
               "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
               "data-[dragging=true]:cursor-grabbing",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember-dim/60 rounded-lg",
+              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember-dim/60 rounded-md",
             )}
           >
             {manifest?.beats.map((b, i) => {
@@ -187,7 +187,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
                   key={b.beatId}
                   title={`${b.beatName} · ${b.archetype.mood}`}
                   className={cn(
-                    "relative aspect-[4/5] w-[7.5rem] flex-shrink-0 overflow-hidden rounded-lg border",
+                    "relative aspect-[4/5] w-[7.5rem] flex-shrink-0 overflow-hidden rounded-md border",
                     "transition-[border-color,opacity,box-shadow] duration-300 ease-out",
                     isApproved
                       ? "border-brand-ember/60 shadow-[0_0_24px_-6px_rgba(240,168,104,0.6)]"
@@ -277,7 +277,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             animate={{ opacity: segments ? 1 : 0.55 }}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
             className={cn(
-              "rounded-xl border border-fg-tertiary/20 bg-bg-base/60 p-4",
+              "rounded-md border border-fg-tertiary/20 bg-bg-base/60 p-4",
               "shadow-[inset_0_0_0_1px_rgba(240,168,104,0.04)]",
             )}
           >

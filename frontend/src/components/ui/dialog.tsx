@@ -60,7 +60,7 @@ export function Dialog({
             transition={SPRING.bubble}
             className={cn(
               "fixed left-1/2 top-1/2 z-50 w-[min(36rem,90vw)] -translate-x-1/2 -translate-y-1/2",
-              "rounded-xl border border-fg-tertiary/30 bg-bg-elev-1/95 backdrop-blur-xl",
+              "rounded-md border border-fg-tertiary/30 bg-bg-elev-1/95 backdrop-blur-xl",
               "shadow-[0_32px_64px_-24px_rgba(0,0,0,0.7)]",
               "p-6 outline-none",
               className,

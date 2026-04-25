@@ -49,7 +49,7 @@ export function CanvasRoute() {
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
         className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-6"
       >
-        <div className="pointer-events-auto max-w-md rounded-xl border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]">
+        <div className="pointer-events-auto max-w-md rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 backdrop-blur-xl shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]">
           <div className="caption-track text-[10px] text-fg-tertiary">
             Master prompt · {manifest.videoType}
           </div>
@@ -60,7 +60,7 @@ export function CanvasRoute() {
 
         <button
           onClick={() => setStitchOpen((s) => !s)}
-          className="pointer-events-auto group rounded-xl border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl transition-colors hover:border-brand-ember/60 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]"
+          className="pointer-events-auto group rounded-md border border-fg-tertiary/25 bg-bg-elev-1/75 px-4 py-3 text-left backdrop-blur-xl transition-colors hover:border-brand-ember/60 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.5)]"
         >
           <div className="caption-track text-[10px] text-fg-tertiary group-hover:text-brand-ember/80 transition-colors">
             Stitch tray

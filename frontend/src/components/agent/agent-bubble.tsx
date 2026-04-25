@@ -41,10 +41,10 @@ function AgentBubbleImpl({ turn, reveal = true }: AgentBubbleProps) {
     >
       <div
         className={cn(
-          "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+          "max-w-[80%] rounded-md px-4 py-3 text-sm leading-relaxed",
           isAgent
-            ? "rounded-tl-sm bg-brand-ember/12 text-fg-primary ring-1 ring-brand-ember/20"
-            : "rounded-tr-sm bg-brand-cool/15 text-fg-primary ring-1 ring-brand-cool/30",
+            ? "rounded-tl-none bg-brand-ember/12 text-fg-primary ring-1 ring-brand-ember/20"
+            : "rounded-tr-none bg-brand-cool/15 text-fg-primary ring-1 ring-brand-cool/30",
         )}
       >
         {isAgent && reveal ? (
