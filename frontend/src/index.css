@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@theme {
+  /* Base — deep, warm, cinematic */
+  --color-bg-base: #0a0908;
+  --color-bg-elev-1: #14110f;
+  --color-bg-elev-2: #1f1a16;
+
+  /* Foreground */
+  --color-fg-primary: #f5efe7;
+  --color-fg-secondary: #c5b9a8;
+  --color-fg-tertiary: #6b5d50;
+
+  /* Brand */
+  --color-brand-ember: #f0a868;
+  --color-brand-ember-dim: #a87447;
+  --color-brand-cool: #5e7080;
+
+  /* States */
+  --color-state-success: #6f9c7d;
+  --color-state-warning: #d4a373;
+  --color-state-error: #c4727b;
+
+  /* Glows */
+  --color-glow-ember: #ffb47080;
+  --color-glow-cool: #7090a080;
+
+  /* Typography */
+  --font-display: "Italiana", "PP Editorial New", serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--color-bg-base);
+    color: var(--color-fg-primary);
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-brand-ember) 60%, transparent);
+    color: var(--color-bg-base);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-fg-tertiary);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-fg-secondary);
+  }
+}
+
+@layer utilities {
+  .text-display-xl {
+    font-family: var(--font-display);
+    font-size: clamp(4rem, 10vw, 9rem);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+  }
+  .text-display-lg {
+    font-family: var(--font-display);
+    font-size: clamp(3rem, 7vw, 6rem);
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  .text-display-md {
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 4.5vw, 3.5rem);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-body {
+    font-family: var(--font-body);
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+
+  /* Subtle film-grain — used as a global overlay on landing & final delivery. */
+  .film-grain::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.96  0 0 0 0 0.94  0 0 0 0 0.91  0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    mix-blend-mode: overlay;
+    opacity: 0.5;
+    animation: grain 1.2s steps(6) infinite;
+  }
+
+  @keyframes grain {
+    0% { transform: translate(0, 0); }
+    20% { transform: translate(-3%, 5%); }
+    40% { transform: translate(7%, -3%); }
+    60% { transform: translate(-5%, 7%); }
+    80% { transform: translate(4%, -6%); }
+    100% { transform: translate(0, 0); }
+  }
+
+  .glow-ember {
+    box-shadow: 0 0 32px var(--color-glow-ember);
+  }
+
+  /* FlowBoard-inspired gentle backdrop pulse for "thinking" / "generating" states. */
+  .animate-blur-pulse {
+    animation: blur-pulse 2s ease-in-out infinite;
+  }
+  @keyframes blur-pulse {
+    0%, 100% {
+      backdrop-filter: blur(0px);
+      background: color-mix(in oklab, var(--color-brand-ember) 0%, transparent);
+    }
+    50% {
+      backdrop-filter: blur(8px);
+      background: color-mix(in oklab, var(--color-brand-ember) 6%, transparent);
+    }
+  }
+}
