@@ -2,15 +2,16 @@
 
 > **The day-2 operational dashboard.** Single source of truth. Open it every morning. CONTEXT.md = vision; BACKEND_ARCHITECTURE.md = legacy design spec; **this file = "where am I right now and what do I do next."**
 >
-> Last updated: 2026-04-25 (late night) — real-mode boot audit + reliability pass shipped. Deadline: 2026-04-26 11:00am EDT.
+> Last updated: 2026-04-25 (late night) — **live Veo end-to-end verified**, agent question loop loosened. Deadline: 2026-04-26 11:00am EDT.
 >
 > **What is true right now (verified end-to-end):**
 > - **Mock mode: 39 green tests** + clean end-to-end smoke (session/start → agent/stream → orchestrate → status → stitch). Confirmed via direct `curl` against the mock server.
-> - **Real mode bootability: confirmed.** With the existing `.env` (Vertex + Cloudinary, no Anthropic, no Higgsfield), the backend now self-resolves to `mockMode: false` and `GENERATION_PROVIDER=vertex`. `POST /api/session/start {mode:"normal"}` returns a fresh manifest with audio stamped, no provider calls fired (refs are lazy in normal mode).
-> - **Real-mode image pipeline: end-to-end verified.** A live `/api/references/generate` call against Vertex Imagen 3 produced a real PNG, uploaded to the user's Cloudinary cloud (`dghelx0al`), and returned a usable `imageUrl` + `publicId`. Path Vertex auth → Imagen → Cloudinary is hot.
-> - **Real-mode video pipeline (Veo): not yet smoke-tested live.** Plumbing is complete (project-id alias fixed, dispatch_with_fallback wraps it). One live demo-mode session-start would prove it; gated on user go-ahead because each kickoff burns 7 Veo calls.
-> - **Module D (cached.py demo bake): not started.** Single biggest demo-day risk. Live fallback path will kick in if Veo is slow/down, but only if at least one beat is baked.
-> - **Frontend (`/frontend`) modern surface: types + api client shipped.** `frontend/src/lib/api.ts` now exposes `sessionStart`, `sessionGet`, `agentStream`, `orchestrate`, `referenceGenerate`. `frontend/src/types/api.ts` carries the full modern shapes (`BeatFacts`, `OrchestrateResponse`, `SpeculativeJob`, `ProjectRefs`). The teammate can rebuild canvas screens against the same contract `mock_frontend` ships against. The actual screens are not yet wired (their work).
+> - **Real mode boot: confirmed.** With the existing `.env` (Vertex + Cloudinary, no Anthropic, no Higgsfield), the backend self-resolves to `mockMode: false` and `GENERATION_PROVIDER=vertex`. `POST /api/session/start {mode:"normal"}` returns a fresh manifest with audio stamped, no provider calls fired (refs are lazy in normal mode).
+> - **Real-mode image pipeline: end-to-end verified.** Live `/api/references/generate` produced a real PNG via Vertex Imagen 3 and uploaded to Cloudinary (`dghelx0al`). Vertex auth → Imagen → Cloudinary is hot.
+> - **Real-mode video pipeline (Veo): end-to-end verified.** Live `/api/orchestrate/beat-1` against the real `.env` ran: Imagen 3 character ref + Imagen 3 location ref → Cloudinary upload → Veo job submission → polled `/api/status/{jobId}` → `status: succeeded` with a real `clipUrl` + `clipPublicId` + `lastFrameUrl` on the user's Cloudinary cloud. Sample baked clip: `sceneos/4593dc2e942b/beat-1/beat-1-scene-1` (still on Cloudinary). Whole call took ~50s for the orchestrate (most of it Imagen) + ~50s for the Veo job. Pipeline is hot.
+> - **Agent question loop: loosened.** Removed the "Aim for 3 to 5" anchor in the system prompt — replaced with "no target number, you decide based on conversation texture" + an explicit anti-pattern block (don't walk facets in order, don't ask about lenses standalone). Normal-mode temperature bumped 0.8 → 1.0 for genuine variety across sessions. Demo mode unchanged (still hard-capped at `DEMO_MAX_QUESTIONS=2`).
+> - **Module D (cached.py demo bake): not started.** Single biggest demo-day risk remaining. Now that Veo is verified, this is just a parallel run + manual `cached.py` populate.
+> - **Frontend (`/frontend`) modern surface: types + api client shipped.** `frontend/src/lib/api.ts` now exposes `sessionStart`, `sessionGet`, `agentStream`, `orchestrate`, `referenceGenerate`. `frontend/src/types/api.ts` carries the full modern shapes (`BeatFacts`, `OrchestrateResponse`, `SpeculativeJob`, `ProjectRefs`). Teammate can rebuild canvas screens against the same contract `mock_frontend` ships against.
 
 ---
 
@@ -57,7 +58,9 @@ The 7 clips render — sequential where chained, parallel where not. They stitch
 │     → markSufficient(refinedPrompt, sceneSummary, beatFacts, duration) │
 │                                                                          │
 │  Voice: see agent.py system prompt — encoded from the framework spec.   │
-│  Min 3 / max 5 user turns per beat.                                     │
+│  Question count is non-deterministic (1 to MAX_QUESTIONS=8). The agent  │
+│  decides based on conversation texture, not a quota. Demo mode is the   │
+│  exception — hard-capped at DEMO_MAX_QUESTIONS=2 for the timer.         │
 │  Agent never reveals which beat it's filling. Maps internally.          │
 │                                                                          │
 │  beatFacts = {                                                           │
@@ -406,11 +409,18 @@ Items 1-8 are SHIPPED. Items 9-10 are wallclock-only (no engineering blockers). 
 - `GET /api/health` → `{"mockMode":false}` with the existing `.env` (no MOCK_MODE override).
 - `POST /api/session/start {"mode":"normal"}` → 200, returns valid manifest, audio stamped, no provider calls fired.
 - `POST /api/references/generate {"kind":"character",...}` → 200 in 15s, real PNG generated by Imagen 3 and uploaded to user's Cloudinary cloud `dghelx0al`.
+- **Live Veo smoke (this turn):** `POST /api/orchestrate/beat-1` with hand-crafted beatFacts for "a lone diver finds an abandoned underwater observatory" → 200 in ~50s, returned `provider: vertex` + `sharedRefs: true` (Imagen ran live for both refs) + a real `jobId: vertex::f83d4f09-...`. Polled `/api/status/{jobId}` → `status: succeeded` after ~50s, with `clipUrl: https://res.cloudinary.com/dghelx0al/video/upload/v1777157073/sceneos/4593dc2e942b/beat-1/beat-1-scene-1.mp4` (verified HEAD 200, content-type video/mp4) + a derived `lastFrameUrl` (verified HEAD 200, image/jpeg). The full real-mode pipeline (Vertex auth → Imagen 3 char ref → Imagen 3 location ref → Cloudinary upload → Veo job submission → Veo polling → Cloudinary clip URL → derived chaining frame) is live.
+
+**Module K: Agent question-loop nondeterminism (this turn).** Per user feedback: "the agent should ask a non deterministic set of questions and the questions themselves as well should be non deterministic — 3 shouldn't be the limit." Changed in `agent.py`:
+- Removed the "Aim for 3 to 5 user answers per beat" anchor from the system prompt; replaced with "no target number, the right count is whatever the conversation needs — could be 1, could be 7."
+- Added an explicit anti-pattern block: don't walk facets in order (subject→action→setting→framing→mood), don't ask about lenses standalone, don't repeat the same question shape, don't ask the user to invent things they haven't thought about, don't recap the entire story.
+- Bumped normal-mode temperature 0.8 → 1.0 so the question pool actually varies across runs. Demo mode stays at 0.8 (timer matters more than variety on stage).
+- Demo `DEMO_MAX_QUESTIONS=2` hard-cap unchanged. Normal-mode safety ceiling stays at `MAX_QUESTIONS=8`.
 
 ### 🔴 Next up
 
 **Module D: Demo project bake (~1 hr) — IMMEDIATE NEXT** *(user-driven)*
-- Run the full pipeline against ONE chosen demo prompt with real providers (Vertex Gemini agent + Imagen project refs + Veo or Higgsfield video). Pick `monkey-banana` / `lighthouse-ship` / `drone-mall` from `demo_prompts.py`.
+- Veo is now verified live. The remaining work is just a multi-beat run + populate `cached.py`. Pick `monkey-banana` / `lighthouse-ship` / `drone-mall` from `demo_prompts.py`, OR reuse the diver one already partially baked (`projectId 4593dc2e942b`, beat-1 already done — could finish 2-7 to save quota).
 - Capture all 7 `clipPublicId`s as they succeed + the project's `character` and `location` shared ref publicIds + the audio publicId.
 - Hardcode into `cached.py` so the on-stage safety net replays the same cinematic instantly if wifi or quota dies.
 - **Why this needs the user:** selecting the demo prompt + judging the visual quality is a creative call. The pipeline runs once you've picked.
