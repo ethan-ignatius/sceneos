@@ -1,17 +1,17 @@
 import { Hono } from "hono";
 import type { CutOSImportRequest, CutOSImportResponse } from "../types/api.js";
+import { isMockMode } from "../lib/mock-mode.js";
+import { mockCutosImport } from "../mock/index.js";
 
 /**
  * POST /api/cutos/import
- * Hands a SceneOS manifest off to CutOS for power-user editing.
+ * Hands the manifest to CutOS for power-user editing.
  *
- * Owner: Stretch goal
+ * In MOCK_MODE returns a believable project URL the frontend can deep-link
+ * (the URL won't open a real CutOS project; that's fine for FE dev).
  *
- * Implementation notes:
- *  - Call services/cutos.ts → importManifest(manifest).
- *  - The CutOS team needs to add POST /api/projects/import-manifest. See
- *    docs/BACKEND_ARCHITECTURE.md §11 for the payload they should accept.
- *  - On success, return { projectId, editUrl } so SceneOS frontend can deep-link.
+ * Real implementation hits CutOS' POST /api/projects/import-manifest —
+ * which the CutOS team must add (see BACKEND_ARCHITECTURE.md §11).
  */
 export const cutosRoute = new Hono();
 
@@ -19,7 +19,10 @@ cutosRoute.post("/import", async (c) => {
   const body = (await c.req.json().catch(() => null)) as CutOSImportRequest | null;
   if (!body) return c.json({ error: "Invalid JSON" }, 400);
 
-  // TODO: call services/cutos.ts.importManifest(body.manifest).
+  if (isMockMode()) {
+    return c.json(mockCutosImport(), 200);
+  }
+
   const stub: CutOSImportResponse = {
     projectId: "stub-project",
     editUrl: `${process.env.CUTOS_BASE_URL ?? "http://localhost:3000"}/projects/stub-project`,

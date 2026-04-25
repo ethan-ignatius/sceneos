@@ -231,14 +231,30 @@ Generation is dispatched through `backend/src/services/provider.ts`, which reads
 - **Latency:** Sora 2 / Veo 3.1 take 60–180 s per clip. Frontend polls; show choreographed loading state.
 - **Failure:** if API errors or quota hits, the `kling` and `cached` tiers exist — flip the env var, redeploy in seconds.
 
-### Cloudinary
-- **Auth:** Cloud name + API key + API secret in env. Public cloud name is also fine to expose to frontend (it's in the URL).
-- **Storage:** `resource_type: "video"`, naming convention `sceneos/{projectId}/{beatId}/{sceneId}`.
-- **Upload preset:** create one named `sceneos_unsigned` for any client-side direct uploads (e.g., user-supplied reference media). Server-side uploads use signed credentials.
-- **Concat:** `fl_splice` ([docs](https://cloudinary.com/documentation/video_trimming_and_concatenating)).
-- **Overlays:** `l_video:` for clips, `l_audio:` for VO, `l_text:` for subtitle/captions.
-- **Color grading per beat:** `e_brightness:N,e_contrast:N,e_saturation:N`.
-- **CDN:** automatic. Final URL is globally cached.
+### Cloudinary — the post-production pipeline
+
+Cloudinary is **not just storage**. It is the entire post-production pipeline. Every transformation a film team would normally need is exposed via URL — `services/cloudinary.ts` and `frontend/src/lib/cloudinary-transforms.ts` are mirrored helper modules so both sides build identical URLs.
+
+| Concern | Cloudinary primitive | Helper |
+|---|---|---|
+| Auth | Cloud name + API key + secret (server). Cloud name only (client). | env |
+| Storage | `resource_type: "video"`, naming `sceneos/{projectId}/{beatId}/{sceneId}` | `uploadVideoFromUrl()` |
+| Upload preset (user-supplied media, optional) | Unsigned preset `sceneos_unsigned` | Cloudinary widget |
+| Concatenation | `fl_splice` overlays | `buildSpliceUrl(orderedPublicIds)` |
+| Color grade per beat mood | `e_brightness/contrast/saturation` per beat archetype | `colorGradeFor(mood)`, `buildClipUrl({ mood })` |
+| Audio overlay (VO, score) | `l_audio:<public_id>` | `buildSpliceUrl({ audioOverlay })` |
+| Caption overlay | `l_text:<font_size>:<text>,co_white,bo_2px,g_south` | `withCaption(url, text)` |
+| Thumbnail extraction | `so_auto` + `.jpg` format | `buildThumbnailUrl(publicId)` |
+| Watermark | `l_<watermark_id>,g_south_east,x_24,y_24` | `buildSpliceUrl({ watermarkPublicId })` |
+| Format conversion | extension swap (`.mp4` ↔ `.webm`) | `buildClipUrl({ format })` |
+| CDN | automatic per region | nothing to do |
+| LUT normalisation across provider tiers | the same `colorGradeFor(mood)` applied to kling-tier and higgsfield-tier alike | `colorGradeFor()` |
+
+**Implication:** Higgsfield (or Kling, or Replicate) only generates raw clips. Cloudinary takes those clips and produces the cinematic. The frontend never touches a server-side render queue; it just composes URLs that streamed-on-demand from the CDN. This is what collapses the 4–8 week post-production timeline into a single GET request.
+
+- **Upload preset (optional, for user-supplied media):** `sceneos_unsigned`. Server-side uploads of provider-generated clips use signed credentials.
+- **`fl_splice` reference:** [docs](https://cloudinary.com/documentation/video_trimming_and_concatenating)
+- **Mock-mode behaviour:** clip URLs come from Cloudinary's public `demo` cloud (`https://res.cloudinary.com/demo/video/upload/dog.mp4` etc.) so frontend devs see playable previews without any account.
 
 ### CutOS (optional handoff)
 - **Endpoint we need them to add:** `POST /api/projects/import-manifest`

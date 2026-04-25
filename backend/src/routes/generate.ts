@@ -1,23 +1,33 @@
 import { Hono } from "hono";
 import type { GenerateRequest, GenerateResponse } from "../types/api.js";
 import { getProvider, encodeJobId } from "../services/provider.js";
+import { isMockMode } from "../lib/mock-mode.js";
+import { deterministicJobId } from "../mock/index.js";
 
 /**
  * POST /api/generate
- * Kicks off a clip-generation job for one scene via the active provider.
+ * Kicks off a clip-generation job for one scene.
  *
- * Owner: Vishnu
+ * In MOCK_MODE returns a deterministic mock jobId immediately. Frontend
+ * dev sees the same lifecycle (queued → running → succeeded) as real.
  *
- * The active provider is decided by GENERATION_PROVIDER env var:
- *   higgsfield (default) | kling | replicate | cached
- * Provider implementations live in services/{name}.ts and conform to
- * services/provider.ts:ProviderModule.
+ * Otherwise dispatches via services/provider.ts which honors the
+ * GENERATION_PROVIDER env var (higgsfield | kling | replicate | cached).
  */
 export const generateRoute = new Hono();
 
 generateRoute.post("/", async (c) => {
   const body = (await c.req.json().catch(() => null)) as GenerateRequest | null;
   if (!body) return c.json({ error: "Invalid JSON" }, 400);
+
+  if (isMockMode()) {
+    const response: GenerateResponse = {
+      jobId: deterministicJobId("mock", `${body.beatId}-${body.sceneId}`),
+      provider: "cached",
+      pollAfterMs: 800, // fast enough to feel responsive in dev
+    };
+    return c.json(response, 200);
+  }
 
   const { name, impl } = getProvider();
 
@@ -41,7 +51,7 @@ generateRoute.post("/", async (c) => {
       {
         error: `Provider "${name}" not implemented`,
         details: err instanceof Error ? err.message : String(err),
-        hint: "Set GENERATION_PROVIDER=cached for an instant on-stage fallback.",
+        hint: "Set MOCK_MODE=true for instant canned data, or GENERATION_PROVIDER=cached.",
       },
       501,
     );

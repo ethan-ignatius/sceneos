@@ -5,10 +5,19 @@ Vite + React 19 + TypeScript app. The whole UX layer of SceneOS lives here.
 ## Quick start
 
 ```bash
-cp .env.example .env       # fill in Cloudinary cloud_name + preset
+cp .env.example .env       # fill in Cloudinary cloud_name + preset (optional in dev)
 npm install
 npm run dev                # http://localhost:5173
 ```
+
+**Always run a backend alongside.** The frontend never mocks itself; it always talks to a real Hono server. For frontend-only dev, run the mock backend in a second terminal:
+
+```bash
+cd ../backend
+npm run dev:mock           # http://localhost:8787 — no keys needed
+```
+
+See [`../docs/MOCK_BACKEND.md`](../docs/MOCK_BACKEND.md) for the contract and [`../docs/FRONTEND_BUILDOUT.md`](../docs/FRONTEND_BUILDOUT.md) for the screen-by-screen build guide.
 
 ## Structure
 

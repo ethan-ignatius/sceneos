@@ -1,33 +1,35 @@
 import { Hono } from "hono";
-import type { AgentRequest, AgentResponse } from "../types/api.js";
+import type { AgentRequest } from "../types/api.js";
+import { isMockMode } from "../lib/mock-mode.js";
+import { runMockAgentTurn } from "../mock/index.js";
 
 /**
  * POST /api/agent
  * Per-beat questionnaire turn.
  *
- * Owner: Ethan
+ * Owner: Ethan (real implementation)
  *
- * Implementation notes:
- *  - Stateless. Frontend sends the entire Manifest + the active beatId + (optional) userMessage.
- *  - Use OpenAI GPT-4o (mirror CutOS) or Claude Sonnet via Anthropic SDK.
- *  - Tool-call shape: askQuestion(question, reasoning, estimatedRemaining)
- *                     | markSufficient(refinedPrompt, sceneSummary, suggestedDuration)
- *  - The system prompt should reference the beat's archetype.intent and mood.
- *  - Sufficiency threshold: see lib/sufficiency.ts (heuristic + LLM gate).
+ * In MOCK_MODE this returns canned, directorial-language questions per
+ * beat template. Frontend devs see realistic data without any keys.
  */
 export const agentRoute = new Hono();
 
 agentRoute.post("/", async (c) => {
-  const _body = (await c.req.json().catch(() => null)) as AgentRequest | null;
-  if (!_body) return c.json({ error: "Invalid JSON" }, 400);
+  const body = (await c.req.json().catch(() => null)) as AgentRequest | null;
+  if (!body) return c.json({ error: "Invalid JSON" }, 400);
 
-  // TODO(ethan): wire OpenAI/Anthropic, run questionnaire turn, return AgentResponse.
-  const stub: AgentResponse = {
-    kind: "question",
-    question:
-      "Stub agent: tell me one image you'd want as the very first frame of this beat.",
-    reasoning: "Backend not yet wired. See docs/BACKEND_ARCHITECTURE.md §3.",
-    estimatedRemaining: 3,
-  };
-  return c.json(stub, 200);
+  if (isMockMode()) {
+    return c.json(runMockAgentTurn(body), 200);
+  }
+
+  // TODO(ethan): wire OpenAI/Anthropic; build system prompt via
+  //   services/agent.ts:systemPromptFor(beat, manifest); call with
+  //   askQuestion / markSufficient tools; return AgentResponse.
+  return c.json(
+    {
+      error: "agent.real not implemented",
+      hint: "Run with MOCK_MODE=true (or omit, auto-default) until Ethan wires services/agent.ts.",
+    },
+    501,
+  );
 });

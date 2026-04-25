@@ -5,26 +5,66 @@ import * as higgsfield from "../services/higgsfield.js";
 import * as kling from "../services/kling.js";
 import * as replicate from "../services/replicate.js";
 import * as cached from "../services/cached-demo.js";
+import { isMockMode } from "../lib/mock-mode.js";
+import { getMockClip } from "../mock/index.js";
 
 /**
  * GET /api/status/:jobId
- * Polls a generation job. Provider is encoded in the jobId (provider::id),
- * so this route is stateless across server restarts.
  *
- * On succeeded jobs (non-cached), this endpoint should also upload the
- * resulting MP4 to Cloudinary and surface clipPublicId. The cached provider
- * already returns Cloudinary URLs directly.
+ * In MOCK_MODE this resolves jobs deterministically: the first poll
+ * returns "running", the second returns "succeeded" with a real,
+ * playable Cloudinary demo clip URL. The lifecycle is realistic
+ * enough that the frontend's optimistic UI / loading state can be
+ * iterated against without ever calling Higgsfield.
+ *
+ * Real-mode dispatches via the provider encoded in the jobId prefix
+ * (provider::providerJobId). Stateless across server restarts.
  */
 export const statusRoute = new Hono();
 
+const MOCK_TICK = new Map<string, number>();
+
 statusRoute.get("/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
+
+  if (isMockMode()) {
+    const ticks = (MOCK_TICK.get(jobId) ?? 0) + 1;
+    MOCK_TICK.set(jobId, ticks);
+
+    if (ticks < 2) {
+      const response: StatusResponse = {
+        jobId,
+        provider: "cached",
+        status: "running",
+        pollAfterMs: 800,
+      };
+      return c.json(response, 200);
+    }
+
+    // Pick a clip — beat template is encoded in the jobId seed when generated
+    // by mock; if not, fall back to a default.
+    const seed = jobId.split("::").pop() ?? "";
+    const beatTemplate = seed.split("-")[0] ?? "trailer.establishing";
+    const clip = getMockClip(beatTemplate);
+
+    const response: StatusResponse = {
+      jobId,
+      provider: "cached",
+      status: "succeeded",
+      clipUrl: clip.url,
+      clipPublicId: clip.publicId,
+    };
+    return c.json(response, 200);
+  }
 
   let decoded: ReturnType<typeof decodeJobId>;
   try {
     decoded = decodeJobId(jobId);
   } catch (err) {
-    return c.json({ error: "Bad jobId", details: err instanceof Error ? err.message : String(err) }, 400);
+    return c.json(
+      { error: "Bad jobId", details: err instanceof Error ? err.message : String(err) },
+      400,
+    );
   }
 
   try {
@@ -41,7 +81,6 @@ statusRoute.get("/:jobId", async (c) => {
             ? 4000
             : 5000
           : undefined,
-      // TODO(vishnu): once Cloudinary uploadVideoFromUrl is wired, set clipPublicId here.
     };
     return c.json(response, 200);
   } catch (err) {
