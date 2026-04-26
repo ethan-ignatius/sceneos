@@ -153,12 +153,27 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // messages still use api.agentStream below.
   useEffect(() => {
     cancelledRef.current = false;
-    if (!manifest || scene.conversation.length > 0) return;
+    // Skip the seed fire if:
+    //   - manifest isn't ready yet, OR
+    //   - we already have conversation turns (agent asked + user replied), OR
+    //   - the beat's status moved past `pending`. The status flip means we
+    //     ALREADY started a seed fire on a prior drawer open. Re-entering
+    //     a beat mid-conversation was re-triggering "Composing the shot."
+    //     because an aborted request leaves conversation empty but status
+    //     was bumped — guard on status to short-circuit cleanly.
+    if (!manifest) return;
+    if (scene.conversation.length > 0) return;
+    if (beat.status !== "pending") return;
 
     let active = true;
     setInFlight(true);
     setError(null);
     setStreamingThought("");
+    // Optimistically flip status to "questioning" so a remount mid-fire
+    // (drawer close + reopen) sees the new status and short-circuits
+    // instead of re-triggering "Composing the shot." On error we revert
+    // to "pending" so the user can retry from a clean state.
+    updateBeat(beat.beatId, { status: "questioning" });
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     // 60s ceiling — generous buffer for cold starts before we surface
@@ -217,6 +232,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         if ((err as Error)?.name === "AbortError") return;
         const msg = formatDirectorReachabilityError(err);
         if (msg) setError(msg);
+        // Revert the optimistic "questioning" flip so the next remount
+        // re-runs the seed fire instead of short-circuiting on a status
+        // that doesn't reflect a successful conversation.
+        updateBeat(beat.beatId, { status: "pending" });
       } finally {
         window.clearTimeout(seedTimeoutId);
         window.clearTimeout(safetyTimer);
