@@ -10,7 +10,7 @@ import { ProjectsRoute } from "@/routes/projects-route";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
-import { NarrationBar } from "@/components/narration/narration-bar";
+// import { NarrationBar } from "@/components/narration/narration-bar";
 import { ManifestAutoSync } from "@/components/manifest-autosync";
 import { useLenis } from "@/lib/use-lenis";
 import { setApiUserId } from "@/lib/api";
@@ -44,7 +44,7 @@ export default function App() {
       {/* Mounted outside <Routes> so they survive route navigation. */}
       <CinematicCursor />
       <CommandMenuMount />
-      <NarrationBar />
+      {/* <NarrationBar /> */}
       <ManifestAutoSync />
     </AppErrorBoundary>
   );

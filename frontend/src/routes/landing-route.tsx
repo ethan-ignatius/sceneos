@@ -190,10 +190,14 @@ export function LandingRoute() {
           applyDecomposition(res.clips, res.continuityBible);
           setDecomposeStatus("success");
 
-          // Co-director introduces the beat structure
+          // Co-director introduces the beat structure — but only if
+          // prompt_reaction has finished (don't cut off mid-sentence)
           const m1 = useBeatGraphStore.getState().manifest;
-          if (m1) {
-            useNarrationStore.getState().playMoment("decompose_intro", {
+          const ns = useNarrationStore.getState();
+          const canSpeak =
+            ns.status !== "playing" && ns.status !== "loading";
+          if (m1 && canSpeak) {
+            ns.playMoment("decompose_intro", {
               manifest: m1,
               masterPrompt: trimmed,
             });

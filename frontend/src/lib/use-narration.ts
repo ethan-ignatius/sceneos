@@ -33,6 +33,13 @@ interface NarrationState {
   stop: () => void;
 }
 
+if (typeof window !== "undefined" && window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.onvoiceschanged = () => {
+    window.speechSynthesis.getVoices();
+  };
+}
+
 let _audio: HTMLAudioElement | null = null;
 const _cache = new Map<string, { text: string; audioSrc: string | null; durationSeconds: number }>();
 
@@ -55,6 +62,37 @@ function _stopAudio() {
     _audio.load();
     _audio = null;
   }
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+}
+
+function _speakWithBrowserTTS(
+  text: string,
+  onEnd: () => void,
+  onError: () => void,
+): void {
+  if (typeof window === "undefined" || !window.speechSynthesis) {
+    onEnd();
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 0.95;
+  utterance.pitch = 0.85;
+  utterance.volume = 1.0;
+
+  const voices = window.speechSynthesis.getVoices();
+  const preferred = voices.find(
+    (v) =>
+      /daniel|aaron|james|google uk english male/i.test(v.name) && v.lang.startsWith("en"),
+  ) ?? voices.find((v) => v.lang.startsWith("en") && /male/i.test(v.name))
+    ?? voices.find((v) => v.lang.startsWith("en"));
+  if (preferred) utterance.voice = preferred;
+
+  utterance.onend = onEnd;
+  utterance.onerror = onError;
+  window.speechSynthesis.speak(utterance);
 }
 
 /**
@@ -113,7 +151,16 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
       set({ currentText: cached.text, currentMoment: moment, currentBeatId: beatId ?? null });
 
       if (!cached.audioSrc) {
-        set({ status: "done" });
+        if (cached.text) {
+          set({ status: "playing" });
+          _speakWithBrowserTTS(
+            cached.text,
+            () => set({ status: "done" }),
+            () => set({ status: "error" }),
+          );
+        } else {
+          set({ status: "done" });
+        }
         return;
       }
 
@@ -138,7 +185,16 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
       set({ currentText: text });
 
       if (!audioSrc) {
-        set({ status: "done" });
+        if (text) {
+          set({ status: "playing" });
+          _speakWithBrowserTTS(
+            text,
+            () => set({ status: "done" }),
+            () => set({ status: "error" }),
+          );
+        } else {
+          set({ status: "done" });
+        }
         return;
       }
 
@@ -169,7 +225,16 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
       _stopAudio();
       set({ currentText: cached.text, currentMoment: "summary", currentBeatId: null });
       if (!cached.audioSrc) {
-        set({ status: "done" });
+        if (cached.text) {
+          set({ status: "playing" });
+          _speakWithBrowserTTS(
+            cached.text,
+            () => set({ status: "done" }),
+            () => set({ status: "error" }),
+          );
+        } else {
+          set({ status: "done" });
+        }
         return;
       }
       _playAudio(cached.audioSrc, (s) => set({ status: s }));
@@ -187,7 +252,16 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
 
       set({ currentText: text });
       if (!audioSrc) {
-        set({ status: "done" });
+        if (text) {
+          set({ status: "playing" });
+          _speakWithBrowserTTS(
+            text,
+            () => set({ status: "done" }),
+            () => set({ status: "error" }),
+          );
+        } else {
+          set({ status: "done" });
+        }
         return;
       }
       _playAudio(audioSrc, (s) => set({ status: s }));

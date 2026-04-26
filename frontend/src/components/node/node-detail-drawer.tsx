@@ -550,9 +550,20 @@ export function NodeDetailDrawer() {
   }, [beat, handleGoNext]);
 
   // Fire-and-forget beat narration when the drawer opens for a new beat.
+  // Skip if another narration (prompt_reaction, decompose_intro) is still playing
+  // to avoid cutting off the co-director mid-sentence.
   const narrationBeatId = beat?.beatId;
+  const narrationStatus = useNarrationStore((s) => s.status);
+  const narrationMoment = useNarrationStore((s) => s.currentMoment);
   useEffect(() => {
     if (!narrationBeatId || !manifest) return;
+    // Don't interrupt intro narrations — they set the scene
+    if (
+      (narrationStatus === "playing" || narrationStatus === "loading") &&
+      (narrationMoment === "prompt_reaction" || narrationMoment === "decompose_intro")
+    ) {
+      return;
+    }
     narration.stop();
     narration.playBeatNarration(narrationBeatId, manifest);
     return () => {
