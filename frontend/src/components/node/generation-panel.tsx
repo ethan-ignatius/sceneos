@@ -357,7 +357,14 @@ export function GenerationPanel({
         <span>{stageLabel(stage, provider)}</span>
       </div>
 
-      {/* Runtime observability (real frontend). */}
+      {/* Runtime observability (real frontend).
+          The expanded panel itself is the scroller — without that cap,
+          the rows + status samples + JSON dump together overflowed the
+          drawer's bottom edge (rows visible, JSON visible, but the
+          parent card's rounded corners + footer were pushed below the
+          viewport). Now: max-h-72 on the panel, max-h-56 on the inner
+          JSON pre. The two scrollers are nested but well-bounded —
+          rows always visible, JSON scrolls in place. */}
       <div className="border-t border-fg-tertiary/15 pt-2">
         <button
           type="button"
@@ -379,7 +386,8 @@ export function GenerationPanel({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.18, ease: EASE.outQuart }}
-              className="mt-1 space-y-1 rounded-md border border-fg-tertiary/15 bg-bg-elev-2/25 px-3 py-2 font-mono text-caption text-fg-tertiary"
+              data-lenis-prevent
+              className="mt-1 max-h-72 space-y-1 overflow-y-auto rounded-md border border-fg-tertiary/15 bg-bg-elev-2/25 px-3 py-2 font-mono text-caption text-fg-tertiary [scrollbar-width:thin]"
             >
               <Row k="provider" v={provider ? PROVIDER_LABEL[provider] : "connecting"} />
               <Row k="stage" v={stage ?? "n/a"} />
@@ -400,14 +408,9 @@ export function GenerationPanel({
                 }
               />
               {debug?.latestStatus?.observability ? (
-                // Bumped 7rem→24rem and forced a real scroll surface so the
-                // requestPayload + manifest dump doesn't clip past the bottom
-                // of the drawer. data-lenis-prevent stops the page-level
-                // smooth-scroll engine from hijacking the wheel events while
-                // the user is reading the payload.
                 <pre
                   data-lenis-prevent
-                  className="max-h-96 overflow-auto whitespace-pre break-all rounded-md border border-fg-tertiary/15 bg-bg-base/60 p-2 text-[10px] leading-[1.5] text-fg-tertiary/85 [scrollbar-width:thin]"
+                  className="max-h-56 overflow-auto whitespace-pre break-all rounded-md border border-fg-tertiary/15 bg-bg-base/60 p-2 text-[10px] leading-[1.5] text-fg-tertiary/85 [scrollbar-width:thin]"
                 >
                   {JSON.stringify(debug.latestStatus.observability, null, 2)}
                 </pre>
