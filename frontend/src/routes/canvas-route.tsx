@@ -68,6 +68,19 @@ export function CanvasRoute() {
     if (!manifest) return;
     let cancelled = false;
 
+    // Verify this poller is still relevant before touching state.
+    // Three exit conditions:
+    //   - manifest reset / fresh decompose (beat/scene gone)
+    //   - speculativeJobId no longer matches (a fresh dispatch
+    //     replaced this jobId; we'd be writing into the wrong slot)
+    //   - clipPublicId already set (drawer's pollUntilDone won the
+    //     race and already promoted the speculative result)
+    const liveScene = (beatId: string, sceneId: string) => {
+      const m = useBeatGraphStore.getState().manifest;
+      const b = m?.beats.find((x) => x.beatId === beatId);
+      return b?.scenes.find((s) => s.sceneId === sceneId);
+    };
+
     const pollOne = async (
       beatId: string,
       sceneId: string,
@@ -83,6 +96,17 @@ export function CanvasRoute() {
           const status = await api.status(jobId);
           if (cancelled) return;
           if (status.status === "succeeded") {
+            const scene = liveScene(beatId, sceneId);
+            if (!scene || scene.speculativeJobId !== jobId) return;
+            // Drawer's pollUntilDone may have written first while we
+            // were waiting on the network. Don't clobber — just clear
+            // our speculative reference and exit.
+            if (scene.clipPublicId) {
+              useBeatGraphStore
+                .getState()
+                .updateScene(beatId, sceneId, { speculativeJobId: undefined });
+              return;
+            }
             useBeatGraphStore.getState().updateScene(beatId, sceneId, {
               clipPublicId: status.clipPublicId,
               clipUrl: status.clipUrl,
@@ -91,9 +115,12 @@ export function CanvasRoute() {
             return;
           }
           if (status.status === "failed") {
-            // Drop the speculative jobId; the user can still trigger a
-            // fresh render manually. Don't write any error state — this
-            // is best-effort speculative compute.
+            // Best-effort speculative compute: drop the jobId so the
+            // user can still trigger a fresh render manually. Same
+            // staleness guard as success — only clear if the scene
+            // is still tracking THIS jobId.
+            const scene = liveScene(beatId, sceneId);
+            if (!scene || scene.speculativeJobId !== jobId) return;
             useBeatGraphStore
               .getState()
               .updateScene(beatId, sceneId, { speculativeJobId: undefined });
@@ -266,7 +293,10 @@ export function CanvasRoute() {
         <button
           type="button"
           onClick={() => setStitchOpen(!stitchOpen)}
-          aria-label={`Open stitch tray — ${approvedCount} of ${totalCount} beats ready`}
+          aria-label={`${stitchOpen ? "Close" : "Open"} stitch tray — ${approvedCount} of ${totalCount} beats ready`}
+          aria-pressed={stitchOpen}
+          aria-expanded={stitchOpen}
+          aria-controls="stitch-tray"
           className="pointer-events-auto group inline-flex min-h-10 items-center gap-3 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 py-2 pl-4 pr-3.5 backdrop-blur-xl shadow-(--shadow-pill) transition-[border-color,background-color] duration-200 hover:border-brand-ember/45 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
         >
           <span

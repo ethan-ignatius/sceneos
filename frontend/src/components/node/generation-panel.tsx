@@ -231,6 +231,11 @@ export function GenerationPanel({
         </div>
 
         <motion.div
+          role="progressbar"
+          aria-label={`Render progress${provider ? ` — ${PROVIDER_LABEL[provider].split(" · ")[0]}` : ""}`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(ratio * 100)}
           className="absolute inset-x-0 bottom-0 h-px origin-left bg-brand-ember"
           animate={{ scaleX: ratio }}
           transition={{ duration: DURATIONS.quick, ease: EASE.outQuart }}

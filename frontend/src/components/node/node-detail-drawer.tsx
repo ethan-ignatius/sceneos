@@ -29,7 +29,10 @@ function isContentPolicyError(message: string): boolean {
     m.includes("usage guidelines") ||
     m.includes("support codes") ||
     (m.includes("filtered") && m.includes("veo")) ||
-    m.includes("violated vertex ai")
+    m.includes("violated vertex ai") ||
+    m.includes("safety filter blocked") ||
+    m.includes("sensitive words") ||
+    m.includes("responsible ai")
   );
 }
 
@@ -115,6 +118,19 @@ export function NodeDetailDrawer() {
           setStartedAt((prev) => prev ?? status.startedAt!);
         }
         if (status.status === "succeeded") {
+          // Race-aware write: canvas-route's speculative poller may have
+          // promoted the same jobId already. If clipPublicId is set, just
+          // flip the beat to preview — re-writing the same publicId churns
+          // store subscribers for nothing.
+          const m = useBeatGraphStore.getState().manifest;
+          const liveScene = m?.beats
+            .find((b) => b.beatId === beatId)
+            ?.scenes.find((s) => s.sceneId === sceneId);
+          if (!liveScene) return; // manifest reset mid-poll
+          if (liveScene.clipPublicId) {
+            updateBeat(beatId, { status: "preview" });
+            return;
+          }
           updateScene(beatId, sceneId, {
             jobId,
             clipPublicId: status.clipPublicId,
@@ -125,18 +141,25 @@ export function NodeDetailDrawer() {
           return;
         }
         if (status.status === "failed") {
-          // "Unknown vertex jobId" / "Unknown … jobId" means the backend
-          // restarted and lost its in-memory _JOBS dict. The job isn't
-          // actually failed in any meaningful sense — it's gone. Clear
-          // the stale jobId from the scene so the drawer doesn't keep
-          // re-attaching to a ghost, and surface a friendly message
-          // instead of the cryptic backend string.
           const errMsg = status.error ?? "Generation failed";
+
+          // Safety filter — Veo rejected the prompt content. Throw with
+          // a message that isContentPolicyError matches so the caller can
+          // route through handleContentPolicyRecovery.
+          if (status.safety || isContentPolicyError(errMsg)) {
+            updateScene(beatId, sceneId, {
+              jobId: undefined,
+              speculativeJobId: undefined,
+            });
+            throw new ApiError(0, errMsg);
+          }
+
+          // "Unknown vertex jobId" — backend restarted, in-memory jobs lost.
           if (/unknown\s+\w+\s+jobid/i.test(errMsg)) {
             // Backend restarted and lost in-memory provider job registry.
             // Auto-re-dispatch once with the same prompt so users don't hit
             // a dead-end "expired render" state on node 2+.
-            updateScene(beatId, sceneId, { jobId: undefined });
+            updateScene(beatId, sceneId, { jobId: undefined, speculativeJobId: undefined });
             if (!retriedExpiredJob) {
               retriedExpiredJob = true;
               const b = manifest?.beats.find((x) => x.beatId === beatId);
@@ -254,22 +277,28 @@ export function NodeDetailDrawer() {
     // If a speculative job is still running, attach to it instead of
     // dispatching a new one. The pollUntilDone loop handles both
     // running and succeeded states; on succeeded we flip to preview.
+    // If the speculative job is dead (backend restarted, in-memory jobs
+    // wiped), fall through to dispatch a fresh one instead of erroring.
     if (scene.speculativeJobId) {
       updateScene(beat.beatId, scene.sceneId, { jobId: scene.speculativeJobId });
       updateBeat(beat.beatId, { status: "generating" });
       try {
         await pollUntilDone(scene.speculativeJobId, beat.beatId, scene.sceneId, 1500);
-      } catch (err) {
+        return;
+      } catch (specErr) {
         if (cancelRef.current) return;
-        const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+        const msg = specErr instanceof ApiError ? specErr.message : "";
         if (isContentPolicyError(msg)) {
           handleContentPolicyRecovery(beat.beatId, scene.sceneId);
-        } else {
-          setGenError(msg);
-          updateBeat(beat.beatId, { status: "ready-to-generate" });
+          return;
         }
+        // Speculative job expired / unknown — clear it and fall through
+        // to a fresh dispatch below instead of showing an error.
+        updateScene(beat.beatId, scene.sceneId, {
+          jobId: undefined,
+          speculativeJobId: undefined,
+        });
       }
-      return;
     }
 
     updateBeat(beat.beatId, { status: "generating" });
@@ -518,12 +547,23 @@ export function NodeDetailDrawer() {
               const canLock = !!userAnswers && userAnswers.length > 0;
 
               if (isReadyToGenerate) {
+                // Without a refinedPrompt the backend has nothing to send
+                // to Veo. The button shouldn't even be reachable in this
+                // state (lock-it-in writes a refinedPrompt), but guard
+                // anyway so a stale manifest can't dispatch a no-op render.
+                const canRoll = !!beat.scenes[0]?.refinedPrompt;
                 return (
                   <Button
                     size="lg"
                     variant="primary"
+                    disabled={!canRoll}
                     className="w-full ember-pulse"
                     onClick={handleGenerate}
+                    aria-label={
+                      canRoll
+                        ? "Roll camera — start the render"
+                        : "Roll camera unavailable until the beat has a refined prompt"
+                    }
                   >
                     <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
                     <span className="font-body text-meta font-medium">Roll camera</span>

@@ -10,6 +10,7 @@ import {
   buildSpliceUrlSegments,
 } from "@/lib/cloudinary";
 import { TextSplitter } from "@/lib/text-splitter";
+import { collapseUuids, renderHighlightedUrl } from "@/lib/url-display";
 import { toast } from "sonner";
 import { Check, Copy } from "lucide-react";
 
@@ -144,18 +145,20 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
         <button
           onClick={onOpenTray}
           className="min-w-0 overflow-hidden whitespace-nowrap font-mono text-xs tabular-nums text-fg-secondary transition-colors hover:text-fg-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember focus-visible:ring-offset-1 focus-visible:ring-offset-bg-elev-1"
-          aria-label="Open stitch tray to inspect the full URL"
-          title="Open stitch tray"
+          aria-label={
+            fullUrl
+              ? `Open stitch tray to inspect the full master cut URL — ${fullUrl}`
+              : "Open stitch tray to inspect the full URL"
+          }
+          title={fullUrl ?? "Open stitch tray"}
         >
           <span className="text-fg-tertiary/70">…/upload/</span>
-          {segments.middle ? (
-            <span className="text-fg-secondary">{segments.middle}</span>
-          ) : null}
+          {segments.middle ? <span>{renderHighlightedUrl(segments.middle, { collapsed: true })}</span> : null}
           {segments.tail ? (
             shouldType ? (
               <span key={revealKey} className="url-segment-glow">
                 <TextSplitter
-                  text={segments.tail}
+                  text={collapseUuids(segments.tail)}
                   className="reveal-chars"
                   delayStrategy="sequential"
                   perCharStep={0.025}
@@ -164,10 +167,10 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
                 />
               </span>
             ) : (
-              <span>{segments.tail}</span>
+              <span>{renderHighlightedUrl(segments.tail, { collapsed: true })}</span>
             )
           ) : null}
-          <span className="text-brand-ember">{segments.base}</span>
+          <span className="text-brand-ember">{collapseUuids(segments.base)}</span>
         </button>
         <button
           onClick={handleCopy}

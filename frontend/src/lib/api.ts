@@ -27,7 +27,15 @@ import type {
 } from "@/types/api";
 import type { Manifest } from "@/types/manifest";
 
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8787";
+/**
+ * API origin. In dev, default is same-origin (empty) so requests go through
+ * Vite’s proxy to :8787 — works for both localhost and 127.0.0.1. Override
+ * with `VITE_API_BASE_URL` when the backend runs elsewhere.
+ */
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? "" : "http://localhost:8787");
+
+const BASE_URL = API_BASE_URL;
 
 class ApiError extends Error {
   status: number;
@@ -59,6 +67,32 @@ async function request<TBody, TResponse>(
     throw new ApiError(res.status, `API ${path} failed: ${res.status}`, details);
   }
   return (await res.json()) as TResponse;
+}
+
+/**
+ * Turn fetch failures into an actionable string. Call after ruling out
+ * AbortError (intentional cancel). Returns "" for AbortError.
+ */
+export function formatDirectorReachabilityError(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  if (err instanceof Error && err.name === "AbortError") return "";
+  if (err instanceof Error) {
+    const m = (err.message || "").toLowerCase();
+    if (
+      m.includes("failed to fetch") ||
+      m.includes("load failed") ||
+      m.includes("networkerror") ||
+      m.includes("network request failed")
+    ) {
+      return (
+        `Can't connect to the API${API_BASE_URL ? ` (${API_BASE_URL})` : " (dev: use Vite proxy to :8787)"}. ` +
+        `Run ./dev.sh, then check http://127.0.0.1:8787/api/health. ` +
+        `If the API is elsewhere, set VITE_API_BASE_URL in frontend/.env and restart Vite.`
+      );
+    }
+    return err.message;
+  }
+  return "Couldn't reach the director.";
 }
 
 /**
@@ -247,3 +281,4 @@ export const api = {
 };
 
 export { ApiError };
+

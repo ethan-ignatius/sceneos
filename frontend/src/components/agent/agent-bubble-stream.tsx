@@ -5,7 +5,7 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
 import { AgentBubble } from "./agent-bubble";
 import { Button } from "@/components/ui/button";
-import { api, ApiError } from "@/lib/api";
+import { api, formatDirectorReachabilityError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { useSpeechSynthesis } from "@/lib/use-speech-synthesis";
 import { isAudioMuted } from "@/lib/audio-cues";
@@ -215,7 +215,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       } catch (err) {
         if (!active || cancelledRef.current) return;
         if ((err as Error)?.name === "AbortError") return;
-        setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
+        const msg = formatDirectorReachabilityError(err);
+        if (msg) setError(msg);
       } finally {
         window.clearTimeout(seedTimeoutId);
         window.clearTimeout(safetyTimer);
@@ -316,8 +317,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     } catch (err) {
       if (cancelledRef.current) return;
       if ((err as Error)?.name === "AbortError") return;
-      setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
-      setPendingRetryMessage(userMessage);
+      const msg = formatDirectorReachabilityError(err);
+      if (msg) {
+        setError(msg);
+        setPendingRetryMessage(userMessage);
+      }
     } finally {
       window.clearTimeout(safetyTimer);
       if (!cancelledRef.current) setInFlight(false);
@@ -470,6 +474,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         {error ? (
           <div
             role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
             className="flex items-center justify-between gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-caption text-state-error"
           >
             <span>{error}</span>

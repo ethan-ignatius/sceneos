@@ -49,7 +49,9 @@ app.add_middleware(
     allow_origins=_allow_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["content-type"],
+    # Be permissive: browsers may include Accept, Sentry, etc. in preflight;
+    # a narrow list can yield 400 on OPTIONS and break CORS to :8787.
+    allow_headers=["*"],
 )
 
 
@@ -956,6 +958,8 @@ async def status(job_id: str):
             response["lastFrameUrl"] = last_frame_url(result["clipPublicId"])
     if result.get("error"):
         response["error"] = result["error"]
+    if result.get("safety"):
+        response["safety"] = True
     # Propagate provider's job-creation timestamp so the frontend's
     # GenerationPanel can compute REAL elapsed time across drawer
     # close/reopen cycles. Only Vertex tracks this today; other providers

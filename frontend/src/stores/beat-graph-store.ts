@@ -291,6 +291,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
                     ? {
                         ...s,
                         jobId: undefined,
+                        speculativeJobId: undefined,
                         clipPublicId: undefined,
                         clipUrl: undefined,
                         approved: false,

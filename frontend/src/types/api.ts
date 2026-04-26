@@ -135,6 +135,8 @@ export interface StatusResponse {
   startedAt?: string;
   /** Free-form backend observability payload (timings, trace metadata). */
   observability?: Record<string, unknown>;
+  /** True when Veo rejected the prompt due to its safety / Responsible AI filter. */
+  safety?: boolean;
 }
 
 export interface StitchRequest {
