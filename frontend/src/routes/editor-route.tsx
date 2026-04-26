@@ -9,6 +9,7 @@ import {
   Check,
   ExternalLink,
   Image as ImageIcon,
+  FolderClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EditorPreview } from "@/components/editor/editor-preview";
@@ -417,6 +418,14 @@ export function EditorRoute() {
             ) : null}
           </div>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => navigate("/projects")}
+              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary"
+            >
+              <FolderClock size={13} strokeWidth={1.5} aria-hidden="true" />
+              Projects
+            </button>
             <button
               type="button"
               onClick={handleSaveAndExit}

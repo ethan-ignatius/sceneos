@@ -172,6 +172,14 @@ async def generate(params: GenerateClipParams) -> dict:
     if voice_line:
         full_prompt = f"{full_prompt} The narrator says: \"{voice_line}\"."
 
+    # Log the actual prompt being sent to Veo. This is the source-of-truth
+    # for "is the user's idea reaching the model" — print the full string
+    # at INFO level so any operator can grep the backend log and see what
+    # Veo is actually rendering for the given job.
+    logger.info(
+        "[vertex] PROMPT job=%s len=%d → %r",
+        provider_job_id, len(full_prompt), full_prompt[:600],
+    )
     instance: dict[str, Any] = {"prompt": full_prompt}
 
     # Chained generation: when the previous beat's last frame is provided,
@@ -253,6 +261,8 @@ async def _poll_until_done(provider_job_id: str) -> None:
     pid = job["publicId"]
 
     from .retry import with_reliability
+    import time as _t
+    poll_start = _t.monotonic()
 
     for _ in range(_MAX_POLL_ATTEMPTS):
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
@@ -300,21 +310,36 @@ async def _poll_until_done(provider_job_id: str) -> None:
             return
 
         video = videos[0]
+        veo_seconds = _t.monotonic() - poll_start
+        # Approx payload size — Veo response is base64-encoded video. 33%
+        # inflation over raw bytes; we report the inflated size since
+        # that's what the Cloudinary upload step actually transmits.
+        b64_len = len(video.get("bytesBase64Encoded", "")) if isinstance(video, dict) else 0
+        approx_mb = b64_len / 1_048_576
         try:
             _JOBS[provider_job_id] = {
                 **_JOBS.get(provider_job_id, {}),
                 "status": "running",
                 "stage": "cloudinary_uploading",
             }
-            logger.info("[vertex] Veo done; uploading to Cloudinary job=%s publicId=%s", provider_job_id, pid)
+            logger.info(
+                "[vertex] Veo done in %.1fs; payload ~%.1fMB; uploading to Cloudinary job=%s publicId=%s",
+                veo_seconds, approx_mb, provider_job_id, pid,
+            )
+            upload_start = _t.monotonic()
             clip_url, clip_public_id = await _persist(video, pid)
+            upload_seconds = _t.monotonic() - upload_start
             _JOBS[provider_job_id] = {
                 "status": "succeeded",
                 "stage": "cloudinary_uploaded",
                 "clipUrl": clip_url,
                 "clipPublicId": clip_public_id,
             }
-            logger.info("[vertex] Cloudinary upload complete job=%s publicId=%s url=%s", provider_job_id, clip_public_id, clip_url)
+            total_seconds = _t.monotonic() - poll_start
+            logger.info(
+                "[vertex] DONE job=%s · veo=%.1fs · upload=%.1fs · total=%.1fs · publicId=%s",
+                provider_job_id, veo_seconds, upload_seconds, total_seconds, clip_public_id,
+            )
         except Exception as exc:
             # Surface the real cause. Wrapping just `exc` (e.g. an httpx
             # HTTPStatusError with empty args) loses the response body, which

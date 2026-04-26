@@ -74,6 +74,7 @@ export type BeatTemplate =
   | "feature.midpoint"
   | "feature.crisis"
   | "feature.climax"
+  | "feature.aftermath"
   | "feature.denouement"
   // story.* — canonical 7-beat dramatic arc (added Module C / STATE.md).
   // Backend `beat_templates.STORY` is the source of truth.

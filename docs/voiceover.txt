@@ -1,0 +1,34 @@
+SceneOS demo — ElevenLabs voiceover lines
+==========================================
+
+Paste each line block separately into ElevenLabs, generate, then assemble
+in your editor with ~300ms breath gaps between lines.
+
+Voice settings (recommended): Brian or Daniel · Stability 0.45 · Similarity 0.8
+· Style 0.15 · Speaker boost on.
+
+
+[LINE 1 — covers t=0–11s, plays under the cold open + crumple bridge]
+One idea. One creator. One cinematic.
+
+
+[LINE 2 — covers t=11–28s, plays over canvas + first beat conversation]
+SceneOS turns your prompt into a 7-beat dramatic arc. The director asks the questions a real cinematographer would. You answer in your own words.
+
+
+[LINE 3 — covers t=28–42s, plays over the time-lapse beats + stitch tray]
+Each beat generates as a real video clip. Approve a take, the cut stitches itself. No render server, no editing software. The whole thing is one Cloudinary URL that re-bakes on the CDN as you edit.
+
+
+[LINE 4 — covers t=42–56s, plays over /edit + /final]
+Refine on the timeline. Trim, transition, look. Every change rewrites the URL. Ship the cut as a single MP4.
+
+
+[LINE 5 — covers t=56–60s, plays over end card]
+SceneOS. Filmmaking, reimagined for one.
+
+
+==========================================
+Total runtime: ~58–62s at natural pace.
+Trim leading silence to ~80ms per clip in post.
+Mix at -14 LUFS over a -28 LUFS music bed.

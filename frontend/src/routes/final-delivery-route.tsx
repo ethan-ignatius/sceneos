@@ -1,7 +1,7 @@
 import { MotionConfig, motion } from "motion/react";
 import { useCallback, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Download, Link2, ArrowRight, Copy, Check } from "lucide-react";
+import { Download, Link2, ArrowRight, Copy, Check, FolderClock } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { VideoPlayer } from "@/components/ui/video-player";
@@ -84,20 +84,31 @@ export function FinalDeliveryRoute() {
             <span className="text-brand-ember">●</span>
             <span className="ml-2">SceneOS</span>
           </div>
-          <button
-            type="button"
-            onClick={handleMakeAnother}
-            className="group inline-flex cursor-pointer items-center gap-1.5 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary transition-colors duration-200 hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember"
-            aria-label="Archive this project and start a new one"
-          >
-            Make another
-            <ArrowRight
-              size={11}
-              strokeWidth={1.5}
-              aria-hidden="true"
-              className="transition-transform duration-200 group-hover:translate-x-0.5"
-            />
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => navigate("/projects")}
+              className="group inline-flex cursor-pointer items-center gap-1.5 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary transition-colors duration-200 hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember"
+              aria-label="Open projects archive"
+            >
+              <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" />
+              Projects
+            </button>
+            <button
+              type="button"
+              onClick={handleMakeAnother}
+              className="group inline-flex cursor-pointer items-center gap-1.5 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary transition-colors duration-200 hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember"
+              aria-label="Archive this project and start a new one"
+            >
+              Make another
+              <ArrowRight
+                size={11}
+                strokeWidth={1.5}
+                aria-hidden="true"
+                className="transition-transform duration-200 group-hover:translate-x-0.5"
+              />
+            </button>
+          </div>
         </motion.div>
 
         {/* Bottom slate */}

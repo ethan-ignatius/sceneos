@@ -8,6 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
+import { VIDEO_TYPE_TIERS, pickVideoTypeFromPrompt } from "@/lib/beat-templates";
 
 /**
  * Landing — the hook.
@@ -36,7 +37,7 @@ const HERO_VIDEO_URL =
 
 export function LandingRoute() {
   const navigate = useNavigate();
-  const { masterPrompt, videoType, setMasterPrompt } = usePromptStore();
+  const { masterPrompt, videoType, setMasterPrompt, setVideoType } = usePromptStore();
   const initialize = useBeatGraphStore((s) => s.initialize);
   const applyDecomposition = useBeatGraphStore((s) => s.applyDecomposition);
   const setDecomposeStatus = useBeatGraphStore((s) => s.setDecomposeStatus);
@@ -46,6 +47,19 @@ export function LandingRoute() {
   const [draft, setDraft] = useState(masterPrompt);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // True the moment the user clicks a tier chip; from then on, verbosity
+  // never overrides their choice. Without this lock, typing more would
+  // silently bump them up a tier and the chip selection would feel haunted.
+  const [videoTypeUserPicked, setVideoTypeUserPicked] = useState(false);
+
+  // Auto-pick the video tier from prompt verbosity until the user makes
+  // an explicit choice. Empty / very short prompt → Trailer (3 beats);
+  // medium → Short film (5); long → Movie (8).
+  useEffect(() => {
+    if (videoTypeUserPicked) return;
+    const next = pickVideoTypeFromPrompt(draft);
+    if (next !== videoType) setVideoType(next);
+  }, [draft, videoTypeUserPicked, videoType, setVideoType]);
 
   // Voice — Web Speech API, opt-in via the mic affordance inside the input.
   const speech = useSpeechRecognition({ lang: "en-US" });
@@ -372,6 +386,49 @@ export function LandingRoute() {
                 <>press enter or speak.</>
               )}
             </motion.p>
+
+            {/* Video-type tier picker — Trailer (3) / Short film (5) /
+                Movie (8). Auto-selected from prompt verbosity; the user
+                can override and that override sticks. Caption-track
+                register, no card chrome — three quiet text chips. */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 1.7 }}
+              className="mt-3 flex items-center justify-center gap-1"
+              role="radiogroup"
+              aria-label="Cinematic length"
+            >
+              {VIDEO_TYPE_TIERS.map((tier) => {
+                const active = videoType === tier.id;
+                return (
+                  <button
+                    key={tier.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => {
+                      setVideoType(tier.id);
+                      setVideoTypeUserPicked(true);
+                    }}
+                    className={cn(
+                      "group inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1",
+                      "font-body text-[11px] transition-colors duration-200",
+                      "focus-visible:outline-none focus-visible:text-brand-ember",
+                      active
+                        ? "text-brand-ember"
+                        : "text-fg-tertiary hover:text-fg-secondary",
+                    )}
+                    title={tier.hint}
+                  >
+                    <span className="font-mono tabular-nums text-fg-tertiary/60 group-hover:text-fg-tertiary">
+                      {tier.beatCount}
+                    </span>
+                    <span className={cn(active && "font-medium")}>{tier.label}</span>
+                  </button>
+                );
+              })}
+            </motion.div>
           </motion.form>
 
           {/* Recent projects rail — the 3 most recent archived projects as

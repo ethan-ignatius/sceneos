@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
-import { LogOut } from "lucide-react";
+import { LogOut, FolderClock } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
@@ -9,7 +9,7 @@ import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
 import { Minimap } from "@/components/canvas/minimap";
-import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
+import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-events";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
 
@@ -202,14 +202,15 @@ export function CanvasRoute() {
           the per-beat status is already conveyed by the planet visuals
           (atmosphere brightness, ✓ checkmark on labels, glow). */}
 
-      {/* Save & exit — top-left counterweight to the stitch pill. Archives
-          the current manifest into /projects history and returns to landing.
-          Subdued by default; lifts to fg-secondary on hover. */}
+      {/* Top-left chrome — Save & exit + Projects. Archives the current
+          manifest into /projects history (Save & exit) or jumps to the
+          archive without disturbing current state (Projects). Subdued by
+          default; lifts on hover. */}
       <motion.div
         initial={{ opacity: 0, y: -4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="pointer-events-none absolute left-4 top-4 z-20 md:left-6 md:top-5"
+        className="pointer-events-none absolute left-4 top-4 z-20 flex items-center gap-1.5 md:left-6 md:top-5"
       >
         <button
           type="button"
@@ -221,6 +222,18 @@ export function CanvasRoute() {
           <LogOut size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
           <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
             Save &amp; exit
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/projects")}
+          aria-label="Open projects archive"
+          title="Projects"
+          className="pointer-events-auto group inline-flex min-h-9 items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+        >
+          <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
+          <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+            Projects
           </span>
         </button>
       </motion.div>

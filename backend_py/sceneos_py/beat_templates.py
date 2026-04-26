@@ -194,6 +194,17 @@ FEATURE: list[BeatTemplateDef] = [
         "directorNotes": _notes("Maximum stakes. Major motion or held heroic stillness."),
     },
     {
+        "template": "feature.aftermath",
+        "beatName": "Aftermath",
+        "intent": "The dust settles. The cost of the apex is felt before the world resolves.",
+        "mood": "still-resolve",
+        "suggestedDuration": 18,
+        "directorNotes": _notes(
+            "Quiet immediately after the climax. Mediums + tight close-ups; almost no movement. "
+            "Warm twilight cooling toward the new normal. Long takes, 5-8s. The audience earns the silence."
+        ),
+    },
+    {
         "template": "feature.denouement",
         "beatName": "Denouement",
         "intent": "Resolution. The new normal.",
