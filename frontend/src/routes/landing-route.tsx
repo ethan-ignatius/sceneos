@@ -9,7 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
-import { VIDEO_TYPE_TIERS, pickVideoTypeFromPrompt } from "@/lib/beat-templates";
+import { VIDEO_TYPE_TIERS } from "@/lib/beat-templates";
 
 /**
  * Landing — the hook.
@@ -54,19 +54,13 @@ export function LandingRoute() {
   // a second call early-returns; the state mirror disables the buttons.
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  // True the moment the user clicks a tier chip; from then on, verbosity
-  // never overrides their choice. Without this lock, typing more would
-  // silently bump them up a tier and the chip selection would feel haunted.
-  const [videoTypeUserPicked, setVideoTypeUserPicked] = useState(false);
 
-  // Auto-pick the video tier from prompt verbosity until the user makes
-  // an explicit choice. Empty / very short prompt → Trailer (3 beats);
-  // medium → Short film (5); long → Movie (8).
-  useEffect(() => {
-    if (videoTypeUserPicked) return;
-    const next = pickVideoTypeFromPrompt(draft);
-    if (next !== videoType) setVideoType(next);
-  }, [draft, videoTypeUserPicked, videoType, setVideoType]);
+  // Verbosity-driven auto-pick was removed: typing a long prompt would
+  // silently bump the user to Movie (8 beats) even when they had picked
+  // Trailer, which felt haunted. The chip selection is now strictly
+  // user-driven; verbosity does not override their choice. Default
+  // remains the shortest tier ("Trailer", 3 beats) — set in the
+  // prompt-store init.
 
   // Voice — Web Speech API. Auto-starts on mount so the user can speak
   // their idea without reaching for the mic button. The button then
@@ -486,10 +480,7 @@ export function LandingRoute() {
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      onClick={() => {
-                        setVideoType(tier.id);
-                        setVideoTypeUserPicked(true);
-                      }}
+                      onClick={() => setVideoType(tier.id)}
                       className={cn(
                         "group cursor-pointer px-2 py-1 font-body text-caption transition-colors duration-200",
                         "focus-visible:outline-none focus-visible:text-brand-ember",
