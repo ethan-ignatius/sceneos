@@ -449,9 +449,12 @@ export const VIDEO_TYPE_TIERS: ReadonlyArray<{
  */
 export function pickVideoTypeFromPrompt(prompt: string): VideoType {
   const words = prompt.trim().split(/\s+/).filter(Boolean).length;
-  if (words === 0) return "trailer"; // empty input — neutral default
-  if (words <= 8) return "short";
-  if (words <= 25) return "trailer";
+  // Default heavily toward Trailer — the user can always upgrade tiers
+  // explicitly. Auto-bumping to Movie on a paragraph silently turns a
+  // 30-second demo into a multi-minute generation, burning credits the
+  // user didn't ask for.
+  if (words <= 12) return "trailer";
+  if (words <= 30) return "short";
   return "feature";
 }
 

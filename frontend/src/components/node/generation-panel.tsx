@@ -132,7 +132,12 @@ export function GenerationPanel({
   // it. Surviving across drawer close/reopen is what makes the bar honest.
   const startMsRef = useRef<number>(Date.now());
   const [tick, setTick] = useState(0);
-  const [showDebug, setShowDebug] = useState(false);
+  // Default-open: while a generation is in flight the user wants to see
+  // exactly which provider is active, what stage it's on, and the live
+  // jobId/observability without an extra click. They can collapse if it
+  // gets noisy — but the cost of "is this hung?" is much higher than the
+  // cost of a 6-row block on screen.
+  const [showDebug, setShowDebug] = useState(true);
 
   useEffect(() => {
     startMsRef.current = Date.now();

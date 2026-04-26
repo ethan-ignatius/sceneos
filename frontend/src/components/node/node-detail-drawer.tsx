@@ -337,12 +337,28 @@ export function NodeDetailDrawer() {
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
-      const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+      // Prefer the backend's structured detail.error/details over the
+      // generic ApiError.message ("API /api/orchestrate/... failed: 502").
+      // The 502 detail body carries the cascade's real failure reason —
+      // surfacing it lets the user see "Imagen quota exhausted" etc.
+      // instead of an opaque 502.
+      let msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+      if (err instanceof ApiError && err.details && typeof err.details === "object") {
+        const d = err.details as { detail?: { error?: string; details?: string } };
+        const inner = d.detail?.error;
+        const detail = d.detail?.details;
+        if (inner) msg = detail ? `${inner} — ${detail}` : inner;
+      }
       if (isContentPolicyError(msg)) {
         handleContentPolicyRecovery(beat.beatId, scene.sceneId);
       } else {
         setGenError(msg);
         updateBeat(beat.beatId, { status: "ready-to-generate" });
+        // Auto-roll guard stays set — re-firing in a tight loop on the
+        // same error would just hammer the backend. The user reclaims
+        // the retry by clicking Roll camera (manual intent) OR by closing
+        // and re-opening the drawer (the ref resets on remount and the
+        // ready-to-generate effect auto-fires "Composing the camera.").
       }
     }
   }, [beat, manifest, updateBeat, updateScene, pollUntilDone, handleContentPolicyRecovery]);

@@ -337,13 +337,20 @@ async def _orchestrate_submit(
     aspect_ratio: str,
     project_id: str | None,
 ) -> dict:
-    """Run the heavy orchestrate submission path and return provider job info."""
+    """Run the heavy orchestrate submission path and return provider job info.
+
+    Hardened so timing accumulators are initialised BEFORE the first
+    awaitable. Earlier shape held them inside the try block — which meant
+    an uncaught exception surfaced as `name 't_orch' is not defined`
+    instead of the real provider error.
+    """
     from . import orchestrator
     from . import session as session_service
 
-    t_orch = time.perf_counter()
-    t_refs = time.perf_counter()
+    started_at = time.perf_counter()
+    refs_started_at = started_at
     keyframe_timeout = False
+    project_keyframes: dict | None = None
     try:
         project_keyframes = await asyncio.wait_for(
             session_service.ensure_project_keyframes(
@@ -356,20 +363,31 @@ async def _orchestrate_submit(
         )
     except asyncio.TimeoutError:
         keyframe_timeout = True
-        project_keyframes = None
         logger.warning(
             "[orchestrate] keyframe generation timed out after %.1fs project=%s beat=%s",
             _KEYFRAME_WAIT_SECONDS,
             project_id,
             beat_id,
         )
-    refs_ms = int((time.perf_counter() - t_refs) * 1000)
+    except Exception as kf_exc:
+        # Imagen credentials missing, Vertex 5xx, network blip — none of
+        # these should hard-fail the whole orchestrate. The pipeline can
+        # proceed without project keyframes (falls through to chain or
+        # per-beat refs), and the cached fallback always ships pixels.
+        logger.warning(
+            "[orchestrate] keyframe generation failed project=%s beat=%s err=%s",
+            project_id,
+            beat_id,
+            kf_exc,
+        )
+
+    refs_ms = int((time.perf_counter() - refs_started_at) * 1000)
     project_refs = (
         session_service._refs_from_keyframes(project_keyframes)
         if project_keyframes
         else None
     )
-    t_pipeline = time.perf_counter()
+    pipeline_started_at = time.perf_counter()
     result = await orchestrator.run_beat_pipeline(
         manifest=manifest,
         beat_id=beat_id,
@@ -379,8 +397,8 @@ async def _orchestrate_submit(
         project_refs=project_refs,
         project_keyframes=project_keyframes,
     )
-    pipeline_ms = int((time.perf_counter() - t_pipeline) * 1000)
-    total_ms = int((time.perf_counter() - t_orch) * 1000)
+    pipeline_ms = int((time.perf_counter() - pipeline_started_at) * 1000)
+    total_ms = int((time.perf_counter() - started_at) * 1000)
     result["orchestrateTiming"] = {
         "ensureProjectKeyframesMs": refs_ms,
         "runBeatPipelineMs": pipeline_ms,
@@ -1329,3 +1347,4 @@ async def cutos_import(body: dict):
         "projectId": project_id,
         "editUrl": data.get("editUrl") or f"{base_url}/projects/{project_id}",
     }
+
