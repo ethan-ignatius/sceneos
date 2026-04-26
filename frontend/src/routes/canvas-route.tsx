@@ -1,7 +1,7 @@
-import { Suspense, lazy, useCallback, useEffect, useRef } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
-import { LogOut } from "lucide-react";
+import { LogOut, FolderClock } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
@@ -9,9 +9,11 @@ import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
 import { Minimap } from "@/components/canvas/minimap";
-import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
+import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-events";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
+import { api } from "@/lib/api";
+import { sleep } from "@/lib/utils";
 
 const BeatMap3D = lazy(() =>
   import("@/components/canvas/beat-map-3d").then((m) => ({ default: m.BeatMap3D })),
@@ -46,39 +48,146 @@ export function CanvasRoute() {
     return stop;
   }, []);
 
-  // Auto-arc into the first unfinished beat ~2s after canvas mount, so
-  // the user lands on the overview, gets a breath to read the scene,
-  // then the camera glides into Earth (or whichever the first pending
-  // beat is) and the drawer opens. Fires once per fresh canvas entry —
-  // a `useRef` guard ensures Esc → overview → re-mount doesn't re-trigger
-  // it within the same component lifetime.
-  const autoArcFiredRef = useRef(false);
+  // ── Speculative-job poller ─────────────────────────────────────────
+  // The landing route fires /api/generate for every beat the moment
+  // /api/decompose returns refinedPrompts. Each pre-bake jobId is parked
+  // on `scene.speculativeJobId`. Here we poll every active jobId at the
+  // canvas-route level so the polls survive drawer mount/unmount as the
+  // user navigates between beats.
+  //
+  // When a speculative job succeeds:
+  //   - clipPublicId / clipUrl are written onto the scene
+  //   - speculativeJobId is cleared (so we stop polling)
+  //   - beat.status remains pending — agent conversation UX is unchanged
+  //
+  // The drawer's "I have enough — generate" / "Roll camera" handlers
+  // check for an existing clipPublicId first; if present, the beat
+  // flips straight to "preview" with no second Veo round-trip.
+  const polledJobsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (autoArcFiredRef.current) return;
     if (!manifest) return;
-    if (activeBeatId) return; // user already chose a beat
-    if (stitchOpen) return; // stitch tray is open, hold off
-    const firstPending = manifest.beats.find(
-      (b) => b.status === "pending" || b.status === "questioning",
-    );
-    if (!firstPending) return; // every beat already past pending
-    autoArcFiredRef.current = true;
-    const t = window.setTimeout(() => {
-      // Re-check: the user may have clicked something during the 2s wait.
-      const live = useBeatGraphStore.getState();
-      if (live.activeBeatId || live.stitchTrayOpen) return;
-      setActiveBeat(firstPending.beatId);
-    }, 2000);
-    return () => window.clearTimeout(t);
-    // Dependencies are intentionally minimal — we only want this effect
-    // to evaluate on mount. The ref guard above blocks subsequent fires.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+
+    const pollOne = async (
+      beatId: string,
+      sceneId: string,
+      jobId: string,
+    ) => {
+      let delay = 1500;
+      const startMs = Date.now();
+      while (!cancelled) {
+        if (Date.now() - startMs > 8 * 60_000) return; // 8 min ceiling
+        await sleep(delay);
+        if (cancelled) return;
+        try {
+          const status = await api.status(jobId);
+          if (cancelled) return;
+          if (status.status === "succeeded") {
+            useBeatGraphStore.getState().updateScene(beatId, sceneId, {
+              clipPublicId: status.clipPublicId,
+              clipUrl: status.clipUrl,
+              speculativeJobId: undefined,
+            });
+            return;
+          }
+          if (status.status === "failed") {
+            // Drop the speculative jobId; the user can still trigger a
+            // fresh render manually. Don't write any error state — this
+            // is best-effort speculative compute.
+            useBeatGraphStore
+              .getState()
+              .updateScene(beatId, sceneId, { speculativeJobId: undefined });
+            return;
+          }
+          delay = status.pollAfterMs ?? 5000;
+        } catch {
+          // Transient network blip — back off and try again. The 8min
+          // ceiling above bounds the loop.
+          delay = Math.min(delay * 1.5, 15000);
+        }
+      }
+    };
+
+    for (const beat of manifest.beats) {
+      const scene = beat.scenes[0];
+      if (!scene?.speculativeJobId) continue;
+      // Don't double-attach: each (beatId, jobId) pair only polls once
+      // per canvas mount.
+      const key = `${beat.beatId}:${scene.speculativeJobId}`;
+      if (polledJobsRef.current.has(key)) continue;
+      polledJobsRef.current.add(key);
+      void pollOne(beat.beatId, scene.sceneId, scene.speculativeJobId);
+    }
+
+    return () => {
+      cancelled = true;
+    };
   }, [manifest]);
 
+  // Auto-arc gating. The arc is intentionally *armed* in only two
+  // moments: (a) first canvas mount, and (b) right after a beat is
+  // approved (so the user rolls smoothly into the next planet). Any
+  // manual escape — Esc, drawer X, click on empty canvas — disarms the
+  // arc; we will not snap the user back into a beat they walked away
+  // from. The next post-approval auto-close will re-arm.
+  const [arcArmed, setArcArmed] = useState(true);
+
+  // Disarm the moment any beat becomes active, regardless of source
+  // (auto-arc, manual click, ⌘K jump). The auto-arc itself sets armed
+  // false on fire too, so this is belt-and-suspenders for the manual-
+  // click case where the user beat the 2s timer.
+  useEffect(() => {
+    if (activeBeatId) setArcArmed(false);
+  }, [activeBeatId]);
+
+  // Auto-arc into the next pending beat — only when armed. We only
+  // advance to beats whose status is "pending" or "questioning";
+  // anything past "ready-to-generate" already has a clip in flight or
+  // approved, so re-opening it would feel like a regression.
+  useEffect(() => {
+    if (!arcArmed) return;
+    if (!manifest) return;
+    if (activeBeatId) return; // drawer is already open
+    if (stitchOpen) return; // stitch tray is open, hold off
+    const nextPending = manifest.beats.find(
+      (b) => b.status === "pending" || b.status === "questioning",
+    );
+    if (!nextPending) return; // every beat past pending — nothing to advance to
+    const t = window.setTimeout(() => {
+      // Re-check at fire time: the user may have clicked something
+      // during the 2s wait.
+      const live = useBeatGraphStore.getState();
+      if (live.activeBeatId || live.stitchTrayOpen) return;
+      setActiveBeat(nextPending.beatId);
+      setArcArmed(false); // single-shot — re-armed by post-approval below
+    }, 2000);
+    return () => window.clearTimeout(t);
+  }, [arcArmed, manifest, activeBeatId, stitchOpen, setActiveBeat]);
+
+  // Auto-close the drawer once the active beat is approved AND re-arm
+  // the arc, so the next pending beat will open after a 2s breath.
+  // The 1.2s lets the approval animation land before we whisk away.
+  useEffect(() => {
+    if (!manifest) return;
+    if (!activeBeatId) return;
+    const active = manifest.beats.find((b) => b.beatId === activeBeatId);
+    if (!active || active.status !== "approved") return;
+    const t = window.setTimeout(() => {
+      const live = useBeatGraphStore.getState();
+      // Bail if the user already navigated elsewhere themselves.
+      if (live.activeBeatId !== activeBeatId) return;
+      setActiveBeat(null);
+      setArcArmed(true);
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [manifest, activeBeatId, setActiveBeat]);
+
   // Re-center: clear active beat AND fire the camera-reset event so
-  // BeatMap3D zeros any pan offset. One operation, two effects.
+  // BeatMap3D zeros any pan offset. Also disarms the auto-arc — the
+  // user explicitly asked to be on the overview; don't snap them back.
   const recenterCamera = useCallback(() => {
     if (activeBeatId) setActiveBeat(null);
+    setArcArmed(false);
     window.dispatchEvent(new CustomEvent(RESET_CAMERA_EVENT));
   }, [activeBeatId, setActiveBeat]);
 
@@ -202,14 +311,15 @@ export function CanvasRoute() {
           the per-beat status is already conveyed by the planet visuals
           (atmosphere brightness, ✓ checkmark on labels, glow). */}
 
-      {/* Save & exit — top-left counterweight to the stitch pill. Archives
-          the current manifest into /projects history and returns to landing.
-          Subdued by default; lifts to fg-secondary on hover. */}
+      {/* Top-left chrome — Save & exit + Projects. Archives the current
+          manifest into /projects history (Save & exit) or jumps to the
+          archive without disturbing current state (Projects). Subdued by
+          default; lifts on hover. */}
       <motion.div
         initial={{ opacity: 0, y: -4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="pointer-events-none absolute left-4 top-4 z-20 md:left-6 md:top-5"
+        className="pointer-events-none absolute left-4 top-4 z-20 flex items-center gap-1.5 md:left-6 md:top-5"
       >
         <button
           type="button"
@@ -221,6 +331,18 @@ export function CanvasRoute() {
           <LogOut size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
           <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
             Save &amp; exit
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate("/projects")}
+          aria-label="Open projects archive"
+          title="Projects"
+          className="pointer-events-auto group inline-flex min-h-9 items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+        >
+          <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
+          <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+            Projects
           </span>
         </button>
       </motion.div>

@@ -88,9 +88,17 @@ def _earlier_beats_block(beat: dict, manifest: dict) -> str:
         lines: list[str] = [f"## {b['beatName']} (beat {manifest['beats'].index(b) + 1})"]
         facts = scene.get("beatFacts") or {}
         if facts:
-            for key in ("subject", "action", "setting", "framing", "mood",
-                       "characterDescription", "locationDescription",
-                       "voiceLine", "captionLine"):
+            for key in (
+                "subject",
+                "action",
+                "setting",
+                "framing",
+                "mood",
+                "characterDescription",
+                "locationDescription",
+                "voiceLine",
+                "captionLine",
+            ):
                 value = facts.get(key)
                 if isinstance(value, str):
                     value = value.strip()
@@ -99,21 +107,40 @@ def _earlier_beats_block(beat: dict, manifest: dict) -> str:
         summary = scene.get("sceneSummary") or scene.get("refinedPrompt") or ""
         if summary:
             lines.append(f"- summary: {_truncate(summary, 400)}")
+        conv = scene.get("conversation") or []
         user_turns = [
             str(t.get("content", "")).strip()
-            for t in (scene.get("conversation") or [])
+            for t in conv
             if t.get("role") == "user" and str(t.get("content", "")).strip()
         ][-4:]
         if user_turns:
             lines.append("- user answers: " + " ┆ ".join(user_turns))
+        # Agent questions in prior beats are invisible to the model unless we
+        # echo them here — otherwise it re-asks "what brought them to the
+        # planet" in beat 2 after the hook already covered it.
+        agent_qs = [
+            _truncate(str(t.get("content", "")).strip(), 220)
+            for t in conv
+            if t.get("role") == "agent" and str(t.get("content", "")).strip()
+        ][-4:]
+        if agent_qs:
+            lines.append(
+                "- questions you (the director) already asked in this beat: "
+                + " ┆ ".join(f'"{q}"' for q in agent_qs)
+            )
         sections.append("\n".join(lines))
     if not sections:
         return ""
     return (
         "# Prior beats (the movie so far)\n"
-        "Use these details when reflecting the story back. Reuse specific "
-        "phrases the user gave you. Carry character + world descriptors "
-        "VERBATIM — the protagonist looks the same in every frame.\n\n"
+        "This is a continuous story, not a fresh interview. Each row includes "
+        "what you already asked in that beat — do NOT re-ask the same premise "
+        "or \"what brings them here\" if it was already answered or if the "
+        "beatFacts/summary already lock it. Your next beat should advance "
+        "the plot (new stakes, obstacle, choice, or revelation) from where "
+        "the last beat left off.\n"
+        "Reuse specific phrases the user gave you. Carry character + world "
+        "descriptors VERBATIM — the protagonist looks the same in every frame.\n\n"
         + "\n\n".join(sections)
         + "\n"
     )

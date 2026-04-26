@@ -74,6 +74,7 @@ export type BeatTemplate =
   | "feature.midpoint"
   | "feature.crisis"
   | "feature.climax"
+  | "feature.aftermath"
   | "feature.denouement"
   // story.* — canonical 7-beat dramatic arc (added Module C / STATE.md).
   // Backend `beat_templates.STORY` is the source of truth.
@@ -151,6 +152,16 @@ export interface Scene {
   /** Stamped by /api/orchestrate when it composes the final prompt. */
   clipPrompt?: ClipPrompt;
   jobId?: string;
+  /**
+   * Pre-bake job dispatched the moment /api/decompose returns refinedPrompt,
+   * BEFORE the user has done their agent conversation. Runs in parallel
+   * with the conversation; when it succeeds we promote the result into
+   * clipPublicId/clipUrl and clear this field. Lock-it-in / Roll camera
+   * checks for a ready speculative result first and flips straight to
+   * preview if found — no second Veo round-trip. The user's wait collapses
+   * from sum(N × Veo) to max(longest conversation, longest render).
+   */
+  speculativeJobId?: string;
   clipPublicId?: string;
   clipUrl?: string;
   /**
@@ -161,6 +172,15 @@ export interface Scene {
   lastFrameUrl?: string;
   durationSeconds?: number;
   approved: boolean;
+  /**
+   * Filled from POST /api/generate when the backend falls back from the
+   * primary video provider to the cached demo lane. Lets the preview
+   * explain "demo vs live Veo" after reload. Same values as
+   * `GenerationProvider` in `api.ts` (kept as string to avoid a type cycle).
+   */
+  generateFallbackFrom?: string;
+  /** Human-readable from backend (quota, safety, network, …). */
+  generateFallbackReason?: string;
 }
 
 /**

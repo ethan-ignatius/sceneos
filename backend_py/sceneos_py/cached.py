@@ -27,7 +27,7 @@ class _Clip:
 
 
 # ── lighthouse-ship demo (baked 2026-04-25, project lighthouse31) ──────────
-# 7 beats, ALL Veo 3.1 GA (`veo-3.1-generate-001`, released Nov 17 2025) at
+# 7 beats, ALL Veo 3.1 Fast (`veo-3.1-fast-generate-001`, released Nov 17 2025) at
 # 1080p with native synced audio (dialogue + ambient + SFX). Same shared
 # Imagen 3 character + location refs reused as the I2V seed for every beat
 # — that's where character consistency comes from (the keeper's face stays

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, RotateCcw, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EditorPreviewProps {
@@ -39,40 +39,103 @@ export function EditorPreview({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number>(durationSeconds ?? 0);
+  // Load failure overlay. Editor's bake URL points at Cloudinary; on
+  // resumed projects the asset can be rotated/deleted, and during a bake
+  // race the URL can briefly 404 before the new derivative is ready.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    if (!src) return;
     setCurrentTime(0);
+    setLoadError(null);
+    setAutoplayBlocked(false);
     v.load();
+    // Cached video may have v.duration ready synchronously and never
+    // re-fire loadedmetadata on src swap — seed from the element so
+    // the readout doesn't stick at "0:00".
+    const seed = v.duration;
+    if (Number.isFinite(seed) && seed > 0) setDuration(seed);
     const onTime = () => setCurrentTime(v.currentTime);
-    const onMeta = () => {
-      if (!Number.isNaN(v.duration)) setDuration(v.duration);
+    // loadedmetadata + durationchange together: some MP4 muxers report
+    // metadata before duration is computed, so durationchange catches
+    // the firmer value once it's known.
+    const updateDuration = () => {
+      const d = v.duration;
+      if (Number.isFinite(d) && d > 0) setDuration(d);
     };
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      setAutoplayBlocked(false);
+    };
     const onPause = () => setPlaying(false);
     const onEnded = () => {
       setPlaying(false);
       setCurrentTime(v.duration ?? 0);
     };
+    // MediaError codes mapped to human messages — same vocabulary as
+    // VideoPlayer so the two surfaces feel consistent.
+    const onError = () => {
+      const code = v.error?.code;
+      const msg =
+        code === 4
+          ? "Couldn't load this cut — the source may have moved."
+          : code === 2
+            ? "Network hiccup loading the cut."
+            : code === 3
+              ? "This cut can't be decoded in your browser."
+              : "Couldn't load this cut.";
+      setLoadError(msg);
+      setPlaying(false);
+    };
     v.addEventListener("timeupdate", onTime);
-    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("loadedmetadata", updateDuration);
+    v.addEventListener("durationchange", updateDuration);
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("ended", onEnded);
+    v.addEventListener("error", onError);
+    // Autoplay-blocked recovery: catch NotAllowedError so we can show
+    // the play overlay instead of leaving the user staring at a frozen
+    // first frame.
+    const tryPlay = () => {
+      const p = v.play();
+      if (p && typeof p.then === "function") {
+        p.catch((err: Error) => {
+          if (err.name === "NotAllowedError") setAutoplayBlocked(true);
+        });
+      }
+    };
+    v.addEventListener("canplay", tryPlay, { once: true });
     return () => {
       v.removeEventListener("timeupdate", onTime);
-      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("loadedmetadata", updateDuration);
+      v.removeEventListener("durationchange", updateDuration);
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("ended", onEnded);
+      v.removeEventListener("error", onError);
       try {
         v.pause();
       } catch {
         /* noop */
       }
     };
-  }, [src]);
+    // reloadCount is the Retry hook — bumping re-runs load().
+  }, [src, reloadCount]);
+
+  // Late-arriving prop. /api/editor/apply returns durationSeconds but
+  // the URL bake can land first (e.g., demo lookup hit) — promote the
+  // prop into local state once it firms up, preserving any larger value
+  // the video element has already reported.
+  useEffect(() => {
+    if (typeof durationSeconds !== "number") return;
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
+    setDuration((prev) => (prev > 0 ? prev : durationSeconds));
+  }, [durationSeconds]);
 
   const togglePlay = () => {
     const v = videoRef.current;
@@ -143,11 +206,12 @@ export function EditorPreview({
       <div className="relative overflow-hidden border border-fg-tertiary/15 bg-black">
         <video
           ref={videoRef}
-          src={src}
+          src={src || undefined}
           autoPlay
           muted
           playsInline
           loop
+          preload="auto"
           controls={false}
           onClick={togglePlay}
           className="block aspect-video w-full cursor-pointer object-cover"
@@ -156,6 +220,42 @@ export function EditorPreview({
           <div className="absolute right-3 top-3 inline-flex items-center gap-1.5 bg-bg-base/80 px-2.5 py-1 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary backdrop-blur">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-ember" />
             {bakingCaption}
+          </div>
+        ) : null}
+        {/* Tap-to-play hint on autoplay-block. Sits on top of the frame
+            so the user has an obvious next step instead of a frozen frame. */}
+        {autoplayBlocked && !loadError ? (
+          <button
+            type="button"
+            onClick={togglePlay}
+            aria-label="Tap to play"
+            className="absolute inset-0 grid place-items-center bg-bg-base/30 backdrop-blur-[1px] transition-colors hover:bg-bg-base/45"
+          >
+            <span className="grid h-16 w-16 cursor-pointer place-items-center rounded-full bg-bg-base/55 ring-1 ring-brand-ember/40">
+              <Play size={22} strokeWidth={1.5} fill="currentColor" className="ml-0.5 text-brand-ember" aria-hidden="true" />
+            </span>
+          </button>
+        ) : null}
+        {/* Load-error overlay — covers the frame with a non-cinematic
+            message + Retry. Bumps reloadCount to re-run load() against
+            the same src; clears on success. */}
+        {loadError ? (
+          <div role="alert" className="absolute inset-0 grid place-items-center bg-bg-base/85 backdrop-blur-md">
+            <div className="flex max-w-[80%] flex-col items-center gap-3 text-center">
+              <AlertCircle size={20} strokeWidth={1.5} className="text-state-error" aria-hidden="true" />
+              <p className="font-body text-pill leading-snug text-fg-secondary">{loadError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadError(null);
+                  setReloadCount((n) => n + 1);
+                }}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-fg-tertiary/30 px-3 py-1.5 font-body text-pill font-medium text-fg-primary transition-colors hover:border-brand-ember/60 hover:text-brand-ember"
+              >
+                <RotateCcw size={11} strokeWidth={1.5} aria-hidden="true" />
+                Retry
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

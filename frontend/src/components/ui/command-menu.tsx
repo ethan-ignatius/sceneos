@@ -22,7 +22,7 @@ import { useBeatGraphStore, selectApprovedClipPublicIds } from "@/stores/beat-gr
 import { usePromptStore } from "@/stores/prompt-store";
 import { isAudioMuted, setAudioMuted } from "@/lib/audio-cues";
 import { buildSpliceUrl } from "@/lib/cloudinary";
-import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
+import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-events";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { toast } from "sonner";
 

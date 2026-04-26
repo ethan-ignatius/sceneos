@@ -8,6 +8,7 @@ import { api, ApiError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
+import { VIDEO_TYPE_TIERS, pickVideoTypeFromPrompt } from "@/lib/beat-templates";
 
 /**
  * Landing — the hook.
@@ -36,7 +37,7 @@ const HERO_VIDEO_URL =
 
 export function LandingRoute() {
   const navigate = useNavigate();
-  const { masterPrompt, videoType, setMasterPrompt } = usePromptStore();
+  const { masterPrompt, videoType, setMasterPrompt, setVideoType } = usePromptStore();
   const initialize = useBeatGraphStore((s) => s.initialize);
   const applyDecomposition = useBeatGraphStore((s) => s.applyDecomposition);
   const setDecomposeStatus = useBeatGraphStore((s) => s.setDecomposeStatus);
@@ -46,12 +47,54 @@ export function LandingRoute() {
   const [draft, setDraft] = useState(masterPrompt);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // True the moment the user clicks a tier chip; from then on, verbosity
+  // never overrides their choice. Without this lock, typing more would
+  // silently bump them up a tier and the chip selection would feel haunted.
+  const [videoTypeUserPicked, setVideoTypeUserPicked] = useState(false);
 
-  // Voice — Web Speech API, opt-in via the mic affordance inside the input.
-  const speech = useSpeechRecognition({ lang: "en-US" });
+  // Auto-pick the video tier from prompt verbosity until the user makes
+  // an explicit choice. Empty / very short prompt → Trailer (3 beats);
+  // medium → Short film (5); long → Movie (8).
+  useEffect(() => {
+    if (videoTypeUserPicked) return;
+    const next = pickVideoTypeFromPrompt(draft);
+    if (next !== videoType) setVideoType(next);
+  }, [draft, videoTypeUserPicked, videoType, setVideoType]);
+
+  // Voice — Web Speech API. Auto-starts on mount so the user can speak
+  // their idea without reaching for the mic button. The button then
+  // serves as a MUTE control — only mouse action needed is to silence
+  // it. Falls back gracefully if unsupported (Firefox).
+  //
+  // onSettle fires after 3s of silence (set in the hook) — at that
+  // point the form auto-submits, so the user never has to reach for
+  // the keyboard or click Send. submitRef is kept fresh so onSettle
+  // sees the latest closure (it runs from inside a hook timer).
+  const submitRef = useRef<((text: string) => void) | null>(null);
+  const speech = useSpeechRecognition({
+    lang: "en-US",
+    silenceMs: 3000,
+    onSettle: (text) => submitRef.current?.(text),
+  });
+  const autoStartedMicRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedMicRef.current) return;
+    if (!speech.supported) return;
+    if (speech.listening) return;
+    autoStartedMicRef.current = true;
+    speech.start();
+  }, [speech.supported, speech.listening, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) setDraft(speech.transcript);
   }, [speech.listening, speech.transcript]);
+  // Keep the ref pointed at the LATEST submit closure so onSettle calls
+  // back into the current draft + masterPrompt path. Done as an effect
+  // since submit is recreated on every render with fresh state captures.
+  // The ref is the bridge between the hook's silence timer (which fires
+  // outside React's render cycle) and the form-submit logic.
+  useEffect(() => {
+    submitRef.current = (text: string) => submit(text);
+  });
 
   const toggleVoice = () => {
     if (speech.listening) speech.stop();
@@ -81,9 +124,17 @@ export function LandingRoute() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [draft]);
 
-  const submit = (e?: FormEvent) => {
-    e?.preventDefault();
-    const trimmed = draft.trim();
+  const submit = (e?: FormEvent | string) => {
+    // Two call shapes:
+    //   - form submit  → e is FormEvent
+    //   - voice settle → e is the final transcript string
+    let voiceText: string | undefined;
+    if (typeof e === "string") {
+      voiceText = e;
+    } else if (e) {
+      e.preventDefault();
+    }
+    const trimmed = (voiceText ?? draft).trim();
     if (!trimmed) return;
     setMasterPrompt(trimmed);
     initialize({ masterPrompt: trimmed, videoType });
@@ -108,43 +159,54 @@ export function LandingRoute() {
         .then((res) => {
           applyDecomposition(res.clips, res.continuityBible);
           setDecomposeStatus("success");
-          // ── Speculative kickoff of beats[0] ─────────────────────────
-          // Bridge plays for 1.6s, decompose resolves around the same
-          // time, Veo dispatches in ~3s, then renders for 2-3 min. By
-          // pre-warming the FIRST beat the moment its refinedPrompt is
-          // ready, we shave 30-60s off the perceived wait — the user
-          // walks through the canvas + agent UX while Veo is already
-          // burning in the background. When they click into the first
-          // planet, the GenerationPanel re-attaches to the running job
-          // (drawer's poll-reattach effect handles this) and shows true
-          // elapsed via startedAt.
+          // ── CONCURRENT PRE-BAKE of every beat ───────────────────
+          // The moment decompose returns, fire /api/generate for ALL
+          // beats in parallel. While the user walks the canvas and
+          // does the per-beat agent conversation, Veo is rendering
+          // every beat simultaneously in the background.
           //
-          // Cost: one Veo call per landing. Tradeoff accepted for the
-          // hackathon demo perception. To turn off, drop this block.
+          // The wait collapses from sum(N × ~150s) to
+          // max(longest conversation, longest render). For 5 beats
+          // that's the difference between ~13min and ~3min total.
+          //
+          // Status stays as "pending" — agent conversation UX is
+          // unchanged. Speculative jobIds park on
+          // scene.speculativeJobId; canvas-route's poller (below)
+          // watches them. When a job succeeds we write the result
+          // into clipPublicId/clipUrl. Lock-it-in / Roll camera then
+          // checks for a ready clip first; if present, beat flips
+          // straight to "preview" with zero new Veo round-trip.
+          //
+          // Cost: N Veo calls per landing instead of N×1. Trade
+          // accepted for hackathon demo perception. User can discard
+          // a speculative result and re-roll with a refined prompt at
+          // a cost of one extra Veo round-trip per beat they iterate.
           const m2 = useBeatGraphStore.getState().manifest;
-          const firstBeat = m2?.beats[0];
-          const firstScene = firstBeat?.scenes[0];
-          if (m2 && firstBeat && firstScene?.refinedPrompt) {
-            api
-              .generate({
-                projectId: m2.projectId,
-                beatId: firstBeat.beatId,
-                sceneId: firstScene.sceneId,
-                refinedPrompt: firstScene.refinedPrompt,
-                durationSeconds:
-                  firstScene.durationSeconds ?? firstBeat.archetype.suggestedDuration,
-                beatTemplate: firstBeat.template,
-              })
-              .then((gen) => {
-                const store = useBeatGraphStore.getState();
-                store.updateScene(firstBeat.beatId, firstScene.sceneId, { jobId: gen.jobId });
-                store.updateBeat(firstBeat.beatId, { status: "generating" });
-              })
-              .catch(() => {
-                // Silent failure — the user can still trigger gen normally
-                // from the drawer. No reason to alarm them about the
-                // speculative path.
-              });
+          if (m2) {
+            for (const beat of m2.beats) {
+              const scene = beat.scenes[0];
+              if (!scene?.refinedPrompt) continue;
+              api
+                .generate({
+                  projectId: m2.projectId,
+                  beatId: beat.beatId,
+                  sceneId: scene.sceneId,
+                  refinedPrompt: scene.refinedPrompt,
+                  durationSeconds:
+                    scene.durationSeconds ?? beat.archetype.suggestedDuration,
+                  beatTemplate: beat.template,
+                })
+                .then((gen) => {
+                  useBeatGraphStore.getState().updateScene(beat.beatId, scene.sceneId, {
+                    speculativeJobId: gen.jobId,
+                  });
+                })
+                .catch(() => {
+                  // Silent: failed pre-bake leaves scene without a
+                  // speculative jobId; user can still Roll camera
+                  // manually from the drawer.
+                });
+            }
           }
         })
         .catch((err) => {
@@ -372,6 +434,51 @@ export function LandingRoute() {
                 <>press enter or speak.</>
               )}
             </motion.p>
+
+            {/* Video-type tier picker — Trailer / Short film / Movie.
+                Beat count was a leading numeral ("3 Trailer 5 Short film
+                8 Movie") which read as a parsed list, not a tier label.
+                Now: just the tier labels with a small dot separator
+                between them. Beat count moved to a hover-only title
+                attribute for the curious. */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 1.7 }}
+              className="mt-3 flex items-center justify-center gap-0.5"
+              role="radiogroup"
+              aria-label="Cinematic length"
+            >
+              {VIDEO_TYPE_TIERS.map((tier, i) => {
+                const active = videoType === tier.id;
+                return (
+                  <div key={tier.id} className="flex items-center">
+                    {i > 0 ? (
+                      <span aria-hidden className="mx-1 text-fg-tertiary/35">·</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => {
+                        setVideoType(tier.id);
+                        setVideoTypeUserPicked(true);
+                      }}
+                      className={cn(
+                        "group cursor-pointer px-2 py-1 font-body text-caption transition-colors duration-200",
+                        "focus-visible:outline-none focus-visible:text-brand-ember",
+                        active
+                          ? "font-medium text-brand-ember"
+                          : "text-fg-tertiary hover:text-fg-secondary",
+                      )}
+                      title={`${tier.label} · ${tier.beatCount} beats — ${tier.hint}`}
+                    >
+                      {tier.label}
+                    </button>
+                  </div>
+                );
+              })}
+            </motion.div>
           </motion.form>
 
           {/* Recent projects rail — the 3 most recent archived projects as

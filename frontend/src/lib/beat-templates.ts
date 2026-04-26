@@ -239,6 +239,21 @@ const FEATURE: BeatTemplateDef[] = [
     ].join("\n"),
   },
   {
+    template: "feature.aftermath",
+    beatName: "Aftermath",
+    intent: "The dust settles. The cost of victory or the weight of loss is felt before the world resolves.",
+    mood: "still-resolve",
+    suggestedDuration: 18,
+    directorNotes: [
+      "FRAME: The immediate quiet after the apex. Bodies, places, faces in the moments after the cut.",
+      "LENS: Mediums and tight close-ups. Read the cost on the face.",
+      "MOVEMENT: Almost none. Slow drift OR pure static. The camera is winded too.",
+      "LIGHT: Warm twilight or pre-dawn — palette cooling toward the new normal but not yet there.",
+      "BLOCKING: Protagonist alone in the frame, or ally beside them. Touch is permitted; speech is rare.",
+      "PACE: Long takes. 5–8 second shots. The audience earns the silence.",
+    ].join("\n"),
+  },
+  {
     template: "feature.denouement",
     beatName: "Denouement",
     intent: "Resolution. The new normal. Quiet, earned.",
@@ -261,7 +276,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Hook",
     intent: "Establish the false equilibrium. Stop the audience from looking away.",
     mood: "intimate-hook",
-    suggestedDuration: 5,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: One image that contains the premise.",
       "LENS: 35mm or 50mm. Close enough to read intent.",
@@ -275,7 +290,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Exposition",
     intent: "Establish the world, the protagonist, and what they want.",
     mood: "wide-establish",
-    suggestedDuration: 8,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: Wider. Show the protagonist in their world.",
       "LENS: 24mm scale OR 85mm compression to isolate them in it.",
@@ -289,7 +304,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Inciting Incident",
     intent: "The disruption. The protagonist must act.",
     mood: "intimate-hook",
-    suggestedDuration: 6,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: The break. A specific physical moment.",
       "LENS: Switch focal length from exposition.",
@@ -303,7 +318,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Rising Action",
     intent: "Stakes escalate. Obstacles compound. The protagonist commits.",
     mood: "kinetic-rising",
-    suggestedDuration: 10,
+    suggestedDuration: 6,
     directorNotes: [
       "FRAME: Variety. Avoid eye-level for too long.",
       "LENS: Mix focal lengths.",
@@ -317,7 +332,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Climax",
     intent: "The apex. The dramatic question is answered.",
     mood: "tense-climax",
-    suggestedDuration: 8,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: One held image of the highest stakes OR maximum motion.",
       "LENS: Wide for scale OR ECU for emotional impact.",
@@ -331,7 +346,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Falling Action",
     intent: "The aftermath. Consequences land.",
     mood: "still-resolve",
-    suggestedDuration: 6,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: The world after. Echo the exposition.",
       "LENS: Match or mirror exposition lens.",
@@ -345,7 +360,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Resolution",
     intent: "The new normal. The last frame is the emotional register.",
     mood: "still-resolve",
-    suggestedDuration: 5,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: Final image. The thing they remember.",
       "LENS: Match the emotional center.",
@@ -388,6 +403,56 @@ export function buildInitialBeats(videoType: VideoType): Beat[] {
 
 export function totalSuggestedDuration(videoType: VideoType): number {
   return REGISTRY[videoType].reduce((sum, def) => sum + def.suggestedDuration, 0);
+}
+
+/**
+ * Beat-count by user-facing video type. The canvas reads this when
+ * rendering the planet system, and the prompt-store reads it for the
+ * landing-page tier picker.
+ *
+ * Tier mapping (locked with the user 2026-04-26):
+ *   short    → 3 beats   ("Trailer")     — TikTok-register, snappy
+ *   trailer  → 5 beats   ("Short film")  — mini-movie, full arc compressed
+ *   feature  → 8 beats   ("Movie")       — full dramatic arc + aftermath
+ *   story    → 7 beats                   — internal canonical fallback
+ */
+export const BEAT_COUNT_BY_TYPE: Record<VideoType, number> = {
+  short: 3,
+  trailer: 5,
+  feature: 8,
+  story: 7,
+};
+
+/**
+ * Three user-facing tiers exposed in landing's video-type picker.
+ * `id` is the internal VideoType; `label` is what we render in the chip.
+ * Order: shortest → longest.
+ */
+export const VIDEO_TYPE_TIERS: ReadonlyArray<{
+  id: VideoType;
+  label: string;
+  beatCount: number;
+  hint: string;
+}> = [
+  { id: "short", label: "Trailer", beatCount: 3, hint: "punchy social-media cut" },
+  { id: "trailer", label: "Short film", beatCount: 5, hint: "mini-movie, full arc" },
+  { id: "feature", label: "Movie", beatCount: 8, hint: "long-form, every beat" },
+];
+
+/**
+ * Heuristic: pick a tier from prompt verbosity when the user hasn't made
+ * an explicit choice. Word-count ranges tuned against representative
+ * prompts (see comment block):
+ *   ≤ 8 words   → Trailer (3) — "a dog runs away in the 90s" (7 words)
+ *   9 – 25 words → Short film (5) — "a woman finds an old letter from her late husband and decides to follow its instructions across the city" (22 words)
+ *   > 25 words  → Movie (8) — anything paragraph-length
+ */
+export function pickVideoTypeFromPrompt(prompt: string): VideoType {
+  const words = prompt.trim().split(/\s+/).filter(Boolean).length;
+  if (words === 0) return "trailer"; // empty input — neutral default
+  if (words <= 8) return "short";
+  if (words <= 25) return "trailer";
+  return "feature";
 }
 
 export const BEAT_TEMPLATES = REGISTRY;

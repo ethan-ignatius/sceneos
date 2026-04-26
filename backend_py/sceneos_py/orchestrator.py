@@ -43,6 +43,7 @@ import time
 from typing import Any
 
 from . import vertex_imagen
+from .continuity import merge_beat_facts_for_continuity
 from .motion_presets import pick_motion_preset
 from .provider import dispatch_with_fallback, encode_job_id, poll_after_ms_for
 
@@ -121,14 +122,24 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
     plan_continuity = (plan_beat.get("visualContinuity") or "").strip()
     plan_emotional_state = (plan_beat.get("emotionalState") or "").strip()
 
-    image_prompt_parts = [
+    master = (manifest or {}).get("masterPrompt") or ""
+    mclip = " ".join(master.split()) if master else ""
+    if len(mclip) > 400:
+        mclip = mclip[:399].rstrip() + "…"
+
+    image_prompt_parts: list[str] = []
+    if mclip:
+        image_prompt_parts.append(
+            f"One continuous story — same film and world as this premise: {mclip}"
+        )
+    image_prompt_parts.extend([
         f"Cinematic still of {subject} {action}.",
         f"Setting: {setting}.",
         f"{motion_preset['lighting']}; {motion_preset['lens']};",
         f"{motion_preset['composition']}; {motion_preset['atmosphere']}.",
         f"Mood: {mood}.",
         "35mm film grain, shallow depth of field.",
-    ]
+    ])
     if motif:
         image_prompt_parts.append(f"Visual motif (carry through every beat): {motif}.")
     if plan_continuity:
@@ -164,7 +175,7 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
         "aspectRatio": aspect_ratio,
         "resolution": "1080p",
         "durationSeconds": duration,
-        "preferredModel": "veo-3.1-generate-001",
+        "preferredModel": "veo-3.1-fast-generate-001",
     }
 
 
@@ -273,6 +284,8 @@ async def run_beat_pipeline(
     if beat is None:
         raise ValueError(f"orchestrator: beatId not found ({beat_id})")
 
+    beat_facts = merge_beat_facts_for_continuity(manifest, beat_id, dict(beat_facts))
+
     mood = beat_facts.get("mood") or beat.get("archetype", {}).get("mood", "cinematic")
     motion_preset = pick_motion_preset(mood)
     chain = decide_chain(manifest, beat, previous_last_frame_url)
@@ -320,11 +333,21 @@ async def run_beat_pipeline(
         # Last-resort fallback: no project refs, no chain. Generate per-beat
         # refs concurrently. Older callers (tests, ad-hoc /api/orchestrate
         # without /api/session/start) take this path.
+        #
+        # Provider-aware ref source: when Higgsfield is the active provider
+        # we generate refs via Higgsfield Soul T2I so the same model that
+        # creates the soul anchor also bakes the per-beat video — identity
+        # stays stable. Otherwise (Vertex / cached / unknown) we use Imagen
+        # since the Vertex Veo path expects Imagen-compatible refs.
+        from .provider import active_provider_name
+        from . import higgsfield_soul
+        ref_provider = active_provider_name()
+        ref_module = higgsfield_soul if ref_provider == "higgsfield" else vertex_imagen
         coros = []
         kinds = []
         if beat_facts.get("characterDescription"):
             kinds.append("character")
-            coros.append(vertex_imagen.generate_reference(
+            coros.append(ref_module.generate_reference(
                 kind="character",
                 description=beat_facts["characterDescription"],
                 project_id=manifest.get("projectId"),
@@ -333,7 +356,7 @@ async def run_beat_pipeline(
             ))
         if beat_facts.get("locationDescription"):
             kinds.append("location")
-            coros.append(vertex_imagen.generate_reference(
+            coros.append(ref_module.generate_reference(
                 kind="location",
                 description=beat_facts["locationDescription"],
                 project_id=manifest.get("projectId"),
@@ -376,6 +399,20 @@ async def run_beat_pipeline(
     }
     if seed_image_url:
         gen_params["startImageUrl"] = seed_image_url
+
+    # Reference image URLs — Higgsfield's Soul mode reads these as
+    # multi-anchor consistency refs (1-5). Pass character + location refs
+    # whenever they're real (not stub/degraded). Vertex Veo's path drops
+    # the field; Higgsfield uses it to keep the protagonist's face stable
+    # across all beats without us having to chain last-frames.
+    reference_urls: list[str] = []
+    for ref in (character_ref, location_ref):
+        if _ref_is_real(ref):
+            url = ref.get("imageUrl")
+            if isinstance(url, str) and url and url not in reference_urls:
+                reference_urls.append(url)
+    if reference_urls:
+        gen_params["referenceImageUrls"] = reference_urls[:5]
 
     # Live-demo safety net: if the active provider rejects the request
     # (quota, network, safety), auto-fall-back to the cached tier and

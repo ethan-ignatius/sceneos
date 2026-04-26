@@ -172,13 +172,15 @@ const PLANET_BY_TEMPLATE: Partial<Record<BeatTemplate, PlanetSpec>> = {
   "short.turn": MARS,
   "short.payoff": JUPITER,
 
-  // feature.* — 7 beats; URANUS for crisis (cool / outside the warm arc)
+  // feature.* — 8 beats; URANUS for crisis (cool / outside the warm arc),
+  // VENUS for aftermath (warm twilight, lingering — the dust-settles register).
   "feature.setup": EARTH,
   "feature.inciting": MERCURY,
   "feature.rising": MARS,
   "feature.midpoint": JUPITER,
   "feature.crisis": URANUS,
   "feature.climax": SATURN,
+  "feature.aftermath": VENUS,
   "feature.denouement": MOON,
 };
 
@@ -197,11 +199,12 @@ export function planetForBeat(template: BeatTemplate, mood: BeatMood): PlanetSpe
 
 // ── Preload list (called from landing) ──────────────────────────────────
 // Every texture used by any template — preload during the page-crumple so
-// the canvas mount doesn't pay a Suspense gap on /canvas. Venus is omitted
-// because no template currently maps to it; add when a future arc uses it.
+// the canvas mount doesn't pay a Suspense gap on /canvas. Venus is now
+// part of the 8-beat feature arc (aftermath), so it preloads with the rest.
 export const PLANET_TEXTURE_PRELOAD_LIST: string[] = [
   SUN,
   MERCURY,
+  VENUS,
   EARTH,
   MARS,
   JUPITER,

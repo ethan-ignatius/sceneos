@@ -2,7 +2,9 @@
 
 The non-streaming path (run_agent_turn) is used by /api/agent and tests.
 The streaming path (run_agent_turn_streaming) is used by /api/agent/stream
-and surfaces Gemini's thinking tokens live as SSE events.
+and surfaces Gemini's thinking tokens live as SSE events. If the stream ends
+with no function_call in any chunk, we fall back once to the non-streaming
+`run_agent_turn` (same request), which is more reliable with thinking.
 
 Both paths share:
   - Stub fallback when no Gemini client is available (mock mode + tests).
@@ -160,7 +162,12 @@ async def run_agent_turn(req: dict) -> dict:
             raise RuntimeError("Gemini agent did not emit a tool call after cold retry.")
 
     result = _repair_question_if_redundant(
-        _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat),
+        _normalize_call_to_result(
+            function_call.name,
+            _normalize_args(function_call.args),
+            beat,
+            manifest=manifest,
+        ),
         beat,
         conversation,
     )
@@ -173,8 +180,8 @@ async def run_agent_turn(req: dict) -> dict:
 # streaming path needs a wider window because thinking tokens arrive over
 # 6–15s on the trial tier, but we MUST have a ceiling — without one, a
 # stalled Gemini stream blocks the consumer coroutine (and thus the SSE
-# connection) forever. 45s gives Gemini 2.5 Flash generous room for its
-# thinking budget while still recovering via one-shot Gemini fallback.
+# connection) forever. 45s gives Gemini 2.5 generous room for its thinking
+# budget while still recovering via one-shot fallback.
 STREAM_TIMEOUT_SECONDS = 45.0
 
 # Per-chunk liveness: if the producer hasn't put ANYTHING on the queue for
@@ -355,8 +362,7 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             final_call = {"name": item["name"], "args": item["args"]}
             yield {"type": "tool_call", "name": item["name"], "args": item["args"]}
         elif kind == "error":
-            # Stream-level Gemini error → pivot to one-shot Gemini fallback so
-            # the user gets a real answer instead of a dead stream.
+            # Stream-level Gemini error → pivot to one-shot Gemini fallback.
             logger.warning("[agent/stream] Gemini stream error, beat=%s: %s", beat_name, item["message"])
             yield {
                 "type": "thought",
@@ -401,7 +407,7 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         yield {"type": "result", **result}
         return
 
-    # ── Normal completion ──────────────────────────────────────────────────
+    # ── Stream ended without tool call (not a timeout) ────────────────────
     if final_call is None:
         # Stream ended with no function_call. Retry once via one-shot Gemini.
         logger.warning("[agent/stream] no tool call in stream, beat=%s — retrying one-shot", beat_name)
@@ -409,7 +415,11 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         try:
             result = await run_agent_turn(req)
         except Exception as exc:
-            yield {"type": "error", "message": f"Stream completed without tool call and fallback failed: {exc}"}
+            logger.exception("vertex.gemini.agent: recovery after empty stream failed")
+            yield {
+                "type": "error",
+                "message": f"Stream completed without a tool call, and recovery failed: {exc}",
+            }
             return
         yield {
             "type": "tool_call",
@@ -422,7 +432,12 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
 
     logger.info("[agent/stream] tool call received: %s, beat=%s", final_call["name"], beat_name)
     try:
-        result = _normalize_call_to_result(final_call["name"], final_call["args"], beat)
+        result = _normalize_call_to_result(
+            final_call["name"],
+            final_call["args"],
+            beat,
+            manifest=manifest,
+        )
     except Exception as exc:
         yield {"type": "error", "message": f"Failed to normalize tool call: {exc}"}
         return

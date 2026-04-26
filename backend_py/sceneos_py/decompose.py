@@ -298,4 +298,14 @@ async def decompose_master_prompt(params: dict) -> dict:
         )
     args = fc.args
     raw = dict(args) if hasattr(args, "__iter__") else json.loads(json.dumps(args))
-    return _ensure_coverage(raw, params)
+    out = _ensure_coverage(raw, params)
+    # Bible is optional in the emit_clips tool schema, and Gemini sometimes
+    # ships clips-only. If we didn't get one, do a lightweight follow-up
+    # call to fill it in — the canvas + orchestrator both consume it for
+    # cross-beat continuity, so an empty bible is a regression worth
+    # eating one extra LLM call for.
+    if not out.get("continuityBible"):
+        bible = await _gemini_continuity_bible(params["masterPrompt"], params["beats"])
+        if bible:
+            out["continuityBible"] = bible
+    return out

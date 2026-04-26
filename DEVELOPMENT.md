@@ -5,7 +5,7 @@ Two services have to be running for the app to work end-to-end.
 ```
   ┌────────────────────┐    HTTP     ┌──────────────────────┐    HTTPS   ┌─────────────────┐
   │  frontend (Vite)   │ ──────────► │   backend (FastAPI)  │ ─────────► │  Vertex AI      │
-  │  http://:5173      │             │   http://:8787       │            │  Veo 3.1        │
+  │  http://:5173      │             │   http://:8787       │            │  Veo 3.1 Fast   │
   └────────────────────┘             └──────────────────────┘            │  Gemini         │
                                                 │                        └─────────────────┘
                                                 │ HTTPS
@@ -80,7 +80,7 @@ curl -X POST http://127.0.0.1:8787/api/agent \
 ```
 Expected: `{"kind":"question","question":"…","suggestedAnswers":["…","…","…"], …}`. The three `suggestedAnswers` are what feed the "or pick one" pills in the UI.
 
-### 3. Veo 3.1 dispatch
+### 3. Veo 3.1 Fast dispatch
 ```bash
 curl -X POST http://127.0.0.1:8787/api/generate \
   -H "Content-Type: application/json" \
@@ -108,7 +108,7 @@ Expected: `finalUrl` containing `cloudinary.com/dghelx0al/video/upload/.../fl_la
 
 | var                              | what it does                                                       |
 |----------------------------------|--------------------------------------------------------------------|
-| `GENERATION_PROVIDER=vertex`     | Routes /api/generate to Veo 3.1 (skip → autodetect from creds)     |
+| `GENERATION_PROVIDER=vertex`     | Routes /api/generate to Veo 3.1 Fast (skip → autodetect from creds)  |
 | `GCP_PROJECT_ID`                 | Vertex project — used for predictLongRunning                       |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Path to your service-account JSON (the auth token source)          |
 | `CLOUDINARY_CLOUD_NAME=dghelx0al`| Where Veo's base64 output gets uploaded                            |

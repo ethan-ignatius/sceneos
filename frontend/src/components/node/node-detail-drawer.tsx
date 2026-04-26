@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Clapperboard } from "lucide-react";
+import { X, Clapperboard, ChevronRight } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
@@ -8,7 +8,7 @@ import { ClipPreview } from "./clip-preview";
 import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
-import { sleep } from "@/lib/utils";
+import { nowISO, sleep } from "@/lib/utils";
 import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 const fadeUp = {
@@ -16,12 +16,31 @@ const fadeUp = {
   visible: { opacity: 1, y: 0 },
 };
 
+/**
+ * Detect Veo's safety-filter / content-policy rejection. Matches the
+ * actual error string Vertex returns ("violated Vertex AI's usage
+ * guidelines", "Support codes: NNNNNN", "filtered the output"). When
+ * this fires, we kick the beat back into questioning so the agent can
+ * help the user rephrase — softly, no manual retry button.
+ */
+function isContentPolicyError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("usage guidelines") ||
+    m.includes("support codes") ||
+    (m.includes("filtered") && m.includes("veo")) ||
+    m.includes("violated vertex ai")
+  );
+}
+
 export function NodeDetailDrawer() {
   const beat = useBeatGraphStore(selectActiveBeat);
   const manifest = useBeatGraphStore((s) => s.manifest);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
+  const setStitchTrayOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
   const updateBeat = useBeatGraphStore((s) => s.updateBeat);
   const updateScene = useBeatGraphStore((s) => s.updateScene);
+  const appendAgentTurn = useBeatGraphStore((s) => s.appendAgentTurn);
 
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
@@ -64,7 +83,7 @@ export function NodeDetailDrawer() {
       let delay = initialDelay;
       let retriedExpiredJob = false;
       while (!cancelRef.current) {
-        // 5-minute ceiling on a re-attached poll — long enough for Veo 3
+        // 5-minute ceiling on a re-attached poll — long enough for Veo 3.1 Fast
         // (~1–4 min real-world) but bounded so a stuck jobId doesn't spin
         // forever. Fresh dispatches use 30s for demo safety; re-attaches
         // get the wider window because we don't know how long the job has
@@ -161,6 +180,53 @@ export function NodeDetailDrawer() {
     [manifest, updateBeat, updateScene],
   );
 
+  // Veo content-policy recovery. Veo refuses some prompts (real-violence,
+  // explicit, named-person, etc.); the user can't be expected to know the
+  // safety surface up front. Instead: clear the stale generation state,
+  // bounce the beat back to questioning, and seed the conversation with
+  // an agent turn explaining what happened so the user keeps refining
+  // until Veo accepts. They never see a dead-end "render failed" wall.
+  const handleContentPolicyRecovery = useCallback(
+    (beatId: string, sceneId: string) => {
+      setGenError(null);
+      setProvider(null);
+      setProviderStage(null);
+      setStartedAt(null);
+      setFallbackFrom(null);
+      // Wipe any clip / job state so the next render goes fresh once the
+      // user gives the agent something Veo can accept. The refinedPrompt
+      // gets cleared too — the previous one is what tripped the filter.
+      updateScene(beatId, sceneId, {
+        clipPublicId: undefined,
+        clipUrl: undefined,
+        lastFrameUrl: undefined,
+        jobId: undefined,
+        speculativeJobId: undefined,
+        refinedPrompt: undefined,
+      });
+      appendAgentTurn(beatId, sceneId, {
+        role: "agent",
+        content:
+          "Veo refused that frame for a content-policy reason. Tell me what you want this beat to feel like in different words — softer subject, less violence, no named people — and I'll re-pitch it.",
+        timestamp: nowISO(),
+      });
+      updateBeat(beatId, { status: "questioning" });
+    },
+    [updateBeat, updateScene, appendAgentTurn],
+  );
+
+  const handleGoNext = useCallback(() => {
+    if (!manifest || !beat) return;
+    const idx = manifest.beats.findIndex((b) => b.beatId === beat.beatId);
+    if (idx < 0) return;
+    if (idx < manifest.beats.length - 1) {
+      setActiveBeat(manifest.beats[idx + 1]!.beatId);
+    } else {
+      setActiveBeat(null);
+      setStitchTrayOpen(true);
+    }
+  }, [beat, manifest, setActiveBeat, setStitchTrayOpen]);
+
   const handleGenerate = useCallback(async () => {
     if (!beat || !manifest) return;
     const scene = beat.scenes[0];
@@ -173,6 +239,39 @@ export function NodeDetailDrawer() {
     setStatusSamples([]);
     setDispatchMs(null);
     setFallbackFrom(null);
+
+    // ── Speculative-result fast path ──────────────────────────────
+    // Landing route pre-bakes every beat the moment decompose
+    // resolves. By the time the user finishes their conversation and
+    // hits Roll camera, the speculative clip is often already done —
+    // canvas-route's poller will have written clipPublicId/clipUrl
+    // onto the scene. If we see it, skip Veo entirely and flip
+    // straight to preview. Wait collapses to ~0s on the user's side.
+    if (scene.clipPublicId && scene.clipUrl) {
+      updateBeat(beat.beatId, { status: "preview" });
+      return;
+    }
+    // If a speculative job is still running, attach to it instead of
+    // dispatching a new one. The pollUntilDone loop handles both
+    // running and succeeded states; on succeeded we flip to preview.
+    if (scene.speculativeJobId) {
+      updateScene(beat.beatId, scene.sceneId, { jobId: scene.speculativeJobId });
+      updateBeat(beat.beatId, { status: "generating" });
+      try {
+        await pollUntilDone(scene.speculativeJobId, beat.beatId, scene.sceneId, 1500);
+      } catch (err) {
+        if (cancelRef.current) return;
+        const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+        if (isContentPolicyError(msg)) {
+          handleContentPolicyRecovery(beat.beatId, scene.sceneId);
+        } else {
+          setGenError(msg);
+          updateBeat(beat.beatId, { status: "ready-to-generate" });
+        }
+      }
+      return;
+    }
+
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
@@ -201,14 +300,23 @@ export function NodeDetailDrawer() {
         setProvider(gen.provider as GenerationProvider);
       }
       setFallbackFrom((gen as { originalProvider?: GenerationProvider }).originalProvider ?? null);
-      updateScene(beat.beatId, scene.sceneId, { jobId: gen.jobId });
+      updateScene(beat.beatId, scene.sceneId, {
+        jobId: gen.jobId,
+        generateFallbackFrom: (gen as { originalProvider?: GenerationProvider }).originalProvider,
+        generateFallbackReason: (gen as { fallbackReason?: string }).fallbackReason,
+      });
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
-      setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
-      updateBeat(beat.beatId, { status: "ready-to-generate" });
+      const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+      if (isContentPolicyError(msg)) {
+        handleContentPolicyRecovery(beat.beatId, scene.sceneId);
+      } else {
+        setGenError(msg);
+        updateBeat(beat.beatId, { status: "ready-to-generate" });
+      }
     }
-  }, [beat, manifest, updateBeat, pollUntilDone]);
+  }, [beat, manifest, updateBeat, updateScene, pollUntilDone, handleContentPolicyRecovery]);
 
   // Re-attach an in-flight Veo / Higgsfield poll when the drawer mounts
   // and the persisted manifest reports beat.status === "generating" with a
@@ -258,6 +366,7 @@ export function NodeDetailDrawer() {
 
   const beatIndex = manifest?.beats.findIndex((b) => b.beatId === beat.beatId) ?? 0;
   const totalBeats = manifest?.beats.length ?? 1;
+  const isLastBeat = beatIndex >= totalBeats - 1;
 
   return (
     <motion.aside
@@ -366,13 +475,27 @@ export function NodeDetailDrawer() {
           )}
         </motion.div>
 
-        {/* Footer — single CTA at a time. No labels, no progress meters,
-            no eyebrow text. The chat already shows the user where they are
-            in the conversation; duplicating that as a "Director's questionnaire
-            00/02" pill was double-bookkeeping. The CTA flips between
-            "Lock it in" (early-finish) and "Roll camera" (ready) based on
-            beat status. */}
-        {!isGenerating && !isPreview ? (
+        {/* Footer — agent path: lock-in / roll camera. Preview path: next beat. */}
+        {!isGenerating && isPreview ? (
+          <motion.footer
+            variants={fadeUp}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+            className="border-t border-fg-tertiary/15 px-6 py-4"
+          >
+            <Button
+              size="lg"
+              variant="primary"
+              className="w-full ember-pulse"
+              onClick={handleGoNext}
+              aria-label={isLastBeat ? "Open stitch — review your film" : "Go to the next beat"}
+            >
+              <span className="font-body text-meta font-medium">
+                {isLastBeat ? "Continue to stitch" : "Next beat"}
+              </span>
+              <ChevronRight size={18} strokeWidth={1.5} aria-hidden="true" />
+            </Button>
+          </motion.footer>
+        ) : !isGenerating ? (
           <motion.footer
             variants={fadeUp}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
@@ -409,9 +532,6 @@ export function NodeDetailDrawer() {
               }
 
               if (!canLock) {
-                // No answers yet — no CTA. The chat is the work; show
-                // nothing so the input bar isn't crowded with a disabled
-                // button that just says "answer first."
                 return null;
               }
 
@@ -424,17 +544,23 @@ export function NodeDetailDrawer() {
                 ]
                   .filter(Boolean)
                   .join(" ");
-                updateScene(beat.beatId, beat.scenes[0].sceneId, {
+                const scene = beat.scenes[0];
+                // Lock-it-in folds the user's answers into a richer
+                // refinedPrompt — same contract as the agent's
+                // markSufficient. Mandatory re-bake: invalidate the
+                // speculative clip + jobs so Roll camera dispatches a
+                // fresh Veo with this prompt, not the decompose draft.
+                updateScene(beat.beatId, scene.sceneId, {
                   refinedPrompt: refined,
                   durationSeconds: beat.archetype.suggestedDuration,
+                  speculativeJobId: undefined,
+                  jobId: undefined,
+                  clipPublicId: undefined,
+                  clipUrl: undefined,
+                  lastFrameUrl: undefined,
                 });
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               };
-              // Promoted from a tertiary ghost to a Button-styled CTA so
-              // users always see they can break out of the conversation
-              // loop. The agent requires 3+ user turns before it'll mark
-              // sufficient on its own; without an obvious escape hatch
-              // users were getting stuck answering questions forever.
               return (
                 <Button
                   size="lg"

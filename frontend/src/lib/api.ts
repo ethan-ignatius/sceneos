@@ -41,12 +41,13 @@ class ApiError extends Error {
 
 async function request<TBody, TResponse>(
   path: string,
-  init: { method: "GET" | "POST"; body?: TBody } = { method: "GET" },
+  init: { method: "GET" | "POST"; body?: TBody; signal?: AbortSignal } = { method: "GET" },
 ): Promise<TResponse> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: init.method,
     headers: init.body ? { "content-type": "application/json" } : undefined,
     body: init.body ? JSON.stringify(init.body) : undefined,
+    signal: init.signal,
   });
   if (!res.ok) {
     let details: unknown = undefined;
@@ -156,9 +157,15 @@ async function* editorStream(
 }
 
 export const api = {
-  // Legacy one-shot agent turn. Prefer agentStream() for live thinking UI.
-  agent: (body: AgentRequest) =>
-    request<AgentRequest, AgentResponse>("/api/agent", { method: "POST", body }),
+  /**
+   * One-shot agent turn (`with_thinking=false` on the server). Use this for
+   * the *first* question on an empty beat — it is much faster than
+   * `agentStream`, which uses thinking + streaming and can double-call
+   * Gemini. Keep `agentStream` for follow-up messages so the user still
+   * sees live thought tokens.
+   */
+  agent: (body: AgentRequest, signal?: AbortSignal) =>
+    request<AgentRequest, AgentResponse>("/api/agent", { method: "POST", body, signal }),
 
   agentStream,
 

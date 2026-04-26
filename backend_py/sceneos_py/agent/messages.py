@@ -10,9 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from ._constants import (
-    DEMO_MAX_QUESTIONS,
     THINKING_BUDGET_DEMO,
     THINKING_BUDGET_NORMAL,
+    max_questions_for_manifest,
 )
 from .context import _mode_of
 from .prompt import _system_prompt
@@ -47,16 +47,18 @@ def _build_request_config(
     with_thinking: bool,
     user_turn_count: int = 0,
 ):
-    """Build (system_prompt, GenerateContentConfig). Mode-aware:
-    demo uses a smaller thinking budget for faster turn-around. In demo
-    mode, once the user has answered DEMO_MAX_QUESTIONS times we restrict
-    the tool surface to markSufficient ONLY — a hard ceiling that protects
-    the demo timer even if the model wants to keep asking."""
+    """Build (system_prompt, GenerateContentConfig). Tier-aware:
+    once the user has answered `max_questions_for_manifest(manifest)`
+    times for this beat, we restrict the tool surface to markSufficient
+    ONLY — a hard ceiling that scales with the chosen video tier
+    (trailer=2, short film=3, movie=5). Demo mode keeps its smaller
+    thinking budget regardless."""
     from google.genai import types
 
     system = _system_prompt(beat, manifest)
     mode = _mode_of(manifest)
-    must_finalize = mode == "demo" and user_turn_count >= DEMO_MAX_QUESTIONS
+    cap = max_questions_for_manifest(manifest)
+    must_finalize = user_turn_count >= cap
     allowed = ["markSufficient"] if must_finalize else ["askQuestion", "markSufficient"]
 
     # Normal mode runs hotter so the question pool genuinely varies

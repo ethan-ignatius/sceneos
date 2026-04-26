@@ -288,7 +288,15 @@ export const useBeatGraphStore = create<BeatGraphState>()(
                 status: "ready-to-generate",
                 scenes: b.scenes.map((s) =>
                   s.sceneId === sceneId
-                    ? { ...s, jobId: undefined, clipPublicId: undefined, clipUrl: undefined, approved: false }
+                    ? {
+                        ...s,
+                        jobId: undefined,
+                        clipPublicId: undefined,
+                        clipUrl: undefined,
+                        approved: false,
+                        generateFallbackFrom: undefined,
+                        generateFallbackReason: undefined,
+                      }
                     : s,
                 ),
               };

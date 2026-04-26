@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { motion } from "motion/react";
 import type { Beat } from "@/types/manifest";
 import { computeBeatPositions } from "@/lib/beat-layout";
-import { GOTO_CAMERA_EVENT, RESET_CAMERA_EVENT } from "./beat-map-3d";
+import { GOTO_CAMERA_EVENT, RESET_CAMERA_EVENT } from "./beat-map-events";
 
 interface MinimapProps {
   beats: Beat[];

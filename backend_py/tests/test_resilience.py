@@ -2,7 +2,8 @@
 Tests for the round-4 resilience + real-mode-boot work:
 
 * `config.mock_mode()` recognizes Vertex creds (the user's setup) as a
-  valid real-mode auth path even when Anthropic/Higgsfield keys are absent.
+  valid real-mode auth path even when Higgsfield keys are absent. Vertex
+  is the only LLM SceneOS uses; Anthropic was removed.
 * `provider.active_provider_name()` defaults to `vertex` when GOOGLE
   creds are present and `GENERATION_PROVIDER` is unset.
 * `provider.dispatch_with_fallback()` swaps in `cached` when the active
@@ -49,8 +50,8 @@ def _clear_real_mode_envs(monkeypatch):
 
 
 def test_mock_mode_recognizes_vertex_plus_cloudinary(monkeypatch):
-    """User's actual setup: Vertex + Cloudinary present, no Anthropic/Higgsfield.
-    Pre-patch this test would have returned True → silent mock mode.
+    """User's actual setup: Vertex + Cloudinary present, no Higgsfield.
+    Vertex is the only LLM and the default video provider, so this is real mode.
     """
     _clear_real_mode_envs(monkeypatch)
     monkeypatch.setenv("GOOGLE_PROJECT_ID", "my-gcp-project")
@@ -60,9 +61,9 @@ def test_mock_mode_recognizes_vertex_plus_cloudinary(monkeypatch):
 
 
 def test_mock_mode_true_when_no_video_provider(monkeypatch):
-    """Cloudinary + Anthropic present but no video provider → mock."""
+    """Cloudinary present but no Vertex (and no Higgsfield) → mock.
+    Without Vertex, there's no agent path AND no default video path."""
     _clear_real_mode_envs(monkeypatch)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "ak")
     monkeypatch.setenv("CLOUDINARY_URL", "cloudinary://k:s@cloudname")
     assert config_mod.mock_mode() is True
 

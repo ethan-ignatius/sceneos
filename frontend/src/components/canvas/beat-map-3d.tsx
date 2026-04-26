@@ -12,19 +12,10 @@ import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
 import { CosmicScene } from "./cosmic-scene";
 
-/**
- * Custom event the route chrome (Esc handler, Re-center button) dispatches
- * to clear the camera's pan offset without lifting the ref into a store.
- * Listened-for at the BeatMap3D level — see the useEffect below.
- */
-export const RESET_CAMERA_EVENT = "sceneos:camera:reset";
-
-/**
- * Minimap → camera bridge. Detail: { beatId } activates that beat (camera
- * arcs into orbit). Same one-shot CustomEvent pattern as RESET; lives at
- * the same level so the minimap stays decoupled from the WebGL tree.
- */
-export const GOTO_CAMERA_EVENT = "sceneos:camera:goto";
+// Camera-bridge events live in beat-map-events.ts so route-level
+// consumers (Esc handler, command menu) don't drag the 3D module
+// into their chunks just to read a string constant.
+import { RESET_CAMERA_EVENT, GOTO_CAMERA_EVENT } from "./beat-map-events";
 
 interface BeatMap3DProps {
   beats: Beat[];
