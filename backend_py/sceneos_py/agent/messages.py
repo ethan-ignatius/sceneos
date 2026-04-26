@@ -46,19 +46,28 @@ def _build_request_config(
     manifest: dict,
     with_thinking: bool,
     user_turn_count: int = 0,
+    *,
+    force_mark_sufficient: bool = False,
 ):
     """Build (system_prompt, GenerateContentConfig). Tier-aware:
     once the user has answered `max_questions_for_manifest(manifest)`
     times for this beat, we restrict the tool surface to markSufficient
     ONLY — a hard ceiling that scales with the chosen video tier
     (trailer=2, short film=3, movie=5). Demo mode keeps its smaller
-    thinking budget regardless."""
+    thinking budget regardless.
+
+    `force_mark_sufficient` is set by the frontend "I have enough —
+    generate" affordance: when the user explicitly opts out of more
+    questioning, we must still emit a real markSufficient (with
+    beatFacts) instead of skipping the agent entirely — otherwise
+    the next beat sees no prior facts and continuity breaks.
+    """
     from google.genai import types
 
     system = _system_prompt(beat, manifest)
     mode = _mode_of(manifest)
     cap = max_questions_for_manifest(manifest)
-    must_finalize = user_turn_count >= cap
+    must_finalize = force_mark_sufficient or user_turn_count >= cap
     allowed = ["markSufficient"] if must_finalize else ["askQuestion", "markSufficient"]
 
     # Normal mode runs hotter so the question pool genuinely varies

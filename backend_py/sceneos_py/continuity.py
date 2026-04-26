@@ -18,11 +18,38 @@ from typing import Any
 _ANCHOR_KEYS = ("subject", "setting", "characterDescription", "locationDescription")
 
 
+def memory_scene(beat: dict[str, Any]) -> dict[str, Any] | None:
+    """Pick the scene that best represents a completed beat for cross-beat
+    memory + continuity locking.
+
+    Some clients append scenes across retries / regenerates / approvals,
+    so the canonical data for a finished beat does NOT always live at
+    scenes[0]. Prefer the newest scene that has beatFacts; then newest
+    with summary/refinedPrompt; then newest. Used by both the agent's
+    cross-beat memory block and the orchestrator's anchor lock so they
+    never disagree on what beat 1 said.
+    """
+    scenes = beat.get("scenes") or []
+    if not scenes:
+        return None
+    for scene in reversed(scenes):
+        if scene.get("beatFacts"):
+            return scene
+    for scene in reversed(scenes):
+        if scene.get("sceneSummary") or scene.get("refinedPrompt"):
+            return scene
+    return scenes[-1]
+
+
 def established_visual_anchors(manifest: dict[str, Any], current_beat_id: str) -> dict[str, str]:
     """
     For each anchor key, take the value from the *earliest* prior beat (in
     story order) that has a non-empty string. That way beat 1's astronaut +
     desert lock beats 2–7 unless we later add an explicit "new location" flow.
+
+    Scene selection per beat goes through `memory_scene`, the same picker the
+    agent's memory block uses, so the agent and the orchestrator can never
+    disagree on which scene of a prior beat is canonical.
     """
     beats = manifest.get("beats") or []
     idx = next((i for i, b in enumerate(beats) if b.get("beatId") == current_beat_id), -1)
@@ -31,11 +58,10 @@ def established_visual_anchors(manifest: dict[str, Any], current_beat_id: str) -
 
     filled: dict[str, str] = {k: "" for k in _ANCHOR_KEYS}
     for b in beats[:idx]:
-        scenes = b.get("scenes") or []
-        s0 = scenes[0] if scenes else None
-        if not s0:
+        scene = memory_scene(b)
+        if not scene:
             continue
-        facts = s0.get("beatFacts") or {}
+        facts = scene.get("beatFacts") or {}
         for key in _ANCHOR_KEYS:
             if filled[key]:
                 continue

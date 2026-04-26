@@ -2,7 +2,18 @@
 
 > **The day-2 operational dashboard.** Single source of truth. Open it every morning. CONTEXT.md = vision; BACKEND_ARCHITECTURE.md = legacy design spec; **this file = "where am I right now and what do I do next."**
 >
-> Last updated: 2026-04-26 00:30 (T-10.5h to demo) — **Round 3 reliability + holism rewrite shipped: live agentic pipeline now treats the movie holistically, generates 6 keyframes per project (3 character + 3 location, framing-routed per beat), fails loud on Imagen safety filters instead of silently substituting sample.jpg, retries every external call with jitter + circuit breaker + idempotency, and asks open-ended non-deterministic questions instead of forced 3-choice multiple choice. 111 tests green (was 70). Deadline: 2026-04-26 11:00am EDT.**
+> Last updated: 2026-04-26 (demo day) — **Round 4 pipeline-correctness pass: ripped out three bandaids that were producing the "amnesia + trash chips + drift" complaints, unified the cross-beat memory selector, and closed the lockIn → no-beatFacts continuity hole that broke every node-2-onward.** 116 tests green. Deadline: 2026-04-26 11:00am EDT.
+>
+> **Round 4 — what was actually broken.**
+>
+> 1. **`_question_mentions_prior` (gemini.py) — REMOVED.** Beat 2+ questions were mechanically prefixed with `"Given <anchor>, ..."` whenever the model didn't naturally include a prior keyword. That's the textbook bandaid the user called out. Gone. Continuity now lives entirely in (a) the rich `_earlier_beats_block` (full beatFacts + verbatim user turns) and (b) the model's own reasoning under that block.
+> 2. **`_backfill_suggestions` mood-bucketed canned chips (normalizer.py) — REMOVED.** This is what produced the "Concrete version / Darker direction / Hopeful direction" trash. The schema's `min_items=2` is enforced upstream; if the model still drops below the floor, the normalizer surfaces the empty list with `openEnded=true` so the input field becomes the primary affordance. No fabricated chips, ever.
+> 3. **Continuity scene-pick divergence — UNIFIED.** `agent/context._memory_scene` (correct: latest scene with beatFacts) and `continuity.established_visual_anchors` (wrong: scenes[0]) read different scenes for the same beat. After regenerates / approvals / multi-scene flows they could disagree, so the orchestrator could lock anchors from a stale scene while the agent was reading a different one. Both now share `continuity.memory_scene`.
+> 4. **`lockIn()` skipped the agent → no beatFacts → cascading drift — FIXED.** When the user clicked "I have enough — generate", the frontend wrote a synthetic `refinedPrompt` and skipped the agent entirely. That left `scene.beatFacts` undefined, which (a) broke cross-beat memory for every later beat, (b) skipped the orchestrator's continuity-locking path, and (c) forced the per-beat Imagen fallback. Now `lockIn()` calls `/api/agent/stream` with the new `forceMarkSufficient: true` flag — the agent's tool surface restricts to `markSufficient` regardless of question count, the model emits real beatFacts with character/location descriptions, and continuity propagates.
+>
+> **What's intentionally NOT in this round:** any "scoring gate", "stop-when-coverage-sufficient" heuristic, or hardcoded "max 3 questions" cap. The model owns the soft decision via the prompt's stop test; code only enforces the tier-aware absolute ceiling (`max_questions_for_manifest` → 4 for story tier).
+>
+> **Round 3 entry below for archeology.**
 >
 > **Round 3 — what users said vs. what we shipped.**
 >

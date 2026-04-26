@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ..continuity import memory_scene as _memory_scene
+
 
 def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else (s[: n - 1].rstrip() + "...")
@@ -27,25 +29,6 @@ def _active_scene(beat: dict) -> dict | None:
         return None
     for scene in reversed(scenes):
         if not scene.get("approved"):
-            return scene
-    return scenes[-1]
-
-
-def _memory_scene(beat: dict) -> dict | None:
-    """Best scene to represent a beat in cross-beat memory.
-
-    Some clients append scenes across retries/edits, so the canonical data
-    for a completed beat may not live at scenes[0]. Prefer the newest scene
-    that has beatFacts; then newest with summary/refinedPrompt; then newest.
-    """
-    scenes = beat.get("scenes") or []
-    if not scenes:
-        return None
-    for scene in reversed(scenes):
-        if scene.get("beatFacts"):
-            return scene
-    for scene in reversed(scenes):
-        if scene.get("sceneSummary") or scene.get("refinedPrompt"):
             return scene
     return scenes[-1]
 
