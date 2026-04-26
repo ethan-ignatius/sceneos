@@ -161,7 +161,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       <header className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-7 pb-5 pt-6">
         <div className="space-y-2">
           <div className="font-body text-[12px] font-medium text-fg-tertiary">Stitch</div>
-          <h2 className="font-display text-[1.6rem] italic leading-[1.08] tracking-[-0.018em] text-fg-primary">
+          <h2 className="font-body text-[1.35rem] font-semibold leading-[1.18] tracking-[-0.018em] text-fg-primary">
             {headline}
           </h2>
         </div>
@@ -403,15 +403,21 @@ function BeatRow({
           design lived here too; with the conditional left slot it lives
           there now, which removes a duplicate display. */}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        {/* Beat name now in body Geist, weight 600, tracking tight. The
+            previous font-display italic at 15px was Fraunces italic on
+            every row — five identical italic lines stacked read as
+            wedding-invite, not editorial. Body weight + size separation
+            from the status caption gives proper hierarchy without the
+            display register fighting itself. */}
         <span
           className={cn(
-            "truncate font-display text-[15px] italic leading-[1.15]",
+            "truncate font-body text-[14px] font-semibold leading-[1.25] tracking-[-0.005em]",
             isApproved ? "text-brand-ember" : "text-fg-primary",
           )}
         >
           {beat.beatName}
         </span>
-        <span className="font-body text-[11.5px] leading-snug text-fg-tertiary">
+        <span className="font-body text-[12px] leading-snug text-fg-tertiary">
           <BeatStatusLabel status={status} approved={isApproved} />
         </span>
       </div>

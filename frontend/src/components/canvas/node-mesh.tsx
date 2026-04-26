@@ -184,7 +184,12 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
     // the label already signal completion, no need to inflate the geometry.
     const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.025 : 1;
     const hoverBoost = hover ? 1.07 : 1;
-    const activeBoost = isActive ? (reducedMotion ? 1.0 : 1.04) : 1;
+    // Active boost 1.04 → 1.18: makes the targeted planet unmistakably
+    // bigger, so the user knows which one is being referred to even at a
+    // glance. Combined with the camera dolly toward the active beat,
+    // the planet now FILLS the viewport's left half (with the drawer on
+    // the right) rather than reading as just one of the row.
+    const activeBoost = isActive ? (reducedMotion ? 1.06 : 1.18) : 1;
     const target = breath * hoverBoost * activeBoost * planet.baseScale;
     if (meshRef.current) meshRef.current.scale.setScalar(target);
     // Atmosphere shell scale: 1.16 for normal planets, 1.08 for emissive
@@ -240,15 +245,14 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
     // "you're inside this beat."
     let baseEmissive: number;
     if (planet.isEmissive) {
-      // The Sun has its TEXTURE wired as an emissiveMap (see PlanetCore),
-      // so any emissiveIntensity > 0 already produces a self-luminous body
-      // — the texture's bright pixels effectively ARE the glow. Numbers
-      // below are deliberately ~half the previous build because that source
-      // alone produces enough light to bleed past adjacent planets when
-      // multiplied much higher (the "huge orange cloud" the user flagged).
-      // Active/approved cap at ~0.32 so Sun reads as bright, not blinding.
-      if (isActive) baseEmissive = 0.3;
-      else if (isApproved) baseEmissive = 0.32;
+      // Approved Sun bumped 0.32 → 0.42 — completion needs to be the
+      // single brightest state on the canvas. The user flagged that
+      // "earth needs to light up when done"; same applies to every
+      // approved planet. The Sun's body already self-illuminates via
+      // emissiveMap, so we keep a ceiling that doesn't bloom past
+      // adjacent beats.
+      if (isApproved) baseEmissive = 0.42;
+      else if (isActive) baseEmissive = 0.3;
       else if (isPreviewState) baseEmissive = 0.24;
       else if (isGenerating) baseEmissive = 0.2;
       else if (isReady) baseEmissive = 0.15;
@@ -256,9 +260,12 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       else if (hover) baseEmissive = 0.14;
       else baseEmissive = 0.10; // pending — soft warmth so the Sun never reads as a black sphere
     } else {
-      // Non-luminous body: subtle ember layered onto the texture.
-      if (isActive) baseEmissive = 0.22;
-      else if (isApproved) baseEmissive = 0.32;
+      // Approved 0.32 → 0.50 — Earth, Mars, etc. need to OBVIOUSLY
+      // glow when their beat is locked in. Combined with the
+      // completion-stars halo + boosted atmosphere opacity, the
+      // approved state is now the brightest on the canvas.
+      if (isApproved) baseEmissive = 0.5;
+      else if (isActive) baseEmissive = 0.22;
       else if (isPreviewState) baseEmissive = 0.25;
       else if (isGenerating) baseEmissive = 0.18;
       else if (isReady) baseEmissive = 0.14;
@@ -266,16 +273,26 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       else if (hover) baseEmissive = 0.10;
       else baseEmissive = 0.06; // pending — soft glow floor so the body has presence even before any work
     }
-    // Pulses layered on the active states. ready = anticipation pulse;
-    // generating = breathing pulse (faster, more present).
+    // Pulses layered on the active states.
+    //   ready      → anticipation pulse (waiting for trigger)
+    //   generating → breathing pulse (faster, more present, "rolling")
+    //   approved   → slow heartbeat, ±0.06, so completed beats feel
+    //                ALIVE and locked-in rather than static. The sin
+    //                period (4.2s) is intentionally slow so 5 approved
+    //                planets all breathing in slightly different phases
+    //                read as "the canvas is humming," not "they're all
+    //                strobing in unison."
     const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.18 + 0.18 : 0;
     const genPulse = isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.12 + 0.12 : 0;
+    const approvedPulse = isApproved && !reducedMotion
+      ? Math.sin((t * Math.PI * 2) / 4.2 + introIndex) * 0.06
+      : 0;
     if (materialRef.current) {
       // Lerp toward target so a status flip never snaps emissive in one frame.
       // Combined with the JSX-level emissiveIntensity={0} init, the planet
       // starts dark and either stays dark (pending) or ramps up smoothly
       // over ~10 frames to the active/approved level — no first-frame flash.
-      const targetEmissive = baseEmissive + readyPulse + genPulse;
+      const targetEmissive = baseEmissive + readyPulse + genPulse + approvedPulse;
       materialRef.current.emissiveIntensity = THREE.MathUtils.lerp(
         materialRef.current.emissiveIntensity,
         targetEmissive,
@@ -306,7 +323,7 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       // the screenshot. For these we drop the halo to a sliver — just
       // enough to round off the silhouette.
       const emissiveFactor = planet.isEmissive ? 0.45 : 1.0;
-      if (isApproved) baseOpacity = 0.34; // strongest — "this beat is locked in"
+      if (isApproved) baseOpacity = 0.46; // bumped 0.34 → 0.46: completed beats need to read as the brightest halo on the canvas
       else if (isActive) baseOpacity = 0.22;
       else if (isPreviewState) baseOpacity = 0.24;
       else if (isGenerating) baseOpacity = 0.2;
@@ -314,15 +331,19 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       else if (isQuestioning) baseOpacity = 0.06; // faint, "in conversation"
       else baseOpacity = hover ? 0.08 : 0.04; // pending — faint limb glow so silhouette reads warm, not inert
       baseOpacity *= emissiveFactor;
+      // Approved planets get a slow halo breath synced with the
+      // emissive heartbeat, phase-offset by introIndex so 5 approved
+      // beats don't pulse in lockstep.
+      const approvedHaloPulse = isApproved && !reducedMotion
+        ? Math.sin((t * Math.PI * 2) / 4.2 + introIndex) * 0.04
+        : 0;
       const pulse =
         (isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.03 + 0.03 : 0) +
-        (isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.025 + 0.025 : 0);
+        (isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.025 + 0.025 : 0) +
+        approvedHaloPulse;
       // Multiply by introEase so the halo fades in along with the
-      // geometry's grow-in. Without this, on planets that have a target
-      // opacity of 0 (pending), the halo never appears anyway — but on
-      // active/approved beats the halo would otherwise pop on at full
-      // strength while the planet was still scaling up.
-      const targetOpacity = Math.min(baseOpacity + pulse, 0.4) * introEase;
+      // geometry's grow-in.
+      const targetOpacity = Math.min(baseOpacity + pulse, 0.55) * introEase;
       auni.opacity.value = THREE.MathUtils.lerp(auni.opacity.value, targetOpacity, 0.16);
     }
 
@@ -408,7 +429,12 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
           the regular beat-name label with a bouncing chevron pointing
           down at the planet. Hides instantly the moment the user clicks
           any beat, returns when they Esc back to overview. */}
-      {isGuidedTarget ? <GuidedTargetOverlay baseScale={planet.baseScale} /> : null}
+      {isGuidedTarget ? (
+        <GuidedTargetOverlay
+          baseScale={planet.baseScale}
+          onActivate={() => setActiveBeat(beat.beatId)}
+        />
+      ) : null}
 
       {/* Active-only sparkles drift around the focused planet.
           Halved (10 from 20) and lower opacity — they were reading as
@@ -424,7 +450,16 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
           Approved beats get an explicit "✓" prefix so the completion state
           is unmistakable from any distance. */}
       {!labelsHidden ? (
-        <Html center position={[0, 1.05, 0]} style={{ pointerEvents: "none" }}>
+        <Html
+          center
+          position={[0, 1.05, 0]}
+          style={{ pointerEvents: "none" }}
+          // Cap below all canvas chrome — drei defaults to [16M, 0] which
+          // bled the labels through the stitch tray (z-50) and drawer (z-40).
+          // [8, 0] keeps labels above film-grain (z-5) but below the
+          // persistent URL strip (z-10) and every modal layer above it.
+          zIndexRange={[8, 0]}
+        >
           <div
             className="flex items-center gap-1.5 whitespace-nowrap font-body text-[14px] font-medium tracking-[-0.005em]"
             style={{
@@ -514,9 +549,17 @@ function PlanetCore({
         // Initial emissiveIntensity is 0 for ALL planets — the per-frame
         // lerp ramps up to whatever the status warrants without flashing.
         emissiveIntensity={0}
-        roughness={spec.isEmissive ? 1.0 : 0.55}
-        metalness={spec.isEmissive ? 0.0 : 0.05}
-        envMapIntensity={spec.isEmissive ? 0.0 : 0.7}
+        // Marble-feel material per the user's framing ("philosophy of
+        // planets? maybe these should be more like marbles"). Lower
+        // roughness (0.55 → 0.38) catches a sharper specular highlight
+        // off the key light; metalness (0.05 → 0.18) pulls a touch of
+        // chromatic glint into that highlight; envMapIntensity (0.7 →
+        // 1.0) lets the night-preset HDR contribute the polished-glass
+        // rim. Sun stays roughness 1.0 / metalness 0 because a star
+        // isn't a marble — it's the light source.
+        roughness={spec.isEmissive ? 1.0 : 0.38}
+        metalness={spec.isEmissive ? 0.0 : 0.18}
+        envMapIntensity={spec.isEmissive ? 0.0 : 1.0}
       />
     </mesh>
   );
@@ -619,7 +662,15 @@ function CompletionStars({ baseScale }: { baseScale: number }) {
  * prop already gates the mount). Returns when the user Esc's back to
  * overview if the beat is still unfinished.
  */
-function GuidedTargetOverlay({ baseScale }: { baseScale: number }) {
+function GuidedTargetOverlay({
+  baseScale,
+  onActivate,
+}: {
+  baseScale: number;
+  /** Called when the user clicks the "you are here" pill. The parent
+   *  fires setActiveBeat for this beat; CameraRig handles the arc-in. */
+  onActivate?: () => void;
+}) {
   const ringMatRef = useRef<THREE.MeshBasicMaterial>(null);
   const ringGroupRef = useRef<THREE.Group>(null);
   const reducedMotion = usePrefersReducedMotion();
@@ -677,11 +728,17 @@ function GuidedTargetOverlay({ baseScale }: { baseScale: number }) {
       <Html
         center
         position={[0, 1.85, 0]}
-        style={{ pointerEvents: "none" }}
-        // drei's default zIndexRange is [16777271, 0]; force this
-        // callout above that ceiling so it ALWAYS sits over other
-        // planets' name labels regardless of camera depth.
-        zIndexRange={[16777400, 16777390]}
+        // pointerEvents:auto — clicking the pill arcs the camera into
+        // the planet via setActiveBeat, same path as clicking the orb.
+        // The pill is the visual cue; making it clickable closes the
+        // loop between "you are here" and "take me there."
+        style={{ pointerEvents: "auto" }}
+        // Range [9, 8] sits above the floating beat labels (z-8) but
+        // BELOW every chrome layer — the persistent URL strip (z-10),
+        // drawer (z-40), stitch tray (z-50). Was [16777400, 16777390]
+        // which forced it above modal chrome and bled the pill through
+        // the stitch tray's headline (the bug visible in the screenshot).
+        zIndexRange={[9, 8]}
       >
         <motion.div
           initial={{ opacity: 0, y: -6 }}
@@ -689,15 +746,19 @@ function GuidedTargetOverlay({ baseScale }: { baseScale: number }) {
           transition={{ duration: 0.55, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
           className="flex select-none flex-col items-center gap-0.5"
         >
-          <div
-            className="caption-track whitespace-nowrap rounded-full border border-brand-ember/35 bg-bg-base/70 px-2.5 py-1 text-[9.5px] text-brand-ember backdrop-blur-md"
+          <button
+            type="button"
+            onClick={onActivate}
+            aria-label="Take me to this beat"
+            title="Take me there"
+            className="caption-track group whitespace-nowrap rounded-full border border-brand-ember/35 bg-bg-base/70 px-2.5 py-1 text-[9.5px] text-brand-ember backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-200 ease-out hover:border-brand-ember/65 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
             style={{
               boxShadow: "0 0 18px rgba(240,168,104,0.22), inset 0 0 0 1px rgba(240,168,104,0.08)",
               textShadow: "0 1px 12px rgba(0,0,0,0.85)",
             }}
           >
-            start here
-          </div>
+            you are here
+          </button>
           <motion.div
             className="text-brand-ember"
             animate={{ y: [0, 5, 0], opacity: [0.6, 1, 0.6] }}

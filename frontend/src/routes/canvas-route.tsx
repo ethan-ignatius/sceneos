@@ -9,6 +9,7 @@ import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
 import { Minimap } from "@/components/canvas/minimap";
+import { BeatProgressStrip } from "@/components/canvas/beat-progress-strip";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
@@ -130,20 +131,30 @@ export function CanvasRoute() {
           <span className="font-body text-[12.5px] font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
             Stitch
           </span>
-          <span className="font-display text-[14px] italic leading-none tabular-nums text-fg-primary">
+          {/* Count toned down — was font-display italic at 14px which read
+              as a magazine pull-quote and pulled the eye too hard. Now
+              plain body tabular-nums to match the "Save & exit" pill on
+              the left and the StageIndicator's count. */}
+          <span className="font-body text-[12px] tabular-nums text-fg-tertiary">
             {approvedCount}
-            <span className="mx-1 text-fg-tertiary/45">of</span>
+            <span className="mx-1 text-fg-tertiary/45">/</span>
             {totalCount}
           </span>
         </button>
       </motion.div>
 
       {/* Decompose status — a thin self-contained bar at the top edge.
-          Was nested inside the (now-removed) master-prompt card; floating
-          it free keeps the canvas clean while the work is happening. */}
+          Floats just above the BeatProgressStrip when active; auto-
+          dismisses on success/error so the strip below isn't crowded. */}
       <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center md:top-4">
         <DecomposeIndicator />
       </div>
+
+      {/* BeatProgressStrip removed — it duplicated the global StageIndicator
+          at top-center, producing the visible stack the user flagged.
+          The StageIndicator already shows pipeline stage + progress count;
+          the per-beat status is already conveyed by the planet visuals
+          (atmosphere brightness, ✓ checkmark on labels, glow). */}
 
       {/* Save & exit — top-left counterweight to the stitch pill. Archives
           the current manifest into /projects history and returns to landing.
