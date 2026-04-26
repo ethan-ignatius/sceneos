@@ -9,6 +9,7 @@ import { api, ApiError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
+import { SceneOSMark } from "@/components/ui/sceneos-mark";
 import { VIDEO_TYPE_TIERS } from "@/lib/beat-templates";
 
 /**
@@ -62,29 +63,22 @@ export function LandingRoute() {
   // remains the shortest tier ("Trailer", 3 beats) — set in the
   // prompt-store init.
 
-  // Voice — Web Speech API. Auto-starts on mount so the user can speak
-  // their idea without reaching for the mic button. The button then
-  // serves as a MUTE control — only mouse action needed is to silence
-  // it. Falls back gracefully if unsupported (Firefox).
+  // Voice — Web Speech API. Mic is OFF by default on landing — user
+  // explicitly clicks the mic button to opt in. Auto-starting it the
+  // moment a stranger lands on the page reads as invasive (the browser
+  // flashes a red recording indicator before the user has even decided
+  // they want to talk). Click-to-start respects them.
   //
-  // onSettle fires after 3s of silence (set in the hook) — at that
-  // point the form auto-submits, so the user never has to reach for
-  // the keyboard or click Send. submitRef is kept fresh so onSettle
-  // sees the latest closure (it runs from inside a hook timer).
+  // Once listening, onSettle (2s of silence) auto-submits — so the
+  // experience is still hands-free after the user opts in. submitRef
+  // is kept fresh so onSettle calls into the latest closure (it runs
+  // from inside a hook timer).
   const submitRef = useRef<((text: string) => void) | null>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
     silenceMs: 2000,
     onSettle: (text) => submitRef.current?.(text),
   });
-  const autoStartedMicRef = useRef(false);
-  useEffect(() => {
-    if (autoStartedMicRef.current) return;
-    if (!speech.supported) return;
-    if (speech.listening) return;
-    autoStartedMicRef.current = true;
-    speech.start();
-  }, [speech.supported, speech.listening, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) setDraft(speech.transcript);
   }, [speech.listening, speech.transcript]);
@@ -291,10 +285,9 @@ export function LandingRoute() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.6 }}
-          className="absolute bottom-4 left-4 z-20 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary/75 md:bottom-6 md:left-6"
+          className="absolute bottom-4 left-4 z-20 text-fg-tertiary/85 md:bottom-6 md:left-6"
         >
-          <span className="text-brand-ember">●</span>
-          <span className="ml-2">SceneOS</span>
+          <SceneOSMark />
         </motion.div>
 
         {/* Top-right Projects affordance — always reachable from landing.

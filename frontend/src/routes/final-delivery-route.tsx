@@ -6,6 +6,7 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
+import { SceneOSMark } from "@/components/ui/sceneos-mark";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { toast } from "sonner";
 
@@ -80,9 +81,8 @@ export function FinalDeliveryRoute() {
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.4 }}
           className="fixed inset-x-0 top-0 z-50 flex h-[8vh] items-center justify-between px-6 sm:px-10"
         >
-          <div className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary/85">
-            <span className="text-brand-ember">●</span>
-            <span className="ml-2">SceneOS</span>
+          <div className="text-fg-tertiary/85">
+            <SceneOSMark />
           </div>
           <div className="flex items-center gap-4">
             <button
