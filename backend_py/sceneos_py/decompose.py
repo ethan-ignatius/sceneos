@@ -14,6 +14,7 @@ from typing import Any
 
 from .genai_client import default_gemini_model_for, make_genai_client
 from .motion_presets import MOTION_PRESETS
+from .retry import with_reliability
 
 
 logger = logging.getLogger(__name__)
@@ -146,6 +147,17 @@ _SYSTEM_PROMPT = "\n".join(
         "  • Carry character + world descriptors verbatim across beats.",
         "  • Each motionPrompt must specify a camera movement and a pace word.",
         "",
+        "SAFETY — the video generator will REJECT prompts that mention:",
+        "  • Violence, gore, blood, weapons (guns, knives, explosions aimed at people)",
+        "  • Real public figures, celebrities, politicians by name",
+        "  • Nudity, sexual content, or suggestive situations",
+        "  • Hate speech, slurs, or discriminatory language",
+        "  • Drug use or illegal activities depicted approvingly",
+        "If the user's idea touches any of these, rephrase the imagePrompt and",
+        "motionPrompt to convey the MOOD and DRAMA without the literal trigger words.",
+        "Example: 'a tense standoff' instead of 'pointing a gun'; 'a mysterious figure'",
+        "instead of naming a real person. Never refuse — always find a safe reframe.",
+        "",
         "Always call the `emit_clips` tool exactly once.",
     ]
 )
@@ -176,6 +188,31 @@ def _build_user_prompt(params: dict, aspect_ratio: str) -> str:
             beats_block,
         ]
     )
+
+
+def _first_function_call_for_decompose(response: Any) -> Any:
+    """
+    Return the `emit_clips` call if present; else any function_call on a candidate.
+
+    Scans all candidates. Gemini sometimes appends a second candidate; the
+    function call is not always on candidates[0].
+    """
+    cands: list = getattr(response, "candidates", None) or []
+    for cand in cands:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or [] if content is not None else []
+        for p in parts:
+            fc = getattr(p, "function_call", None)
+            if fc is not None and getattr(fc, "name", None) == "emit_clips":
+                return fc
+    for cand in cands:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or [] if content is not None else []
+        for p in parts:
+            fc = getattr(p, "function_call", None)
+            if fc is not None:
+                return fc
+    return None
 
 
 def _ensure_coverage(resp: dict, params: dict) -> dict:
@@ -257,45 +294,71 @@ async def decompose_master_prompt(params: dict) -> dict:
         ]
     )
 
-    config = types.GenerateContentConfig(
-        system_instruction=_SYSTEM_PROMPT,
-        tools=[emit_clips_tool],
-        tool_config=types.ToolConfig(
-            function_calling_config=types.FunctionCallingConfig(
-                mode="ANY",
-                allowed_function_names=["emit_clips"],
+    def _make_decompose_config(temperature: float) -> Any:
+        return types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            tools=[emit_clips_tool],
+            tool_config=types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=types.FunctionCallingConfigMode.ANY,
+                    allowed_function_names=["emit_clips"],
+                ),
             ),
-        ),
-        max_output_tokens=8192,
-        temperature=0.6,
-    )
-
-    user_prompt = _build_user_prompt(params, aspect_ratio)
-
-    def _call_sync() -> Any:
-        return client.models.generate_content(
-            model=default_gemini_model_for("decompose"),
-            contents=[{"role": "user", "parts": [{"text": user_prompt}]}],
-            config=config,
+            max_output_tokens=8192,
+            temperature=temperature,
         )
 
-    response = await asyncio.to_thread(_call_sync)
+    user_prompt = _build_user_prompt(params, aspect_ratio)
+    model_id = default_gemini_model_for("decompose")
+    user_contents: list[dict] = [
+        {"role": "user", "parts": [{"text": user_prompt}]},
+    ]
+
+    def _call_sync(temp: float) -> Any:
+        cfg = _make_decompose_config(float(temp))
+        return client.models.generate_content(
+            model=model_id,
+            contents=user_contents,
+            config=cfg,
+        )
+
+    response = await with_reliability(
+        "vertex.gemini.decompose",
+        lambda: asyncio.to_thread(_call_sync, 0.6),
+        timeout_seconds=120.0,
+        max_attempts=2,
+        base_backoff=1.5,
+        breaker_name="vertex.gemini",
+    )
 
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
         logger.warning("[decompose] Gemini returned no candidates; using stub.")
         bible = await _gemini_continuity_bible(params["masterPrompt"], params["beats"])
         return stub_decomposition(params, bible=bible)
-    parts = getattr(candidates[0].content, "parts", None) or []
-    fc = next(
-        (getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)),
-        None,
-    )
+    fc = _first_function_call_for_decompose(response)
     if fc is None:
-        raise RuntimeError(
-            f"decompose_master_prompt: Gemini did not call emit_clips "
-            f"(finish_reason={getattr(candidates[0], 'finish_reason', '?')})"
+        # MALFORMED_FUNCTION_CALL and occasional "answer in prose" are known;
+        # mirror run_agent_turn's cold retry before giving up.
+        logger.warning(
+            "[decompose] no function_call on first try (finish_reason=%r); cold retry",
+            getattr(candidates[0], "finish_reason", None),
         )
+        response = await asyncio.to_thread(_call_sync, 0.25)
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            logger.warning("[decompose] cold retry returned no candidates; using stub.")
+            bible = await _gemini_continuity_bible(params["masterPrompt"], params["beats"])
+            return stub_decomposition(params, bible=bible)
+        fc = _first_function_call_for_decompose(response)
+    if fc is None:
+        fr = getattr(candidates[0], "finish_reason", None)
+        logger.error(
+            "[decompose] Gemini did not call emit_clips after cold retry (finish_reason=%r); using stub",
+            fr,
+        )
+        bible = await _gemini_continuity_bible(params["masterPrompt"], params["beats"])
+        return stub_decomposition(params, bible=bible)
     args = fc.args
     raw = dict(args) if hasattr(args, "__iter__") else json.loads(json.dumps(args))
     out = _ensure_coverage(raw, params)

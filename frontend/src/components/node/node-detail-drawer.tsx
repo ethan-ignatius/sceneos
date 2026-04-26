@@ -29,7 +29,10 @@ function isContentPolicyError(message: string): boolean {
     m.includes("usage guidelines") ||
     m.includes("support codes") ||
     (m.includes("filtered") && m.includes("veo")) ||
-    m.includes("violated vertex ai")
+    m.includes("violated vertex ai") ||
+    m.includes("safety filter blocked") ||
+    m.includes("sensitive words") ||
+    m.includes("responsible ai")
   );
 }
 
@@ -118,15 +121,25 @@ export function NodeDetailDrawer() {
           return;
         }
         if (status.status === "failed") {
-          // "Unknown vertex jobId" / "Unknown … jobId" means the backend
-          // restarted and lost its in-memory _JOBS dict. The job isn't
-          // actually failed in any meaningful sense — it's gone. Clear
-          // the stale jobId from the scene so the drawer doesn't keep
-          // re-attaching to a ghost, and surface a friendly message
-          // instead of the cryptic backend string.
           const errMsg = status.error ?? "Generation failed";
+
+          // Safety filter — Veo rejected the prompt content. Throw with
+          // a message that isContentPolicyError matches so the caller can
+          // route through handleContentPolicyRecovery.
+          if (status.safety || isContentPolicyError(errMsg)) {
+            updateScene(beatId, sceneId, {
+              jobId: undefined,
+              speculativeJobId: undefined,
+            });
+            throw new ApiError(0, errMsg);
+          }
+
+          // "Unknown vertex jobId" — backend restarted, in-memory jobs lost.
           if (/unknown\s+\w+\s+jobid/i.test(errMsg)) {
-            updateScene(beatId, sceneId, { jobId: undefined });
+            updateScene(beatId, sceneId, {
+              jobId: undefined,
+              speculativeJobId: undefined,
+            });
             throw new ApiError(0, "The previous render expired. Click Roll camera to start fresh.");
           }
           throw new ApiError(0, errMsg);
@@ -208,22 +221,28 @@ export function NodeDetailDrawer() {
     // If a speculative job is still running, attach to it instead of
     // dispatching a new one. The pollUntilDone loop handles both
     // running and succeeded states; on succeeded we flip to preview.
+    // If the speculative job is dead (backend restarted, in-memory jobs
+    // wiped), fall through to dispatch a fresh one instead of erroring.
     if (scene.speculativeJobId) {
       updateScene(beat.beatId, scene.sceneId, { jobId: scene.speculativeJobId });
       updateBeat(beat.beatId, { status: "generating" });
       try {
         await pollUntilDone(scene.speculativeJobId, beat.beatId, scene.sceneId, 1500);
-      } catch (err) {
+        return;
+      } catch (specErr) {
         if (cancelRef.current) return;
-        const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+        const msg = specErr instanceof ApiError ? specErr.message : "";
         if (isContentPolicyError(msg)) {
           handleContentPolicyRecovery(beat.beatId, scene.sceneId);
-        } else {
-          setGenError(msg);
-          updateBeat(beat.beatId, { status: "ready-to-generate" });
+          return;
         }
+        // Speculative job expired / unknown — clear it and fall through
+        // to a fresh dispatch below instead of showing an error.
+        updateScene(beat.beatId, scene.sceneId, {
+          jobId: undefined,
+          speculativeJobId: undefined,
+        });
       }
-      return;
     }
 
     updateBeat(beat.beatId, { status: "generating" });

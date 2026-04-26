@@ -129,6 +129,8 @@ export interface StatusResponse {
    * from zero. Only present for providers that track it (Vertex today).
    */
   startedAt?: string;
+  /** True when Veo rejected the prompt due to its safety / Responsible AI filter. */
+  safety?: boolean;
 }
 
 export interface StitchRequest {
