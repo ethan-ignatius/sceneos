@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useEffect, useRef, useState } from "react";
-import { RotateCcw, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { Check, RotateCcw, AlertTriangle } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
@@ -36,20 +36,16 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   const regenerateScene = useBeatGraphStore((s) => s.regenerateScene);
   const isApproved = beat.status === "approved" || scene.approved;
 
-  // Auto-approve on preview — the user shouldn't have to click "Approve
-  // scene" when the clip lands. Regenerate stays as the override. Fires
-  // once per (beatId, sceneId, isApproved=false) transition; a per-mount
-  // ref guard prevents double-fire on remount.
-  const autoApprovedRef = useRef<string | null>(null);
-  useEffect(() => {
+  // Approval is explicit. The earlier "auto-approve the moment the clip
+  // lands" behavior, combined with the 1.6s auto-advance in the parent
+  // drawer, gave the user no time to actually watch the generated video
+  // before being booted to the next beat. Now: Veo lands → user watches
+  // → user clicks "Approve scene" → auto-advance fires after that.
+  const handleApprove = () => {
     if (isApproved) return;
-    if (beat.status !== "preview") return;
-    const key = `${beat.beatId}::${scene.sceneId}`;
-    if (autoApprovedRef.current === key) return;
-    autoApprovedRef.current = key;
     approveScene(beat.beatId, scene.sceneId);
     playApproveChime();
-  }, [isApproved, beat.status, beat.beatId, scene.sceneId, approveScene]);
+  };
 
   // Mood-graded Cloudinary URL when a publicId exists. The real backend
   // always emits a publicId on success — null = an actual no-clip state,
@@ -131,17 +127,17 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
         </p>
       </motion.div>
 
-      {/* Approve button removed — auto-approve fires the moment the clip
-          lands. Regenerate is the only manual override the user needs.
-          Two-step confirmation: first click arms (button shifts to a
-          warning register + asks "Confirm retake?"); second click within
-          5s actually fires regenerateScene. Without this, an accidental
-          click silently torches a finished take that cost real Veo
-          compute (~$2-3 per render). */}
+      {/* Footer: Approve as the primary CTA (auto-approve was removed
+          because the 1.6s downstream auto-advance gave the user no time
+          to watch the clip). Regenerate is a destructive secondary —
+          two-step confirmation arms first ("Confirm retake?"), second
+          click within 5s actually fires regenerateScene. Without that,
+          an accidental click silently torches a finished take that cost
+          real Veo compute (~$2-3 per render). */}
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="mt-auto flex items-center justify-end gap-2 border-t border-fg-tertiary/30 pt-4"
+        className="mt-auto flex items-center justify-between gap-2 border-t border-fg-tertiary/30 pt-4"
       >
         <AnimatePresence mode="wait">
           {confirmingRetake ? (
@@ -180,6 +176,7 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.18, ease: EASE.outQuart }}
+              className="flex items-center gap-2"
             >
               <Button
                 variant="ghost"
@@ -194,6 +191,17 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
             </motion.div>
           )}
         </AnimatePresence>
+        <Button
+          variant="primary"
+          size="lg"
+          onClick={handleApprove}
+          disabled={isApproved}
+          aria-label={isApproved ? "Scene approved" : "Approve scene and continue"}
+          title={isApproved ? "Already approved" : "Approve this take"}
+        >
+          <Check size={16} strokeWidth={1.5} aria-hidden="true" />
+          {isApproved ? "Approved" : "Approve scene"}
+        </Button>
       </motion.div>
     </motion.div>
   );
