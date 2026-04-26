@@ -51,11 +51,12 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
 
   const isApproved = beat.status === "approved" || scene.approved;
 
-  // Prefer mood-graded Cloudinary URL; fall back to raw clipUrl from the
-  // mock backend if publicId isn't available.
+  // Mood-graded Cloudinary URL when a publicId exists. The real backend
+  // always emits a publicId on success — null = an actual no-clip state,
+  // which the empty render below handles.
   const src = scene.clipPublicId
     ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
-    : scene.clipUrl ?? "";
+    : "";
 
   if (!src) {
     return (

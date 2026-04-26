@@ -13,6 +13,7 @@ import {
   CornerDownLeft,
   LocateFixed,
   Map as MapIcon,
+  FolderClock,
 } from "lucide-react";
 import { useBeatGraphStore, selectApprovedClipPublicIds } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
@@ -203,6 +204,15 @@ export function CommandMenu() {
                     label={minimapOpen ? "Hide overview" : "Show overview"}
                     hint="2D minimap"
                     onSelect={toggleOverview}
+                  />
+                  <CommandRow
+                    icon={<FolderClock size={14} strokeWidth={1.5} />}
+                    label="Open project history"
+                    hint="archived reels"
+                    onSelect={() => {
+                      navigate("/projects");
+                      close();
+                    }}
                   />
                   <CommandRow
                     icon={<RotateCcw size={14} strokeWidth={1.5} />}

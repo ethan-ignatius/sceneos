@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import uuid
+from datetime import datetime, UTC
 from typing import Any
 
 import httpx
@@ -27,6 +28,12 @@ _MAX_POLL_ATTEMPTS = 120
 
 
 _JOBS: dict[str, dict[str, Any]] = {}
+# Job start timestamps live in a parallel dict so the existing dict-replacement
+# pattern in _poll_until_done (which overwrites _JOBS[id] on each transition)
+# doesn't lose them. Captured ONCE when the job is first dispatched; surfaced
+# via status() so the frontend can compute true elapsed across drawer
+# close/reopen cycles.
+_JOB_STARTED_AT: dict[str, str] = {}
 
 
 def _read_config() -> dict[str, str]:
@@ -115,6 +122,10 @@ async def _fetch_image_b64(url: str) -> tuple[str, str]:
 
 async def generate(params: GenerateClipParams) -> dict:
     provider_job_id = str(uuid.uuid4())
+    # Capture the dispatch timestamp NOW so even fail-fast paths (image
+    # fetch errors, predictLongRunning rejections) still expose a startedAt
+    # to status callers. The frontend uses this to compute true elapsed.
+    _JOB_STARTED_AT[provider_job_id] = datetime.now(UTC).isoformat()
     pid = public_id_for_scene(
         params.get("projectId"), params.get("beatId"), params.get("sceneId"), provider_job_id
     )
@@ -284,12 +295,22 @@ async def status(provider_job_id: str) -> StatusResult:
     job = _JOBS.get(provider_job_id)
     if not job:
         return {"status": "failed", "error": f"Unknown vertex jobId: {provider_job_id}"}
+    started_at = _JOB_STARTED_AT.get(provider_job_id)
     if job["status"] == "running":
-        return {"status": "running"}
+        out: StatusResult = {"status": "running"}
+        if started_at:
+            out["startedAt"] = started_at
+        return out
     if job["status"] == "failed":
-        return {"status": "failed", "error": job.get("error", "vertex failed")}
-    return {
+        out2: StatusResult = {"status": "failed", "error": job.get("error", "vertex failed")}
+        if started_at:
+            out2["startedAt"] = started_at
+        return out2
+    out3: StatusResult = {
         "status": "succeeded",
         "clipUrl": job["clipUrl"],
         "clipPublicId": job["clipPublicId"],
     }
+    if started_at:
+        out3["startedAt"] = started_at
+    return out3

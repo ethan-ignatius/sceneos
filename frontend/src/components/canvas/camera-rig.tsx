@@ -158,71 +158,74 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
 
     if (active) {
       const [ax, ay, az] = active;
-      // Active-beat camera framing — per user direction:
-      //   1. Active planet appears LARGE in the foreground
-      //   2. View direction aims toward the NEXT planet ("looking
-      //      forward in the journey")
-      //   3. Active planet sits on the LEFT half of viewport
-      //      (drawer occupies the right)
+      // Active-beat camera framing — adventure-map composition:
+      //   1. Camera looks DIRECTLY AT the next planet in the journey,
+      //      so the visible horizon reads as "ahead, traveling forward."
+      //   2. Camera position is offset right (in camera-space) so the
+      //      active planet projects into the LEFT third of the viewport,
+      //      with next at viewport-center down the journey axis.
+      //   3. Active stays large in the foreground; next is the visible
+      //      destination.
       //
-      // Math:
-      //   forward   = (next − active).normalised
-      //   right     = up × forward (camera-right axis, perpendicular to
-      //               view direction in the world)
-      //   camera    = active − forward × 1.6 (pull back)
-      //                       + worldUp × 0.45 (slight elevation)
-      //                       + right × drawerMag (shift right →
-      //                         active planet projects to viewport LEFT)
-      //   lookAt    = active + forward × 0.7 (look JUST past active
-      //                                       toward the next planet,
-      //                                       so active stays in the
-      //                                       lower-left foreground)
-      //                       + right × drawerMag (same shift as camera
-      //                         so view direction is preserved; only the
-      //                         frame slides)
+      // Right-vector math:
+      //   forward = (next − active).normalised
+      //   In Three.js's right-handed system with worldUp=(0,1,0),
+      //   camera-right (world) = forward × up = (-fz, 0, fx).
+      //   The previous build used (fz, 0, -fx) which is up × forward —
+      //   that's camera-LEFT in world coords, so a positive drawerMag
+      //   shifted the camera LEFT and the active planet ended up on
+      //   the SCREEN RIGHT (the bug the user flagged).
       //
-      // Why "forward × 0.7" not "next directly": looking at next
-      // directly would put it in viewport center and shrink active to
-      // a sliver in the lower-left. The 0.7 multiplier picks a point
-      // slightly past active so the active planet still dominates the
-      // frame, with the next planet clearly visible deeper in the shot.
+      // Position math:
+      //   camera = active
+      //          − forward × 1.6     (pull back)
+      //          + right   × drawerMag (shift camera-right →
+      //                                 active projects to LEFT)
+      //          + worldUp × 0.45    (slight elevation, looking down
+      //                               on the journey plane)
+      //   lookAt = next              (camera AIMS at next directly,
+      //                               not at active+ε — gives the
+      //                               "traveling forward" trajectory)
+      //
+      // drawerMag tuning: 1.0 desktop puts active at ~−18° horizontal
+      // (left third of viewport), next at viewport-center. 0.5 mobile
+      // because the drawer is a bottom-sheet on mobile, not a side
+      // panel, so the right-shift only needs to land the active in
+      // a tasteful left-of-center, not clear of an overlay.
       const next = findNextAnchor(activeBeatId);
       const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
-      const drawerMag = isDesktop ? 1.6 : 0;
+      const drawerMag = isDesktop ? 1.0 : 0.5;
       const breath = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
       if (next) {
         const [nx, ny, nz] = next;
         const fx = nx - ax, fy = ny - ay, fz = nz - az;
         const fmag = Math.max(Math.sqrt(fx * fx + fy * fy + fz * fz), 0.001);
         const fNx = fx / fmag, fNy = fy / fmag, fNz = fz / fmag;
-        // Camera-right via Three.js convention: up × forward.
-        // up=(0,1,0), forward=(a,b,c) → up × forward = (c, 0, -a)
-        // (z component goes positive when forward has -x; that's the
-        // right side from the camera's POV looking down +x.)
-        let rx = fNz, rz = -fNx;
+        // Corrected camera-right: forward × up = (-fNz, 0, fNx).
+        let rx = -fNz, rz = fNx;
         const rmag = Math.sqrt(rx * rx + rz * rz);
         if (rmag < 0.001) {
+          // Forward is nearly vertical — degenerate case. Default to
+          // world +X as the right axis so we don't divide by zero.
           rx = 1; rz = 0;
         } else {
           rx /= rmag; rz /= rmag;
         }
         const drx = rx * drawerMag, drz = rz * drawerMag;
-        // Camera: pull back along -forward by 1.6, lift, drawer-shift right.
+        // Camera: pull back along -forward by 1.6, lift, shift camera-right.
         targetPos.current.set(
           ax - fNx * 1.6 + drx + breath,
           ay - fNy * 1.6 + 0.45,
           az - fNz * 1.6 + drz,
         );
-        // LookAt: just past active toward next, plus same drawer shift.
-        targetLook.current.set(
-          ax + fNx * 0.7 + drx,
-          ay + fNy * 0.7,
-          az + fNz * 0.7 + drz,
-        );
+        // LookAt: aim DIRECTLY at next so the camera's view axis reads
+        // as forward motion through the journey. Active lands in the
+        // left foreground naturally because the camera is shifted right.
+        targetLook.current.set(nx, ny, nz);
       } else {
         // Defensive fallback — shouldn't fire because findNextAnchor
         // has the last-beat extrapolation, but keeps the rig robust.
-        targetPos.current.set(ax + 0.7 + breath, ay + 0.45, az + 1.7);
+        targetPos.current.set(ax - 0.7 + breath, ay + 0.45, az + 1.7);
         targetLook.current.set(ax, ay, az);
       }
     } else {

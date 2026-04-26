@@ -66,8 +66,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
 
   // Reference frames — drag-drop or file picker. Stored as dataUris in
   // local component state and prefixed onto the userMessage with a marker
-  // (`[refs:N]`) the mock backend reads to acknowledge ("noted the
-  // reference frame, aiming for that mood"). See FINAL_HANDOFF §5 P0.4.
+  // (`[refs:N]`) the agent reads to acknowledge ("noted the reference
+  // frame, aiming for that mood"). The marker is the on-the-wire contract;
+  // moving to a structured `references: ImageRef[]` field on AgentRequest
+  // is a forward-compatible upgrade once the backend handles it natively.
   const [imageRefs, setImageRefs] = useState<ImageRef[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -280,8 +282,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     }
 
     // Visible user-turn content includes a small ref tag the bubble can
-    // render. Backend gets a `[refs:N]` marker prefix so the mock agent
-    // can acknowledge.
+    // render. Backend gets a `[refs:N]` marker prefix so the agent can
+    // acknowledge the dropped frames in its next reply.
     const refCount = imageRefs.length;
     const refMarker = refCount > 0 ? `[refs:${refCount}] ` : "";
     const visibleContent =
@@ -431,29 +433,58 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           with its latest question. Clicking submits the suggestion as a
           user turn (skipping the typing). Cleared on user submit, on a
           new agent turn without suggestions, or when the beat goes
-          sufficient. Mirrors the editor's followup pill pattern. */}
-      {latestSuggestions && !inFlight ? (
-        <div className="mt-3 flex flex-col gap-1.5 border-t border-fg-tertiary/30 pt-3">
-          {latestSuggestions.map((s, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => void handleSuggestion(s)}
-              disabled={inFlight}
-              className={cn(
-                "rounded-md border border-fg-tertiary/20 bg-bg-base/60 px-3.5 py-2.5",
-                "text-left font-body text-[13px] leading-snug text-fg-secondary",
-                "transition-colors duration-200 ease-out",
-                "hover:border-brand-ember-dim/60 hover:text-fg-primary",
-                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember",
-                "disabled:pointer-events-none disabled:opacity-50",
-              )}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-      ) : null}
+          sufficient. Eyebrow + sparkle icon make it unmistakable that
+          these are AI hand-offs the user can lean on; AnimatePresence
+          fades them in/out so they don't pop. */}
+      {/* Suggested answers — three "or pick one" hand-offs the agent
+          emitted with its latest question. Mirrors the mock-frontend's
+          "suggested · click to send · or write your own below" pattern.
+          Clicking a pill submits it as a user turn (skipping typing).
+          The eyebrow copy explicitly tells the user they can either
+          click a pill OR type below — the previous "or pick one"
+          underplayed that they had agency to ignore the pills. */}
+      <AnimatePresence initial={false}>
+        {latestSuggestions && !inFlight ? (
+          <motion.div
+            key="suggestions"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-3 space-y-2 border-t border-brand-ember-dim/30 pt-3"
+          >
+            <div className="flex items-center gap-1.5 caption-track text-[10px] text-brand-ember/80">
+              <Sparkles size={11} strokeWidth={1.7} aria-hidden="true" />
+              <span>suggested · click to send · or write your own below</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {latestSuggestions.map((s, i) => (
+                <motion.button
+                  key={i}
+                  type="button"
+                  onClick={() => void handleSuggestion(s)}
+                  disabled={inFlight}
+                  initial={{ opacity: 0, y: -3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, delay: 0.05 + i * 0.04, ease: [0.16, 1, 0.3, 1] }}
+                  whileHover={{ y: -1 }}
+                  whileTap={{ scale: 0.985 }}
+                  className={cn(
+                    "rounded-lg border border-brand-ember-dim/35 bg-brand-ember/[0.04] px-3.5 py-2.5",
+                    "text-left font-body text-[13px] leading-snug text-fg-secondary",
+                    "transition-[border-color,background-color,color] duration-200 ease-out",
+                    "hover:border-brand-ember/65 hover:bg-brand-ember/10 hover:text-fg-primary",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember",
+                    "disabled:pointer-events-none disabled:opacity-50",
+                  )}
+                >
+                  {s}
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {/* Reference-frame thumbnail strip — appears above the input when
           images have been dropped. Each thumb has an X to remove. */}
@@ -475,7 +506,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 type="button"
                 onClick={() => removeRef(ref.id)}
                 aria-label={`Remove ${ref.name}`}
-                className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-bg-base/80 text-fg-secondary opacity-0 transition-opacity group-hover:opacity-100 hover:text-fg-primary"
+                // Always-visible at low opacity so users discover it
+                // without hovering each thumbnail to find the X. Bumps
+                // to full on group hover.
+                className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-bg-base/85 text-fg-secondary opacity-70 transition-opacity group-hover:opacity-100 hover:text-fg-primary"
               >
                 <X size={10} strokeWidth={1.5} />
               </button>
@@ -484,6 +518,12 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         </div>
       ) : null}
 
+      {/* Input row — every interactive element shares h-9 (36px) so the
+          form sits on a single horizontal baseline. Previously the input
+          had py-2 (~40px) and Send was size="sm" (h-8 / 32px) — the
+          baselines drifted by 4-8px depending on font metrics, visible
+          as the buttons floating above the input text. Now: input
+          h-9, image h-9, voice h-9, Send h-9. */}
       <form onSubmit={submit} className="mt-3 flex items-center gap-2 border-t border-fg-tertiary/30 pt-3">
         <input
           value={draft}
@@ -496,7 +536,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 ? "Listening…"
                 : "Direct, or speak it."
           }
-          className="flex-1 bg-transparent px-1 py-2 font-body text-sm text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
+          className="h-9 flex-1 bg-transparent px-1 font-body text-sm leading-none text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
         />
         <button
           type="button"
@@ -541,6 +581,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           size="sm"
           disabled={(!draft.trim() && imageRefs.length === 0) || inFlight}
           aria-label={inFlight ? "Sending message" : "Send message"}
+          // Override size="sm" h-8 → h-9 so Send sits on the same
+          // baseline as the round image / voice buttons.
+          className="h-9 px-3.5 text-[12.5px]"
         >
           {inFlight ? (
             <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />

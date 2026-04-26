@@ -33,12 +33,16 @@ export function DecomposeIndicator() {
       : status === "success"
         ? "Scenes refined"
         : "Couldn't refine — using templates";
+  // Error dot at full opacity (was /70). The faded variant made errors
+  // read DIMMER than the pending pulse — wrong signal for "something
+  // went wrong." Full opacity + the error border below make the failure
+  // state unmistakable.
   const dotClass =
     status === "pending"
       ? "ember-pulse bg-brand-ember"
       : status === "success"
         ? "bg-brand-ember"
-        : "bg-state-error/70";
+        : "bg-state-error";
 
   return (
     <AnimatePresence>

@@ -49,16 +49,19 @@ def mock_mode() -> bool:
     Determine whether the backend should run in MOCK_MODE.
 
     Resolution order:
-      1. Explicit MOCK_MODE env override always wins.
+      1. Explicit MOCK_MODE env override always wins. Set MOCK_MODE=false
+         in production (after the chip removal) to force real backend even
+         on partial creds.
       2. Real mode requires Cloudinary creds AND at least one viable
          agent path (Vertex Gemini OR Anthropic/OpenAI) AND at least one
          viable video-gen path (Vertex Veo OR Higgsfield).
       3. Anything missing → MOCK_MODE on, so the dev never sees a
          silent NoneType crash deep in a provider call.
 
-    The Vertex-aware branch was added 2026-04-25: previously this
-    function defaulted to mock when ANTHROPIC_API_KEY was missing,
-    which silently broke Vertex-only setups.
+    The Tier 3 frontend chip is gone, but the mock fallback at the
+    BACKEND remains as a safety net for dev environments without keys.
+    Without this, a missing ANTHROPIC_API_KEY would 502 every /api/agent
+    call and lock the user at "Composing the shot." spinner.
     """
     explicit = os.getenv("MOCK_MODE")
     if explicit is not None:

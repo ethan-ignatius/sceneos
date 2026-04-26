@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
 import { LogOut } from "lucide-react";
@@ -46,6 +46,35 @@ export function CanvasRoute() {
     const stop = startAmbientProjector();
     return stop;
   }, []);
+
+  // Auto-arc into the first unfinished beat ~2s after canvas mount, so
+  // the user lands on the overview, gets a breath to read the scene,
+  // then the camera glides into Earth (or whichever the first pending
+  // beat is) and the drawer opens. Fires once per fresh canvas entry —
+  // a `useRef` guard ensures Esc → overview → re-mount doesn't re-trigger
+  // it within the same component lifetime.
+  const autoArcFiredRef = useRef(false);
+  useEffect(() => {
+    if (autoArcFiredRef.current) return;
+    if (!manifest) return;
+    if (activeBeatId) return; // user already chose a beat
+    if (stitchOpen) return; // stitch tray is open, hold off
+    const firstPending = manifest.beats.find(
+      (b) => b.status === "pending" || b.status === "questioning",
+    );
+    if (!firstPending) return; // every beat already past pending
+    autoArcFiredRef.current = true;
+    const t = window.setTimeout(() => {
+      // Re-check: the user may have clicked something during the 2s wait.
+      const live = useBeatGraphStore.getState();
+      if (live.activeBeatId || live.stitchTrayOpen) return;
+      setActiveBeat(firstPending.beatId);
+    }, 2000);
+    return () => window.clearTimeout(t);
+    // Dependencies are intentionally minimal — we only want this effect
+    // to evaluate on mount. The ref guard above blocks subsequent fires.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [manifest]);
 
   // Re-center: clear active beat AND fire the camera-reset event so
   // BeatMap3D zeros any pan offset. One operation, two effects.

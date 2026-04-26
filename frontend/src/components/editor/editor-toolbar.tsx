@@ -10,7 +10,11 @@ const LOOKS: { value: EditLook; label: string; hint: string }[] = [
   { value: "soft-romance", label: "Soft romance", hint: "haze, warmth" },
 ];
 
-const MOCK_MUSIC_TRACK = "audio/mock-bed";
+// Placeholder Cloudinary public ID for the music-bed feature. Real audio
+// beds get uploaded under their own publicIds; this constant is the
+// "no-asset-yet" sentinel the editor uses while the audio library is
+// scaffolded. Kept centralized so swapping in a real default is one edit.
+const DEMO_MUSIC_TRACK = "audio/demo-bed";
 
 interface EditorToolbarProps {
   decisions: EditDecisions;
@@ -85,7 +89,7 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               setAudio(
                 audio
                   ? null
-                  : { publicId: MOCK_MUSIC_TRACK, volume: -20, fadeInMs: 800, fadeOutMs: 1200 },
+                  : { publicId: DEMO_MUSIC_TRACK, volume: -20, fadeInMs: 800, fadeOutMs: 1200 },
               )
             }
             className={cn(

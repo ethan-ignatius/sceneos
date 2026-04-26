@@ -4,6 +4,7 @@ import { CrumpleBridgeRoute } from "@/routes/crumple-bridge-route";
 import { CanvasRoute } from "@/routes/canvas-route";
 import { EditorRoute } from "@/routes/editor-route";
 import { FinalDeliveryRoute } from "@/routes/final-delivery-route";
+import { ProjectsRoute } from "@/routes/projects-route";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="/canvas" element={<CanvasRoute />} />
         <Route path="/edit" element={<EditorRoute />} />
         <Route path="/final" element={<FinalDeliveryRoute />} />
+        <Route path="/projects" element={<ProjectsRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 

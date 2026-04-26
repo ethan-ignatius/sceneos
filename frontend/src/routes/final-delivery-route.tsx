@@ -1,11 +1,12 @@
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
-import { Download, Link2, ArrowRight } from "lucide-react";
+import { Download, Link2, ArrowRight, Copy, Check } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
+import { SparkleField } from "@/components/landing/sparkle-field";
 import { useScrollVelocity } from "@/lib/use-scroll-velocity";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,7 @@ export function FinalDeliveryRoute() {
   const reset = useBeatGraphStore((s) => s.reset);
   const resetPrompt = usePromptStore((s) => s.reset);
   const reducedMotion = useReducedMotion();
+  const [urlCopied, setUrlCopied] = useState(false);
 
   const playerWrapRef = useRef<HTMLDivElement>(null);
 
@@ -201,14 +203,65 @@ export function FinalDeliveryRoute() {
             />
           </motion.div>
 
-          {/* Three actions — Download primary, Copy share link ghost, Reopen editor link. */}
+          {/* fl_splice URL panel — the artifact. The cinematic IS this URL;
+              surfacing it as the centerpiece between the player and the
+              actions makes the Cloudinary track-hero unmistakable in the
+              demo. Mono body, ember tail, copy + open affordances. */}
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.5 }}
+            className="w-[90vw] max-w-[1200px] sm:w-[70vw]"
+          >
+            <div className="flex items-baseline justify-between gap-3 pb-1.5">
+              <span className="font-body text-[11.5px] font-medium tracking-[0.02em] text-fg-tertiary">
+                Stitched · Cloudinary fl_splice
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!finalUrl) return;
+                  try {
+                    await navigator.clipboard.writeText(finalUrl);
+                    setUrlCopied(true);
+                    window.setTimeout(() => setUrlCopied(false), 1400);
+                    toast.success("Cinematic URL copied.");
+                  } catch {
+                    toast.error("Couldn't reach the clipboard.");
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 font-body text-[11.5px] text-fg-tertiary transition-colors hover:text-fg-primary"
+                aria-label="Copy cinematic URL"
+              >
+                {urlCopied ? (
+                  <>
+                    <Check size={11} strokeWidth={2} className="text-brand-ember" aria-hidden="true" />
+                    <span className="text-brand-ember">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
+                    Copy
+                  </>
+                )}
+              </button>
+            </div>
+            <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 px-4 py-3 text-left font-mono text-[12px] leading-[1.6] text-fg-secondary">
+              {finalUrl}
+            </div>
+          </motion.div>
+
+          {/* Three actions — Download primary, Copy share link ghost,
+              Reopen editor link. Download leads (the user came here for
+              the file); Copy is the share path; Reopen editor is the
+              "I want to refine more" escape. */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.55 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.65 }}
             className="flex flex-wrap items-center justify-center gap-3"
           >
-            <Button asChild size="lg" variant="primary">
+            <Button asChild size="lg" variant="primary" className="ember-pulse">
               <a href={downloadUrl} download>
                 <Download size={16} strokeWidth={1.5} aria-hidden="true" />
                 Download MP4
@@ -281,7 +334,11 @@ export function FinalDeliveryRoute() {
           </div>
         </motion.section>
 
-        {/* "Make another" — bottom-right ghost, returns to landing with a clean store. */}
+        {/* "Make another" — top-right ghost, returns to landing with a
+            clean store. `right-8` clipped on `<sm`; switching to safe-
+            area + responsive offsets keeps it inside the viewport on
+            phones (right-3 / right-4) while preserving the desktop
+            placement (sm:right-8). */}
         <motion.button
           type="button"
           onClick={handleMakeAnother}
@@ -289,8 +346,8 @@ export function FinalDeliveryRoute() {
           animate={{ opacity: 1 }}
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.0 }}
           className={cn(
-            "btn--edge-underline group fixed right-8 top-[3.5vh] z-[60] inline-flex items-center gap-2",
-            "rounded-full border border-fg-tertiary/20 px-4 py-2 font-body text-[12px] font-medium",
+            "btn--edge-underline group fixed right-3 top-[3.5vh] z-[60] inline-flex items-center gap-2 sm:right-8",
+            "rounded-full border border-fg-tertiary/20 px-3 py-1.5 font-body text-[11.5px] font-medium sm:px-4 sm:py-2 sm:text-[12px]",
             "text-fg-tertiary transition-colors duration-200 hover:text-fg-primary",
           )}
         >
@@ -328,41 +385,71 @@ function FinalAwaitingRenderFallback() {
   const navigate = useNavigate();
   return (
     <MotionConfig reducedMotion="user">
-      <main className="film-grain relative min-h-screen overflow-x-hidden bg-bg-base px-6 py-16">
+      <main className="film-grain relative min-h-screen overflow-x-hidden bg-black px-6 py-16">
+        {/* Letterbox bars — match the render-state register so the empty
+            state reads as the same room, not a different page. */}
         <motion.div
-          initial={{ scaleY: 0 }}
-          animate={{ scaleY: 1 }}
+          initial={{ scaleY: 0, opacity: 0 }}
+          animate={{ scaleY: 1, opacity: 1 }}
           transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
           className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[10vh] origin-top bg-black"
           aria-hidden="true"
         />
         <motion.div
-          initial={{ scaleY: 0 }}
-          animate={{ scaleY: 1 }}
+          initial={{ scaleY: 0, opacity: 0 }}
+          animate={{ scaleY: 1, opacity: 1 }}
           transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
           className="pointer-events-none fixed inset-x-0 bottom-0 z-40 h-[10vh] origin-bottom bg-black"
           aria-hidden="true"
         />
-        <section className="relative z-10 mx-auto flex min-h-screen max-w-[64rem] flex-col items-center justify-center gap-6 text-center">
-          <div className="font-body text-[12px] font-medium text-fg-tertiary">
+
+        <section className="relative z-10 mx-auto flex min-h-screen max-w-[64rem] flex-col items-center justify-center gap-7 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.2 }}
+            className="font-body text-[12px] font-medium text-fg-tertiary"
+          >
             Final delivery · Awaiting render
+          </motion.div>
+
+          {/* Headline + ambient ember sparkles drifting over it. The
+              SparkleField sits in a `relative` wrapper so its absolutely-
+              positioned dots pin to the headline area. Reads as a held
+              black frame waiting for the reel. */}
+          <div className="relative">
+            <SparkleField count={10} className="text-brand-ember/70" />
+            <motion.h1
+              initial={{ opacity: 0, y: 24 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn, delay: 0.3 }}
+              className="font-display text-display-lg italic leading-[1.05] text-fg-primary"
+            >
+              The cinematic isn't rendered yet.
+            </motion.h1>
           </div>
-          <h1 className="font-display text-display-lg italic text-fg-primary">
-            The cinematic isn't rendered yet.
-          </h1>
-          <p className="max-w-prose font-display italic text-[1.125rem] leading-[1.45] text-fg-secondary">
-            Approve every take on <em>the</em> canvas, then stitch the cut.
-            Final delivery opens once <em>the</em> render lands.
-          </p>
-          <Button
-            size="lg"
-            variant="primary"
-            onClick={() => navigate("/canvas")}
+
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.55 }}
+            className="max-w-prose font-display italic text-[1.125rem] leading-[1.45] text-fg-secondary"
+          >
+            Approve every take on <em>the</em> canvas, then stitch the cut. Final
+            delivery opens <em>the</em> moment the render lands.
+          </motion.p>
+
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.7 }}
             className="mt-3"
           >
-            Continue from canvas
-            <ArrowRight size={16} strokeWidth={1.5} aria-hidden="true" />
-          </Button>
+            <Button size="lg" variant="primary" onClick={() => navigate("/canvas")}>
+              Continue from canvas
+              <ArrowRight size={16} strokeWidth={1.5} aria-hidden="true" />
+            </Button>
+          </motion.div>
         </section>
       </main>
     </MotionConfig>

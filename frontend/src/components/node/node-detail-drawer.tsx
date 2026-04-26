@@ -25,6 +25,13 @@ export function NodeDetailDrawer() {
 
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
+  // ISO timestamp from the backend status response — survives drawer
+  // close/reopen so the GenerationPanel's elapsed time is the TRUE
+  // elapsed (Date.now() - startedAt) rather than restarting from drawer
+  // mount. Captured on the first /api/status call after mount and on
+  // every poll thereafter; stale values are fine because the wallclock
+  // calculation only depends on the timestamp identity.
+  const [startedAt, setStartedAt] = useState<string | null>(null);
   // Set to true on unmount; the polling loop checks each iteration so an
   // orphaned poll can't write to a stale beat after the drawer closes.
   const cancelRef = useRef(false);
@@ -57,6 +64,11 @@ export function NodeDetailDrawer() {
         if (cancelRef.current) return;
         const status = await api.status(jobId);
         if (cancelRef.current) return;
+        // First status response with a startedAt locks our elapsed-time
+        // source. Backend value wins over drawer-mount time.
+        if (status.startedAt) {
+          setStartedAt((prev) => prev ?? status.startedAt!);
+        }
         if (status.status === "succeeded") {
           updateScene(beatId, sceneId, {
             jobId,
@@ -81,6 +93,7 @@ export function NodeDetailDrawer() {
     if (!scene.refinedPrompt) return;
     setGenError(null);
     setProvider(null);
+    setStartedAt(null);
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
@@ -109,7 +122,7 @@ export function NodeDetailDrawer() {
   //
   // We try to decode the provider from the jobId's `provider::id` prefix
   // for the badge ("Vertex AI · Veo"); falls back to null if the format
-  // changes.
+  // changes or the prefix doesn't match a real provider.
   const beatId = beat?.beatId;
   const sceneId = beat?.scenes[0]?.sceneId;
   const persistedJobId = beat?.scenes[0]?.jobId;
@@ -118,7 +131,15 @@ export function NodeDetailDrawer() {
     if (!beatId || !sceneId || !persistedJobId || !isGeneratingStatus) return;
     setGenError(null);
     const decoded = persistedJobId.split("::")[0];
-    if (decoded && decoded !== "mock") {
+    const KNOWN_PROVIDERS: readonly GenerationProvider[] = [
+      "vertex",
+      "higgsfield",
+      "kling",
+      "fal",
+      "replicate",
+      "cached",
+    ];
+    if (decoded && (KNOWN_PROVIDERS as readonly string[]).includes(decoded)) {
       setProvider(decoded as GenerationProvider);
     }
     pollUntilDone(persistedJobId, beatId, sceneId, 1500).catch((err) => {
@@ -215,6 +236,14 @@ export function NodeDetailDrawer() {
             <GenerationPanel
               suggestedDurationSeconds={beat.archetype.suggestedDuration}
               provider={provider}
+              startedAt={startedAt}
+              onCancel={() => {
+                cancelRef.current = true;
+                setStartedAt(null);
+                setProvider(null);
+                setGenError(null);
+                updateBeat(beat.beatId, { status: "ready-to-generate" });
+              }}
             />
           ) : isPreview ? (
             <ClipPreview beat={beat} />
@@ -287,15 +316,22 @@ export function NodeDetailDrawer() {
                 });
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               };
+              // Promoted from a tertiary ghost to a Button-styled CTA so
+              // users always see they can break out of the conversation
+              // loop. The agent requires 3+ user turns before it'll mark
+              // sufficient on its own; without an obvious escape hatch
+              // users were getting stuck answering questions forever.
               return (
-                <button
-                  type="button"
+                <Button
+                  size="lg"
+                  variant="ghost"
+                  className="w-full justify-center border-brand-ember/55 text-fg-primary hover:bg-brand-ember/10 hover:text-brand-ember"
                   onClick={lockIn}
-                  className="block w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-2/30 px-4 py-2.5 font-body text-[12.5px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
-                  aria-label="Lock in answers and prepare to generate"
+                  aria-label="I have enough — lock it in and prepare to generate"
                 >
-                  I have enough — lock it in
-                </button>
+                  <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
+                  <span className="font-body text-[13px] font-medium">I have enough — generate</span>
+                </Button>
               );
             })()}
           </motion.footer>

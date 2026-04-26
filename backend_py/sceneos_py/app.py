@@ -48,10 +48,8 @@ app.add_middleware(
 )
 
 
-# ── /mock — serves mock_frontend/ for same-origin agent visualization ───────
-_MOCK_FRONTEND = Path(__file__).resolve().parents[2] / "mock_frontend"
-if _MOCK_FRONTEND.is_dir():
-    app.mount("/mock", StaticFiles(directory=str(_MOCK_FRONTEND), html=True), name="mock_frontend")
+# /mock mount removed (Tier 3): the mock_frontend visualization was a
+# dev artifact tied to the deprecated mock layer. Real backend only.
 
 
 @app.exception_handler(HTTPException)
@@ -71,14 +69,15 @@ def root():
     return {
         "name": "sceneos-backend-py",
         "status": "ok",
-        "mock": mock_mode(),
         "docs": "see docs/BACKEND_ARCHITECTURE.md",
     }
 
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mockMode": mock_mode()}
+    # mockMode field intentionally removed — Tier 3 deprecated the mock
+    # layer; the frontend chip that read this field is gone too.
+    return {"status": "ok"}
 
 
 # ── /api/agent ──────────────────────────────────────────────────────────────
@@ -578,6 +577,12 @@ async def status(job_id: str):
             response["lastFrameUrl"] = last_frame_url(result["clipPublicId"])
     if result.get("error"):
         response["error"] = result["error"]
+    # Propagate provider's job-creation timestamp so the frontend's
+    # GenerationPanel can compute REAL elapsed time across drawer
+    # close/reopen cycles. Only Vertex tracks this today; other providers
+    # may add support and the field will flow through transparently.
+    if result.get("startedAt"):
+        response["startedAt"] = result["startedAt"]
     return response
 
 

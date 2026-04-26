@@ -82,11 +82,10 @@ export function EditorAgentPanel({
         "shadow-[0_30px_60px_-24px_rgba(0,0,0,0.6),_0_0_0_1px_rgba(240,168,104,0.04)]",
       )}
     >
-      {/* Header */}
-      <header className="space-y-2 border-b border-fg-tertiary/15 px-5 pb-4 pt-5">
-        <div className="font-body text-[12px] font-medium text-fg-tertiary">
-          Editor · Director voice
-        </div>
+      {/* Header — single Fraunces line. The "Editor · Director voice"
+          eyebrow was redundant with the route header; the panel's
+          content speaks for itself. */}
+      <header className="border-b border-fg-tertiary/15 px-5 pb-4 pt-5">
         <h2 className="font-display text-2xl italic leading-tight text-fg-primary">
           {committed ? "Locked." : "What do you want to refine?"}
         </h2>

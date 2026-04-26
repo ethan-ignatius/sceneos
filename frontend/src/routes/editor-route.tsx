@@ -1,23 +1,24 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Loader2, RefreshCw, LogOut } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Loader2,
+  RefreshCw,
+  LogOut,
+  Copy,
+  Check,
+  ExternalLink,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VideoPlayer } from "@/components/ui/video-player";
-import { EditorTimeline } from "@/components/editor/editor-timeline";
 import { EditorAgentPanel } from "@/components/editor/editor-agent-panel";
-import { EditorToolbar } from "@/components/editor/editor-toolbar";
-import { EditorClipDetail } from "@/components/editor/editor-clip-detail";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { api, ApiError } from "@/lib/api";
 import { nowISO } from "@/lib/utils";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
-import type {
-  EditClipDecision,
-  EditDecisions,
-  EditorTurnResponse,
-} from "@/types/api";
-import type { BeatMood } from "@/types/manifest";
+import type { EditDecisions, EditorTurnResponse } from "@/types/api";
 import { toast } from "sonner";
 
 /**
@@ -25,21 +26,27 @@ import { toast } from "sonner";
  *
  * Layout (lg):
  *   ┌──────────────────────────────────────┬───────────────────┐
+ *   │ Header (Save & exit · Back · Ship)                       │
+ *   ├──────────────────────────────────────┬───────────────────┤
  *   │ Preview (Cloudinary live URL)         │ Director chat     │
- *   │                                       │                   │
- *   │ Timeline (drag handles to trim)       │                   │
- *   │ Selected-clip detail · Toolbar        │                   │
+ *   │ ── live URL strip ──                  │ (the only edit    │
+ *   │                                       │  surface)         │
  *   └──────────────────────────────────────┴───────────────────┘
+ *
+ * Architecture: agent-led. The director conversation IS the editor —
+ * the user proposes a refinement in chat, the agent emits a kind:"propose"
+ * with a new EditDecisions, and Apply edit re-bakes via /api/editor/apply.
+ * No timeline scrubber, no per-clip detail panel, no global toolbar — those
+ * were the NLE chrome we explicitly cut to keep the register cinematic and
+ * the demo legible in 60 seconds.
  *
  * State flow:
  *   1. Mount → /api/editor/init seeds decisions + a baked Cloudinary URL.
- *   2. Any decisions change (manual or accepted from agent) re-bakes via /api/editor/apply.
- *      The baked URL feeds the <video> preview.
- *   3. User chats → /api/editor/turn → agent returns a propose|commit.
- *      We DO NOT auto-apply proposals — the user must accept (so the cut
- *      doesn't change under their feet). Follow-up suggestions are shortcut
- *      messages that send a user reply.
- *   4. Commit → /final.
+ *   2. User chats → /api/editor/turn → agent returns propose|commit.
+ *      Proposals are advisory; "Apply edit" queues a re-bake.
+ *   3. handleAcceptProposal → queueBake → /api/editor/apply → finalUrl
+ *      refreshes the preview.
+ *   4. Ship the cut → setFinalCinematic → navigate /final.
  */
 export function EditorRoute() {
   const navigate = useNavigate();
@@ -56,10 +63,12 @@ export function EditorRoute() {
 
   // Dev shortcut: ?seed=demo auto-populates an approved 3-beat manifest so the
   // editor can be tested without walking the full landing → canvas flow.
-  // Mock-clip publicIds resolve against Cloudinary's public `demo` cloud.
+  // Demo-cloud publicIds resolve against Cloudinary's public `demo` cloud.
+  // Gated behind import.meta.env.DEV so production never auto-approves.
   const seedRef = useRef(false);
   useEffect(() => {
     if (seedRef.current) return;
+    if (!import.meta.env.DEV) return;
     if (searchParams.get("seed") !== "demo") return;
     seedRef.current = true;
     initialize({
@@ -94,7 +103,7 @@ export function EditorRoute() {
   const [thinking, setThinking] = useState(false);
   const [baking, setBaking] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [urlCopied, setUrlCopied] = useState(false);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -103,16 +112,6 @@ export function EditorRoute() {
       mountedRef.current = false;
     };
   }, []);
-
-  // Beat metadata for the timeline labels (mood tint, beat name).
-  const beatLabels = useMemo(() => {
-    const out: Record<string, { name: string; mood: BeatMood }> = {};
-    if (!manifest) return out;
-    for (const b of manifest.beats) {
-      out[b.beatId] = { name: b.beatName, mood: b.archetype.mood };
-    }
-    return out;
-  }, [manifest]);
 
   // Boot — seed editor decisions + first baked URL on mount, once.
   useEffect(() => {
@@ -258,20 +257,9 @@ export function EditorRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor.decisions, editor.finalUrl]);
 
-  // ── Manual edit handlers ─────────────────────────────────────────────
-  const handlePatchClip = (idx: number, patch: Partial<EditClipDecision>) => {
-    if (!editor.decisions) return;
-    const next: EditDecisions = {
-      ...editor.decisions,
-      clips: editor.decisions.clips.map((c, i) => (i === idx ? { ...c, ...patch } : c)),
-    };
-    queueBake(next);
-  };
-
-  const handlePatchGlobal = (patch: Partial<EditDecisions>) => {
-    if (!editor.decisions) return;
-    queueBake({ ...editor.decisions, ...patch });
-  };
+  // ── Agent-driven edit handlers ───────────────────────────────────────
+  // No manual per-clip or global edit handlers any more — the agent emits
+  // proposals; Apply edit is the only path that mutates EditDecisions.
 
   const handleAcceptProposal = () => {
     if (!latest || latest.kind !== "propose") return;
@@ -338,7 +326,7 @@ export function EditorRoute() {
         <header className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between md:gap-4">
           <div className="space-y-2">
             <div className="font-body text-[12px] font-medium text-fg-tertiary">
-              Editor · Cloudinary
+              Editing room · stitched by Cloudinary
             </div>
             <motion.h1
               initial={{ opacity: 0, y: 8 }}
@@ -380,10 +368,14 @@ export function EditorRoute() {
           </div>
         ) : null}
 
-        {/* Main grid: preview + chat */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <section className="space-y-6">
-            {/* Preview */}
+        {/* Main grid: preview hero + agent rail. The agent IS the editor —
+            timeline, per-clip detail, and global toolbar were removed. The
+            user proposes edits in chat; "Apply edit" re-bakes the URL. */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
+          <section className="space-y-5">
+            {/* Cinematic preview frame — letterbox-flavored, ember-tinted
+                hairline border, soft shadow. The video carries the moment;
+                everything around it stays out of its way. */}
             <div className="relative overflow-hidden rounded-md border border-fg-tertiary/15 bg-black shadow-[0_30px_60px_-24px_rgba(0,0,0,0.7)]">
               {editor.finalUrl ? (
                 <VideoPlayer
@@ -394,8 +386,8 @@ export function EditorRoute() {
                   muted
                 />
               ) : (
-                <div className="flex h-[28rem] items-center justify-center font-display text-[15px] italic text-fg-tertiary">
-                  Loading the cut.
+                <div className="flex aspect-video items-center justify-center bg-gradient-to-br from-bg-elev-2 to-black font-display text-[15px] italic text-fg-tertiary">
+                  Composing the cut.
                 </div>
               )}
               <AnimatePresence>
@@ -408,53 +400,62 @@ export function EditorRoute() {
                     className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-bg-base/80 px-3.5 py-1.5 font-body text-[11.5px] font-medium text-fg-tertiary backdrop-blur"
                   >
                     <RefreshCw size={11} strokeWidth={1.5} className="animate-spin" />
-                    Re-baking transform
+                    Re-baking the cut
                   </motion.div>
                 ) : null}
               </AnimatePresence>
             </div>
 
-            {/* Timeline */}
-            {editor.decisions ? (
-              <EditorTimeline
-                decisions={editor.decisions}
-                beatLabels={beatLabels}
-                selectedIndex={selectedIdx}
-                onSelectClip={(i) => setSelectedIdx(i === selectedIdx ? null : i)}
-                onPatchClip={handlePatchClip}
-              />
-            ) : (
-              <div className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary">
-                <Loader2 size={12} className="animate-spin" />
-                Loading timeline.
-              </div>
-            )}
-
-            {/* Selected clip detail + global toolbar — two columns on lg */}
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {editor.decisions && selectedIdx !== null ? (
-                <EditorClipDetail
-                  index={selectedIdx}
-                  label={beatLabels[editor.decisions.clips[selectedIdx].beatId ?? ""]?.name ?? `Beat ${selectedIdx + 1}`}
-                  clip={editor.decisions.clips[selectedIdx]}
-                  onPatch={(p) => handlePatchClip(selectedIdx, p)}
-                  onClose={() => setSelectedIdx(null)}
-                />
-              ) : (
-                <div className="rounded-md border border-dashed border-fg-tertiary/20 bg-bg-elev-1/40 p-4 font-body text-[13px] text-fg-tertiary">
-                  Click a beat on the timeline to refine its trim, transition, and caption.
-                </div>
-              )}
-              {editor.decisions ? (
-                <EditorToolbar decisions={editor.decisions} onPatch={handlePatchGlobal} />
-              ) : null}
-            </div>
-
-            {/* Cloudinary URL — shown like the stitch tray's URL strip, for the demo viewer */}
+            {/* Live Cloudinary URL — the artifact. The agent's edits write
+                directly to this URL via /api/editor/apply; copying it is
+                the user's takeaway from /edit. Track-hero treatment: mono
+                body, ember tail, copy + open-in-new-tab affordances. */}
             {editor.finalUrl ? (
               <section className="space-y-2">
-                <div className="font-body text-[12px] font-medium text-fg-tertiary">
-                  Final delivery URL · regenerated on every change
+                <div className="flex items-baseline justify-between">
+                  <span className="font-body text-[12px] font-medium text-fg-secondary">
+                    Master cut · live URL
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!editor.finalUrl) return;
+                        try {
+                          await navigator.clipboard.writeText(editor.finalUrl);
+                          setUrlCopied(true);
+                          window.setTimeout(() => setUrlCopied(false), 1400);
+                          toast.success("Master cut URL copied.");
+                        } catch {
+                          toast.error("Couldn't reach the clipboard.");
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+                      aria-label="Copy master cut URL"
+                    >
+                      {urlCopied ? (
+                        <>
+                          <Check size={11} strokeWidth={2} className="text-brand-ember" aria-hidden="true" />
+                          <span className="text-brand-ember">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
+                          Copy
+                        </>
+                      )}
+                    </button>
+                    <a
+                      href={editor.finalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+                      aria-label="Open master cut URL in a new tab"
+                    >
+                      <ExternalLink size={11} strokeWidth={1.5} aria-hidden="true" />
+                      Open
+                    </a>
+                  </div>
                 </div>
                 <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
                   {editor.finalUrl}
@@ -463,7 +464,8 @@ export function EditorRoute() {
             ) : null}
           </section>
 
-          {/* Right column — agent panel */}
+          {/* Right column — agent panel. Only edit surface; sticky on lg
+              so the chat stays in view as the URL strip scrolls below. */}
           <div className="lg:sticky lg:top-10 lg:h-[calc(100vh-5rem)]">
             <EditorAgentPanel
               conversation={editor.conversation}

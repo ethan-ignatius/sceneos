@@ -730,8 +730,9 @@ function GuidedTargetOverlay({
         position={[0, 1.85, 0]}
         // pointerEvents:auto — clicking the pill arcs the camera into
         // the planet via setActiveBeat, same path as clicking the orb.
-        // The pill is the visual cue; making it clickable closes the
-        // loop between "you are here" and "take me there."
+        // pointer-events-auto is also re-asserted on the inner wrapper
+        // because drei's portal sometimes inherits a none from the
+        // canvas's container; double-asserting is cheap insurance.
         style={{ pointerEvents: "auto" }}
         // Range [9, 8] sits above the floating beat labels (z-8) but
         // BELOW every chrome layer — the persistent URL strip (z-10),
@@ -744,14 +745,26 @@ function GuidedTargetOverlay({
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
-          className="flex select-none flex-col items-center gap-0.5"
+          // Re-assert pointer-events-auto so the click reliably reaches
+          // React even if a parent set pointer-events:none (drei sometimes
+          // does on the outer Html wrapper in certain configurations).
+          className="pointer-events-auto flex select-none flex-col items-center gap-0.5"
         >
           <button
             type="button"
-            onClick={onActivate}
+            onPointerDown={(e) => {
+              // Use onPointerDown not onClick so the activation lands on
+              // the press itself, not on the up-event — avoids "I clicked
+              // and it didn't take" when a tiny pixel drift cancels the
+              // synthetic click. stopPropagation prevents the canvas's
+              // onPointerMissed from interpreting this as a click on
+              // empty space (which would deselect the beat we just set).
+              e.stopPropagation();
+              onActivate?.();
+            }}
             aria-label="Take me to this beat"
             title="Take me there"
-            className="caption-track group whitespace-nowrap rounded-full border border-brand-ember/35 bg-bg-base/70 px-2.5 py-1 text-[9.5px] text-brand-ember backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-200 ease-out hover:border-brand-ember/65 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+            className="caption-track pointer-events-auto group whitespace-nowrap rounded-full border border-brand-ember/35 bg-bg-base/70 px-2.5 py-1 text-[9.5px] text-brand-ember backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-200 ease-out hover:border-brand-ember/65 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
             style={{
               boxShadow: "0 0 18px rgba(240,168,104,0.22), inset 0 0 0 1px rgba(240,168,104,0.08)",
               textShadow: "0 1px 12px rgba(0,0,0,0.85)",
