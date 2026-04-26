@@ -1,7 +1,7 @@
 """
-SceneOS Python backend. FastAPI surface, mirrors the TS Hono backend
-in `backend/`. Provider dispatch, mock-mode branches, real Anthropic
-agent + decomposer, Cloudinary fl_splice URL builder, CutOS handoff.
+SceneOS Python backend. FastAPI surface. Provider dispatch, mock-mode
+branches, Vertex Gemini agent + decomposer, Cloudinary fl_splice URL
+builder, CutOS handoff. Vertex Gemini is the only LLM SceneOS uses.
 """
 from __future__ import annotations
 

@@ -25,6 +25,11 @@ class GenerateClipParams(TypedDict, total=False):
     beatId: str
     sceneId: str
     startImageUrl: str | None
+    # 1-5 reference image URLs for cross-frame consistency. Higgsfield
+    # treats this as Soul mode (multi-character/location ref); Vertex Veo
+    # currently ignores it (single-frame seed only). Providers that don't
+    # support it just drop the field.
+    referenceImageUrls: list[str] | None
 
 
 class StatusResult(TypedDict, total=False):
@@ -77,7 +82,9 @@ def _autodetect_default_provider() -> GenerationProvider:
     project_id = env("GOOGLE_PROJECT_ID") or env("GCP_PROJECT_ID")
     if project_id and env("GOOGLE_APPLICATION_CREDENTIALS"):
         return "vertex"
-    if env("HIGGSFIELD_API_KEY") and env("HIGGSFIELD_API_SECRET"):
+    # Public Higgsfield API uses a single bearer key — the legacy secret
+    # is no longer required (see higgsfield.py docstring).
+    if env("HIGGSFIELD_API_KEY"):
         return "higgsfield"
     return "cached"
 

@@ -1,6 +1,6 @@
 # SceneOS — Backend
 
-FastAPI on Python 3.11+. Thin orchestration layer over Higgsfield / Vertex AI Veo / Kling / fal / Replicate (video gen, switchable via `GENERATION_PROVIDER`), Cloudinary (media + `fl_splice` URL build), and CutOS (optional editor handoff). Agent + decomposer use Anthropic Claude (direct API or via Vertex AI).
+FastAPI on Python 3.11+. Thin orchestration layer over Higgsfield / Vertex AI Veo / Kling / fal / Replicate (video gen, switchable via `GENERATION_PROVIDER`), Cloudinary (media + `fl_splice` URL build), and CutOS (optional editor handoff). Agent + decomposer use Vertex Gemini 2.5. Anthropic was removed — Vertex Gemini is the only LLM SceneOS uses.
 
 > **Architecture spec lives in [`../docs/BACKEND_ARCHITECTURE.md`](../docs/BACKEND_ARCHITECTURE.md). Read that first.**
 
@@ -40,8 +40,19 @@ Full request/response shapes: [`../docs/SHARED_TYPES.md`](../docs/SHARED_TYPES.m
 ```
 sceneos_py/
 ├── app.py                  # FastAPI app, route mounting, error envelope
-├── agent.py                # questionnaire (askQuestion/markSufficient tool pattern)
-├── decompose.py            # one-shot Anthropic decompose with mood-cue stub fallback
+├── agent/                  # questionnaire submodule (Gemini dispatch + tool surface)
+│   ├── __init__.py         # public re-exports (run_agent_turn, etc.)
+│   ├── _constants.py       # tier-aware question caps, thinking budgets
+│   ├── context.py          # mode + earlier/later beats blocks for the prompt
+│   ├── gemini.py           # Vertex Gemini dispatch (non-streaming + streaming)
+│   ├── messages.py         # Gemini message + config builder
+│   ├── normalizer.py       # tool-call → AgentResponse shape
+│   ├── prompt.py           # system prompt composition
+│   ├── repair.py           # _repair_question_if_redundant defense-in-depth
+│   ├── stub.py             # deterministic fallback when no Gemini client
+│   └── tools.py            # askQuestion + markSufficient tool schemas
+├── decompose.py            # one-shot Vertex Gemini decompose w/ mood-cue stub fallback
+├── editor.py               # Stage 7 editor agent + edit-decisions baker
 ├── provider.py             # generation provider dispatcher (vertex/higgsfield/fal/...)
 ├── vertex_veo.py           # Google Cloud Vertex AI Veo
 ├── higgsfield.py           # Higgsfield text-to-image -> image-to-video
@@ -52,7 +63,6 @@ sceneos_py/
 ├── mock.py                 # mock agent + clips + cutos + jobIds
 ├── cloudinary.py           # fl_splice URL build, signing, upload, color grades
 ├── beat_templates.py       # archetype data
-├── anthropic_client.py     # Vertex / direct API routing for Claude
 ├── sufficiency.py          # facet coverage scoring for the agent
 ├── jobs.py                 # in-memory Higgsfield job registry
 └── config.py               # env loader (.env or .env.mock)

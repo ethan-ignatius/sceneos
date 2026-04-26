@@ -61,8 +61,19 @@ export function LandingRoute() {
     if (next !== videoType) setVideoType(next);
   }, [draft, videoTypeUserPicked, videoType, setVideoType]);
 
-  // Voice — Web Speech API, opt-in via the mic affordance inside the input.
+  // Voice — Web Speech API. Auto-starts on mount so the user can speak
+  // their idea without reaching for the mic button. The button then
+  // serves as a MUTE control — only mouse action needed is to silence
+  // it. Falls back gracefully if unsupported (Firefox).
   const speech = useSpeechRecognition({ lang: "en-US" });
+  const autoStartedMicRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedMicRef.current) return;
+    if (!speech.supported) return;
+    if (speech.listening) return;
+    autoStartedMicRef.current = true;
+    speech.start();
+  }, [speech.supported, speech.listening, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) setDraft(speech.transcript);
   }, [speech.listening, speech.transcript]);

@@ -37,7 +37,10 @@ def _has_vertex_creds() -> bool:
 
 
 def _has_higgsfield_creds() -> bool:
-    return bool(os.getenv("HIGGSFIELD_API_KEY") and os.getenv("HIGGSFIELD_API_SECRET"))
+    """The public Higgsfield API uses a single bearer key. The legacy
+    platform.higgsfield.ai endpoint required a key+secret pair; we no
+    longer call that surface, so the secret is optional."""
+    return bool(os.getenv("HIGGSFIELD_API_KEY"))
 
 
 def mock_mode() -> bool:

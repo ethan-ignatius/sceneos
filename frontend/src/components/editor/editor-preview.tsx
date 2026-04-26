@@ -206,11 +206,12 @@ export function EditorPreview({
       <div className="relative overflow-hidden border border-fg-tertiary/15 bg-black">
         <video
           ref={videoRef}
-          src={src}
+          src={src || undefined}
           autoPlay
           muted
           playsInline
           loop
+          preload="auto"
           controls={false}
           onClick={togglePlay}
           className="block aspect-video w-full cursor-pointer object-cover"
@@ -219,6 +220,42 @@ export function EditorPreview({
           <div className="absolute right-3 top-3 inline-flex items-center gap-1.5 bg-bg-base/80 px-2.5 py-1 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary backdrop-blur">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-ember" />
             {bakingCaption}
+          </div>
+        ) : null}
+        {/* Tap-to-play hint on autoplay-block. Sits on top of the frame
+            so the user has an obvious next step instead of a frozen frame. */}
+        {autoplayBlocked && !loadError ? (
+          <button
+            type="button"
+            onClick={togglePlay}
+            aria-label="Tap to play"
+            className="absolute inset-0 grid place-items-center bg-bg-base/30 backdrop-blur-[1px] transition-colors hover:bg-bg-base/45"
+          >
+            <span className="grid h-16 w-16 cursor-pointer place-items-center rounded-full bg-bg-base/55 ring-1 ring-brand-ember/40">
+              <Play size={22} strokeWidth={1.5} fill="currentColor" className="ml-0.5 text-brand-ember" aria-hidden="true" />
+            </span>
+          </button>
+        ) : null}
+        {/* Load-error overlay — covers the frame with a non-cinematic
+            message + Retry. Bumps reloadCount to re-run load() against
+            the same src; clears on success. */}
+        {loadError ? (
+          <div role="alert" className="absolute inset-0 grid place-items-center bg-bg-base/85 backdrop-blur-md">
+            <div className="flex max-w-[80%] flex-col items-center gap-3 text-center">
+              <AlertCircle size={20} strokeWidth={1.5} className="text-state-error" aria-hidden="true" />
+              <p className="font-body text-pill leading-snug text-fg-secondary">{loadError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadError(null);
+                  setReloadCount((n) => n + 1);
+                }}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-fg-tertiary/30 px-3 py-1.5 font-body text-pill font-medium text-fg-primary transition-colors hover:border-brand-ember/60 hover:text-brand-ember"
+              >
+                <RotateCcw size={11} strokeWidth={1.5} aria-hidden="true" />
+                Retry
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

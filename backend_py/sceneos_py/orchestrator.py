@@ -390,6 +390,20 @@ async def run_beat_pipeline(
     if seed_image_url:
         gen_params["startImageUrl"] = seed_image_url
 
+    # Reference image URLs — Higgsfield's Soul mode reads these as
+    # multi-anchor consistency refs (1-5). Pass character + location refs
+    # whenever they're real (not stub/degraded). Vertex Veo's path drops
+    # the field; Higgsfield uses it to keep the protagonist's face stable
+    # across all beats without us having to chain last-frames.
+    reference_urls: list[str] = []
+    for ref in (character_ref, location_ref):
+        if _ref_is_real(ref):
+            url = ref.get("imageUrl")
+            if isinstance(url, str) and url and url not in reference_urls:
+                reference_urls.append(url)
+    if reference_urls:
+        gen_params["referenceImageUrls"] = reference_urls[:5]
+
     # Live-demo safety net: if the active provider rejects the request
     # (quota, network, safety), auto-fall-back to the cached tier and
     # surface fallbackReason to the frontend so the visualizer can show

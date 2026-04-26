@@ -8,13 +8,30 @@ import { ClipPreview } from "./clip-preview";
 import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
-import { sleep } from "@/lib/utils";
+import { nowISO, sleep } from "@/lib/utils";
 import type { GenerationProvider } from "@/types/api";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 8 },
   visible: { opacity: 1, y: 0 },
 };
+
+/**
+ * Detect Veo's safety-filter / content-policy rejection. Matches the
+ * actual error string Vertex returns ("violated Vertex AI's usage
+ * guidelines", "Support codes: NNNNNN", "filtered the output"). When
+ * this fires, we kick the beat back into questioning so the agent can
+ * help the user rephrase — softly, no manual retry button.
+ */
+function isContentPolicyError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("usage guidelines") ||
+    m.includes("support codes") ||
+    (m.includes("filtered") && m.includes("veo")) ||
+    m.includes("violated vertex ai")
+  );
+}
 
 export function NodeDetailDrawer() {
   const beat = useBeatGraphStore(selectActiveBeat);
@@ -23,6 +40,7 @@ export function NodeDetailDrawer() {
   const setStitchTrayOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
   const updateBeat = useBeatGraphStore((s) => s.updateBeat);
   const updateScene = useBeatGraphStore((s) => s.updateScene);
+  const appendAgentTurn = useBeatGraphStore((s) => s.appendAgentTurn);
 
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
@@ -106,6 +124,41 @@ export function NodeDetailDrawer() {
     [updateBeat, updateScene],
   );
 
+  // Veo content-policy recovery. Veo refuses some prompts (real-violence,
+  // explicit, named-person, etc.); the user can't be expected to know the
+  // safety surface up front. Instead: clear the stale generation state,
+  // bounce the beat back to questioning, and seed the conversation with
+  // an agent turn explaining what happened so the user keeps refining
+  // until Veo accepts. They never see a dead-end "render failed" wall.
+  const handleContentPolicyRecovery = useCallback(
+    (beatId: string, sceneId: string) => {
+      setGenError(null);
+      setProvider(null);
+      setProviderStage(null);
+      setStartedAt(null);
+      setFallbackFrom(null);
+      // Wipe any clip / job state so the next render goes fresh once the
+      // user gives the agent something Veo can accept. The refinedPrompt
+      // gets cleared too — the previous one is what tripped the filter.
+      updateScene(beatId, sceneId, {
+        clipPublicId: undefined,
+        clipUrl: undefined,
+        lastFrameUrl: undefined,
+        jobId: undefined,
+        speculativeJobId: undefined,
+        refinedPrompt: undefined,
+      });
+      appendAgentTurn(beatId, sceneId, {
+        role: "agent",
+        content:
+          "Veo refused that frame for a content-policy reason. Tell me what you want this beat to feel like in different words — softer subject, less violence, no named people — and I'll re-pitch it.",
+        timestamp: nowISO(),
+      });
+      updateBeat(beatId, { status: "questioning" });
+    },
+    [updateBeat, updateScene, appendAgentTurn],
+  );
+
   const handleGoNext = useCallback(() => {
     if (!manifest || !beat) return;
     const idx = manifest.beats.findIndex((b) => b.beatId === beat.beatId);
@@ -149,8 +202,13 @@ export function NodeDetailDrawer() {
         await pollUntilDone(scene.speculativeJobId, beat.beatId, scene.sceneId, 1500);
       } catch (err) {
         if (cancelRef.current) return;
-        setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
-        updateBeat(beat.beatId, { status: "ready-to-generate" });
+        const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+        if (isContentPolicyError(msg)) {
+          handleContentPolicyRecovery(beat.beatId, scene.sceneId);
+        } else {
+          setGenError(msg);
+          updateBeat(beat.beatId, { status: "ready-to-generate" });
+        }
       }
       return;
     }
@@ -177,10 +235,15 @@ export function NodeDetailDrawer() {
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
-      setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
-      updateBeat(beat.beatId, { status: "ready-to-generate" });
+      const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+      if (isContentPolicyError(msg)) {
+        handleContentPolicyRecovery(beat.beatId, scene.sceneId);
+      } else {
+        setGenError(msg);
+        updateBeat(beat.beatId, { status: "ready-to-generate" });
+      }
     }
-  }, [beat, manifest, updateBeat, updateScene, pollUntilDone]);
+  }, [beat, manifest, updateBeat, updateScene, pollUntilDone, handleContentPolicyRecovery]);
 
   // Re-attach an in-flight Veo / Higgsfield poll when the drawer mounts
   // and the persisted manifest reports beat.status === "generating" with a

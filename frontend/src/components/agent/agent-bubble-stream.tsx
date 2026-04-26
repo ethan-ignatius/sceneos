@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Send, Loader2, RotateCcw, Mic, ImagePlus, X } from "lucide-react";
-import { toast } from "sonner";
+import { Send, Loader2, RotateCcw, Mic } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
 import { AgentBubble } from "./agent-bubble";
@@ -13,15 +12,6 @@ import { isAudioMuted } from "@/lib/audio-cues";
 import { nowISO } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { renderThoughtMarkdown } from "@/lib/render-thought-markdown";
-
-interface ImageRef {
-  id: string;
-  dataUri: string;
-  name: string;
-}
-
-const MAX_REF_BYTES = 4 * 1024 * 1024; // 4 MB
-const MAX_REFS = 4;
 
 interface AgentBubbleStreamProps {
   beat: Beat;
@@ -73,78 +63,24 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     readonly [string, string, string] | null
   >(null);
 
-  // Reference frames — drag-drop or file picker. Stored as dataUris in
-  // local component state and prefixed onto the userMessage with a marker
-  // (`[refs:N]`) the agent reads to acknowledge ("noted the reference
-  // frame, aiming for that mood"). The marker is the on-the-wire contract;
-  // moving to a structured `references: ImageRef[]` field on AgentRequest
-  // is a forward-compatible upgrade once the backend handles it natively.
-  const [imageRefs, setImageRefs] = useState<ImageRef[]>([]);
-  const [dragOver, setDragOver] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const ingestFiles = async (files: FileList | File[]) => {
-    const accepted: ImageRef[] = [];
-    let rejected = 0;
-    for (const f of Array.from(files)) {
-      if (!f.type.startsWith("image/")) {
-        rejected++;
-        continue;
-      }
-      if (f.size > MAX_REF_BYTES) {
-        rejected++;
-        continue;
-      }
-      try {
-        const dataUri = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error("read failed"));
-          reader.readAsDataURL(f);
-        });
-        accepted.push({
-          id: `${f.name}-${f.size}-${Date.now()}`,
-          dataUri,
-          name: f.name,
-        });
-      } catch {
-        rejected++;
-      }
-    }
-    if (rejected > 0) toast.error("Image only, 4 MB max.");
-    setImageRefs((prev) => [...prev, ...accepted].slice(0, MAX_REFS));
-    if (accepted.length > 0) toast.success(`Reference logged (${accepted.length}).`);
-  };
-
-  const removeRef = (id: string) => {
-    setImageRefs((prev) => prev.filter((r) => r.id !== id));
-  };
-
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragOver(false);
-    if (!e.dataTransfer.files.length) return;
-    void ingestFiles(e.dataTransfer.files);
-  };
-
-  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    if (!dragOver) setDragOver(true);
-  };
-
-  const onDragLeave = (e: DragEvent<HTMLDivElement>) => {
-    // Only clear when leaving the outer container, not on inner crossings.
-    if (e.currentTarget === e.target) setDragOver(false);
-  };
-
-  const onPickFiles = (e: ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.length) void ingestFiles(e.target.files);
-    e.target.value = ""; // allow re-selecting the same file
-  };
-
-  // Voice input — Web Speech API. While recording, transcript replaces draft;
-  // user can edit before submitting. Falls back gracefully if unsupported.
+  // Voice input — Web Speech API. Auto-starts on mount so the user
+  // doesn't reach for the mouse just to talk to the director; the only
+  // reason to touch the mic button is to MUTE it. While recording,
+  // transcript replaces draft; user can edit before submitting. Falls
+  // back gracefully if unsupported (e.g. Firefox).
   const speech = useSpeechRecognition({ lang: "en-US" });
+  // Auto-start once when the engine reports support. Re-running on
+  // `supported` covers the brief tick where the hook hydrates the
+  // browser-detect state. We deliberately don't restart after the user
+  // explicitly stops it — that would defeat the mute affordance.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    if (!speech.supported) return;
+    if (speech.listening) return;
+    autoStartedRef.current = true;
+    speech.start();
+  }, [speech.supported, speech.listening, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) {
       setDraft(speech.transcript);
@@ -360,32 +296,20 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = draft.trim();
-    // Allow refs-only submissions when no text has been typed yet.
-    if ((!trimmed && imageRefs.length === 0) || inFlight || !manifest) return;
+    if (!trimmed || inFlight || !manifest) return;
 
     if (speech.transcript && trimmed === speech.transcript.trim()) {
       lastSubmitWasVoiceRef.current = true;
     }
 
-    // Visible user-turn content includes a small ref tag the bubble can
-    // render. Backend gets a `[refs:N]` marker prefix so the agent can
-    // acknowledge the dropped frames in its next reply.
-    const refCount = imageRefs.length;
-    const refMarker = refCount > 0 ? `[refs:${refCount}] ` : "";
-    const visibleContent =
-      refCount > 0
-        ? `${trimmed}${trimmed ? " " : ""}— attached ${refCount} reference frame${refCount === 1 ? "" : "s"}`
-        : trimmed;
-
     appendAgentTurn(beat.beatId, scene.sceneId, {
       role: "user",
-      content: visibleContent,
+      content: trimmed,
       timestamp: nowISO(),
     });
     setDraft("");
-    setImageRefs([]);
     setLatestSuggestions(null);
-    await callAgent(`${refMarker}${trimmed}`);
+    await callAgent(trimmed);
   };
 
   const retry = async () => {
@@ -407,35 +331,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   };
 
   return (
-    <div
-      className="relative flex h-full flex-col"
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
-      {/* Drag-over overlay: invisible until a file is dragged over the
-          drawer. Communicates "drop here" without taking space at idle. */}
-      {dragOver ? (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-md border-2 border-dashed border-brand-ember/60 bg-brand-ember/5 backdrop-blur-sm"
-        >
-          <div className="font-body text-meta font-medium text-brand-ember">
-            Drop frames, mood, references.
-          </div>
-        </div>
-      ) : null}
-
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        onChange={onPickFiles}
-        className="sr-only"
-        aria-label="Add reference images"
-      />
-
+    <div className="relative flex h-full flex-col">
       {/* Conversation scroller — height-bounded so a long convo cannot
           push the input form off-viewport. The drawer body already has
           `overflow-hidden flex-1`, so `min-h-0` here is what actually
@@ -585,44 +481,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         ) : null}
       </AnimatePresence>
 
-      {/* Reference-frame thumbnail strip — appears above the input when
-          images have been dropped. Each thumb has an X to remove. */}
-      {imageRefs.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-fg-tertiary/30 pt-3">
-          {imageRefs.map((ref) => (
-            <div
-              key={ref.id}
-              className="group relative h-14 w-14 overflow-hidden rounded-md border border-brand-ember-dim/40"
-              title={ref.name}
-            >
-              <img
-                src={ref.dataUri}
-                alt={ref.name}
-                className="h-full w-full object-cover"
-                draggable={false}
-              />
-              <button
-                type="button"
-                onClick={() => removeRef(ref.id)}
-                aria-label={`Remove ${ref.name}`}
-                // Always-visible at low opacity so users discover it
-                // without hovering each thumbnail to find the X. Bumps
-                // to full on group hover.
-                className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-bg-base/85 text-fg-secondary opacity-70 transition-opacity group-hover:opacity-100 hover:text-fg-primary"
-              >
-                <X size={10} strokeWidth={1.5} />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       {/* Input row — every interactive element shares h-9 (36px) so the
-          form sits on a single horizontal baseline. Previously the input
-          had py-2 (~40px) and Send was size="sm" (h-8 / 32px) — the
-          baselines drifted by 4-8px depending on font metrics, visible
-          as the buttons floating above the input text. Now: input
-          h-9, image h-9, voice h-9, Send h-9. */}
+          form sits on a single horizontal baseline. Voice + Send only;
+          we removed the image-attach affordance because the user should
+          never need to hand the director reference frames — the prompt
+          + conversation is enough. */}
       <form onSubmit={submit} className="mt-3 flex items-center gap-2 border-t border-fg-tertiary/30 pt-3">
         <input
           value={draft}
@@ -637,28 +500,13 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           }
           className="h-9 flex-1 bg-transparent px-1 font-body text-sm leading-none text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
         />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={inFlight || imageRefs.length >= MAX_REFS}
-          aria-label="Attach reference frame"
-          title="Attach reference frame"
-          className={cn(
-            "grid h-9 w-9 place-items-center rounded-full border",
-            "transition-[border-color,background-color,color,opacity] duration-200 ease-out",
-            "border-fg-tertiary/40 text-fg-tertiary hover:border-fg-secondary hover:text-fg-primary",
-            (inFlight || imageRefs.length >= MAX_REFS) && "opacity-40 pointer-events-none",
-          )}
-        >
-          <ImagePlus size={14} strokeWidth={1.5} aria-hidden="true" />
-        </button>
         {speech.supported ? (
           <button
             type="button"
             onClick={toggleVoice}
             disabled={inFlight}
-            aria-label={speech.listening ? "Stop recording" : "Speak your reply"}
-            title={speech.listening ? "Stop recording" : "Speak your reply"}
+            aria-label={speech.listening ? "Mute mic" : "Unmute mic"}
+            title={speech.listening ? "Mute mic" : "Unmute mic"}
             className={cn(
               "grid h-9 w-9 place-items-center rounded-full border",
               "transition-[border-color,background-color,color,opacity] duration-200 ease-out",
@@ -678,7 +526,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         <Button
           type="submit"
           size="sm"
-          disabled={(!draft.trim() && imageRefs.length === 0) || inFlight}
+          disabled={!draft.trim() || inFlight}
           aria-label={inFlight ? "Sending message" : "Send message"}
           // Override size="sm" h-8 → h-9 so Send sits on the same
           // baseline as the round image / voice buttons.

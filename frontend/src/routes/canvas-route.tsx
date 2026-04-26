@@ -124,34 +124,56 @@ export function CanvasRoute() {
     };
   }, [manifest]);
 
-  // Auto-arc into the first unfinished beat ~2s after canvas mount, so
-  // the user lands on the overview, gets a breath to read the scene,
-  // then the camera glides into Earth (or whichever the first pending
-  // beat is) and the drawer opens. Fires once per fresh canvas entry —
-  // a `useRef` guard ensures Esc → overview → re-mount doesn't re-trigger
-  // it within the same component lifetime.
-  const autoArcFiredRef = useRef(false);
+  // Auto-advance through pending beats. Whenever the user is on the
+  // overview (no active beat, no stitch tray) and at least one beat is
+  // still pending, after a 2s breath the camera glides into the next
+  // pending beat and opens its drawer.
+  //
+  // Lifecycle:
+  //   - First mount → 2s breath → first pending beat opens.
+  //   - User approves a beat → drawer auto-closes (effect below) →
+  //     2s breath → next pending beat opens.
+  //   - User can hit Esc, click empty canvas, or click another beat to
+  //     break the loop; the next overview moment re-arms it.
+  //
+  // We only advance to beats whose status is "pending" or "questioning"
+  // — anything past "ready-to-generate" already has a clip in flight or
+  // approved, so re-opening it would feel like a regression.
   useEffect(() => {
-    if (autoArcFiredRef.current) return;
     if (!manifest) return;
-    if (activeBeatId) return; // user already chose a beat
+    if (activeBeatId) return; // drawer is already open
     if (stitchOpen) return; // stitch tray is open, hold off
-    const firstPending = manifest.beats.find(
+    const nextPending = manifest.beats.find(
       (b) => b.status === "pending" || b.status === "questioning",
     );
-    if (!firstPending) return; // every beat already past pending
-    autoArcFiredRef.current = true;
+    if (!nextPending) return; // every beat past pending — nothing to advance to
     const t = window.setTimeout(() => {
-      // Re-check: the user may have clicked something during the 2s wait.
+      // Re-check at fire time: the user may have clicked something
+      // during the 2s wait.
       const live = useBeatGraphStore.getState();
       if (live.activeBeatId || live.stitchTrayOpen) return;
-      setActiveBeat(firstPending.beatId);
+      setActiveBeat(nextPending.beatId);
     }, 2000);
     return () => window.clearTimeout(t);
-    // Dependencies are intentionally minimal — we only want this effect
-    // to evaluate on mount. The ref guard above blocks subsequent fires.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [manifest]);
+  }, [manifest, activeBeatId, stitchOpen, setActiveBeat]);
+
+  // Auto-close the drawer once the active beat is approved. Pairs with
+  // the auto-advance above: approve → 1.2s breath on the preview →
+  // drawer closes → 2s on the overview → next pending beat opens.
+  // The 1.2s lets the approval animation land before we whisk away.
+  useEffect(() => {
+    if (!manifest) return;
+    if (!activeBeatId) return;
+    const active = manifest.beats.find((b) => b.beatId === activeBeatId);
+    if (!active || active.status !== "approved") return;
+    const t = window.setTimeout(() => {
+      const live = useBeatGraphStore.getState();
+      // Bail if the user already navigated elsewhere themselves.
+      if (live.activeBeatId !== activeBeatId) return;
+      setActiveBeat(null);
+    }, 1200);
+    return () => window.clearTimeout(t);
+  }, [manifest, activeBeatId, setActiveBeat]);
 
   // Re-center: clear active beat AND fire the camera-reset event so
   // BeatMap3D zeros any pan offset. One operation, two effects.
