@@ -43,6 +43,67 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
 let _audio: HTMLAudioElement | null = null;
 const _cache = new Map<string, { text: string; audioSrc: string | null; durationSeconds: number }>();
 
+// Shared Web Audio plumbing for the narrator. Routing the
+// HTMLAudioElement through a MediaElementSource → GainNode → destination
+// lets us drive a gain > 1.0, which is what HTMLAudioElement.volume
+// can't do on its own (capped at 1.0). ElevenLabs' MP3 output is
+// pre-mastered at a moderate level — 1.0 was reading as "quiet"
+// against a 1080p background-video soundbed. 1.6x is the sweet spot:
+// audible over the hero loop without clipping the narrator's chest
+// register.
+let _audioCtx: AudioContext | null = null;
+let _gainNode: GainNode | null = null;
+const _connectedAudios = new WeakSet<HTMLAudioElement>();
+const NARRATOR_GAIN = 1.6;
+
+function _ensureAudioGraph(): GainNode | null {
+  if (typeof window === "undefined") return null;
+  if (_gainNode && _audioCtx) {
+    if (_audioCtx.state === "suspended") {
+      // Browsers gate AudioContext behind a user gesture. If we hit a
+      // "narrate now" moment before any click, the context is suspended
+      // — try to resume; if the gesture hasn't happened yet, the resume
+      // is a no-op until the next interaction. Either way, fall through
+      // and the HTMLAudio plays at its native level.
+      _audioCtx.resume().catch(() => {});
+    }
+    return _gainNode;
+  }
+  try {
+    const Ctx =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return null;
+    _audioCtx = new Ctx();
+    _gainNode = _audioCtx.createGain();
+    _gainNode.gain.value = NARRATOR_GAIN;
+    _gainNode.connect(_audioCtx.destination);
+    if (_audioCtx.state === "suspended") {
+      _audioCtx.resume().catch(() => {});
+    }
+    return _gainNode;
+  } catch {
+    return null;
+  }
+}
+
+function _attachAudioToGraph(audio: HTMLAudioElement): void {
+  if (_connectedAudios.has(audio)) return;
+  const gain = _ensureAudioGraph();
+  if (!gain || !_audioCtx) return;
+  try {
+    const src = _audioCtx.createMediaElementSource(audio);
+    src.connect(gain);
+    _connectedAudios.add(audio);
+  } catch {
+    // createMediaElementSource throws if the element is already wired
+    // OR cross-origin without CORS. ElevenLabs MP3s come as data: URIs
+    // in our path, so cross-origin isn't an issue, but the try/catch
+    // is here in case a future call site uses a remote URL — we'll
+    // just play through the audio element's native output at 1.0.
+  }
+}
+
 function _cacheKey(moment: NarrationMoment, beatId?: string): string {
   return beatId ? `${moment}:${beatId}` : moment;
 }
@@ -116,15 +177,60 @@ function _playAudio(
   _audio = audio;
   audio.volume = 1.0;
   audio.preload = "auto";
-  // Don't fight other media — narration is the priority voice in the
-  // canvas, so we don't auto-duck (frontend has its own video volume).
-  audio.onended = () => setStatus("done");
-  audio.onerror = () => setStatus("error");
-  audio.oncanplaythrough = () => {
-    if (_audio !== audio) return; // stopped while loading
-    setStatus("playing");
-    audio.play().catch(() => setStatus("error"));
+  // crossOrigin="anonymous" so createMediaElementSource doesn't taint
+  // the audio when the src is a data:audio/mpeg URI (it doesn't, but
+  // setting it explicitly future-proofs against a switch to remote
+  // audioUrl from the backend).
+  audio.crossOrigin = "anonymous";
+
+  // Single play-trigger so we never call audio.play() twice. The
+  // timer is the safety net if the canplay/canplaythrough events
+  // are throttled by the browser (some Safari paths) — without it
+  // the user heard nothing.
+  let started = false;
+  let timer: number | null = null;
+  const clearTimer = () => {
+    if (timer != null) {
+      window.clearTimeout(timer);
+      timer = null;
+    }
   };
+  const tryStart = () => {
+    clearTimer();
+    if (started) return;
+    if (_audio !== audio) return; // stopped while loading
+    started = true;
+    setStatus("playing");
+    // Plug into the gain graph the FIRST time we play. Has to happen
+    // before play() so the audio routes through the gain node from the
+    // first sample — connecting it after play() can clip the head.
+    _attachAudioToGraph(audio);
+    audio.play().catch(() => {
+      // Most common cause: browser autoplay policy blocked playback
+      // because no user gesture preceded the call. Status flips to
+      // error; the next click anywhere on the page will resume the
+      // AudioContext for the NEXT moment.
+      setStatus("error");
+    });
+  };
+
+  audio.onended = () => {
+    clearTimer();
+    setStatus("done");
+  };
+  audio.onerror = () => {
+    clearTimer();
+    setStatus("error");
+  };
+  // Three triggers, first one wins:
+  //   1. canplaythrough — ideal, full buffer available
+  //   2. canplay — enough to start, may stall mid-line on slow links
+  //   3. 700ms timer — some browsers throttle preload events; we
+  //      fire play() anyway and let the browser stream as it can.
+  audio.oncanplaythrough = tryStart;
+  audio.oncanplay = tryStart;
+  timer = window.setTimeout(tryStart, 700);
+
   audio.src = src;
   audio.load();
 }

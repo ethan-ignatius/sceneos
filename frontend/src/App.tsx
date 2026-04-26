@@ -10,7 +10,7 @@ import { ProjectsRoute } from "@/routes/projects-route";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
-// import { NarrationBar } from "@/components/narration/narration-bar";
+import { NarrationBar } from "@/components/narration/narration-bar";
 import { ManifestAutoSync } from "@/components/manifest-autosync";
 import { useLenis } from "@/lib/use-lenis";
 import { setApiUserId } from "@/lib/api";
@@ -23,11 +23,14 @@ export default function App() {
   // Bridge Auth0 state into the API client. Every backend request
   // thereafter carries X-User-Id so MongoDB project queries scope to
   // the caller. Cleared on logout so an anonymous browser never sees
-  // anyone else's archive.
-  const { user, isAuthenticated } = useAuth0();
+  // anyone else's archive. Gated on `!isLoading` so we don't flicker
+  // through `null` during the ~500ms Auth0 SDK init window — that
+  // flash made already-logged-in users briefly see "Sign in" walls.
+  const { user, isAuthenticated, isLoading } = useAuth0();
   useEffect(() => {
+    if (isLoading) return;
     setApiUserId(isAuthenticated && user?.sub ? user.sub : null);
-  }, [isAuthenticated, user?.sub]);
+  }, [isAuthenticated, user?.sub, isLoading]);
 
   return (
     <AppErrorBoundary>
@@ -44,7 +47,7 @@ export default function App() {
       {/* Mounted outside <Routes> so they survive route navigation. */}
       <CinematicCursor />
       <CommandMenuMount />
-      {/* <NarrationBar /> */}
+      <NarrationBar />
       <ManifestAutoSync />
     </AppErrorBoundary>
   );
