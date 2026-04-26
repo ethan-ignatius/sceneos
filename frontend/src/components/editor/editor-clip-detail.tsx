@@ -1,5 +1,4 @@
 import type { EditClipDecision } from "@/types/api";
-import { cn } from "@/lib/utils";
 
 interface EditorClipDetailProps {
   index: number;
@@ -11,7 +10,10 @@ interface EditorClipDetailProps {
 
 /**
  * Per-clip controls. Visible only when a beat is selected on the timeline.
- * Hairline-divided, no card chrome, no nested rows.
+ * Reduced to FADES only — trims live as drag handles directly on the
+ * timeline row above (no need to expose them again here as a duplicate
+ * input). Caption input was dropped per "fades + trims + appending +
+ * music — otherwise we're good." Hairline-divided, no card chrome.
  */
 export function EditorClipDetail({ index, label, clip, onPatch, onClose }: EditorClipDetailProps) {
   const trimStart = clip.trimStart ?? 0;
@@ -40,15 +42,16 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
         </button>
       </header>
 
-      {/* Transition */}
+      {/* Cross-fade — first beat has nothing to fade INTO so the slider
+          only renders for index > 0. */}
       {index > 0 ? (
         <div className="space-y-1.5">
           <div className="flex items-baseline justify-between">
             <span className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
-              Transition in
+              Cross-fade in
             </span>
             <span className="font-mono text-caption tabular-nums text-fg-tertiary">
-              {transition === 0 ? "hard cut" : `${transition}ms cross-fade`}
+              {transition === 0 ? "hard cut" : `${transition}ms`}
             </span>
           </div>
           <input
@@ -63,32 +66,8 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
           />
         </div>
       ) : (
-        <p className="font-body text-pill text-fg-tertiary">First beat — no transition in.</p>
+        <p className="font-body text-pill text-fg-tertiary">First beat — no fade in.</p>
       )}
-
-      {/* Caption */}
-      <div className="space-y-1.5">
-        <div className="flex items-baseline justify-between">
-          <span className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
-            Caption
-          </span>
-          <span className="font-body text-caption text-fg-tertiary/70">
-            {clip.caption ? "shown" : "off"}
-          </span>
-        </div>
-        <input
-          type="text"
-          value={clip.caption ?? ""}
-          onChange={(e) => onPatch({ caption: e.target.value })}
-          placeholder="Optional title for this beat"
-          className={cn(
-            "w-full border-b border-fg-tertiary/25 bg-transparent px-1 py-1.5",
-            "font-body text-meta text-fg-primary outline-none",
-            "placeholder:text-fg-tertiary/60 focus:border-brand-ember-dim/60",
-            "transition-colors",
-          )}
-        />
-      </div>
     </section>
   );
 }

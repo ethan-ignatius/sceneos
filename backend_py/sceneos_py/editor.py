@@ -95,7 +95,6 @@ _EDIT_DECISIONS_SCHEMA: dict[str, Any] = {
             },
         },
         "duckOriginalAudioDb": {"type": "integer", "description": "Volume offset on the original clip audio so music sits on top."},
-        "watermarkPublicId": {"type": "string"},
         "look": {
             "type": "string",
             "description": f"Global look LUT. Pick one of: {', '.join(LOOK_NAMES)}.",
@@ -255,8 +254,11 @@ You emit a complete EditDecisions object every turn. The fields you control:
   - global music track (audio.publicId + audio.volume + fadeInMs + fadeOutMs)
   - global look LUT (one of: {", ".join(LOOK_NAMES)})
   - duckOriginalAudioDb (lower clip audio so music sits on top, e.g. -12)
-  - watermarkPublicId (corner watermark image)
   - captionPosition ("south" = bottom, "north" = top)
+
+  Watermark is intentionally NOT in your toolset — the placeholder
+  publicId for it 404'd on Cloudinary; the feature was removed from
+  the surface. Don't propose a watermark.
 
 You always emit the WHOLE decisions object. The frontend treats your call as the new state. Carry forward all fields you do not want to change — never zero out an existing trim or grade unless the user asked for that.
 
@@ -461,7 +463,7 @@ _STUB_PROPOSALS: list[dict] = [
         "patch": {"clip_index": 3, "transitionMs": 240},
         "followups": [
             "Push the climax color grade harder, more contrast",
-            "Add a watermark in the lower-right corner for export",
+            "Add the music score under the cut",
             "Lock it as the final cut",
         ],
     },
