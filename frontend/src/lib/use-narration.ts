@@ -68,65 +68,20 @@ function _enqueue(p: PendingMoment): void {
   _queue.push(p);
 }
 
-// Shared Web Audio plumbing for the narrator. Routing the
-// HTMLAudioElement through a MediaElementSource → GainNode → destination
-// lets us drive a gain > 1.0, which is what HTMLAudioElement.volume
-// can't do on its own (capped at 1.0). ElevenLabs' MP3 output is
-// pre-mastered at a moderate level — 1.0 was reading as "quiet"
-// against a 1080p background-video soundbed. 1.6x is the sweet spot:
-// audible over the hero loop without clipping the narrator's chest
-// register.
-let _audioCtx: AudioContext | null = null;
-let _gainNode: GainNode | null = null;
-const _connectedAudios = new WeakSet<HTMLAudioElement>();
-const NARRATOR_GAIN = 1.6;
-
-function _ensureAudioGraph(): GainNode | null {
-  if (typeof window === "undefined") return null;
-  if (_gainNode && _audioCtx) {
-    if (_audioCtx.state === "suspended") {
-      // Browsers gate AudioContext behind a user gesture. If we hit a
-      // "narrate now" moment before any click, the context is suspended
-      // — try to resume; if the gesture hasn't happened yet, the resume
-      // is a no-op until the next interaction. Either way, fall through
-      // and the HTMLAudio plays at its native level.
-      _audioCtx.resume().catch(() => {});
-    }
-    return _gainNode;
-  }
-  try {
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
-    _audioCtx = new Ctx();
-    _gainNode = _audioCtx.createGain();
-    _gainNode.gain.value = NARRATOR_GAIN;
-    _gainNode.connect(_audioCtx.destination);
-    if (_audioCtx.state === "suspended") {
-      _audioCtx.resume().catch(() => {});
-    }
-    return _gainNode;
-  } catch {
-    return null;
-  }
-}
-
-function _attachAudioToGraph(audio: HTMLAudioElement): void {
-  if (_connectedAudios.has(audio)) return;
-  const gain = _ensureAudioGraph();
-  if (!gain || !_audioCtx) return;
-  try {
-    const src = _audioCtx.createMediaElementSource(audio);
-    src.connect(gain);
-    _connectedAudios.add(audio);
-  } catch {
-    // createMediaElementSource throws if the element is already wired
-    // OR cross-origin without CORS. ElevenLabs MP3s come as data: URIs
-    // in our path, so cross-origin isn't an issue, but the try/catch
-    // is here in case a future call site uses a remote URL — we'll
-    // just play through the audio element's native output at 1.0.
-  }
+// Web Audio routing was removed. The previous version connected the
+// HTMLAudioElement through a GainNode at 1.6× to ride over the hero
+// loop, but ElevenLabs masters MP3s with peaks near 0 dB — 1.6× of
+// a near-0 dB peak clipped on every line. Chrome's soft-limiter
+// then pulled the signal back down to safe levels, which is the
+// "helicopter loud at first then quiets" the user reported. The
+// fix is to play the audio at its native level via HTMLAudioElement
+// (max 1.0) and rely on the upstream master being audible on its
+// own. If we ever need a touch more headroom, add a
+// DynamicsCompressorNode (gentle limiter) before any GainNode bump.
+function _attachAudioToGraph(_audio: HTMLAudioElement): void {
+  // Intentionally a no-op now. Kept as a hook for the future
+  // compressor + gain path so the call site in _playAudio doesn't
+  // change shape and accidentally re-introduce the clipping bug.
 }
 
 function _cacheKey(moment: NarrationMoment, beatId?: string): string {
