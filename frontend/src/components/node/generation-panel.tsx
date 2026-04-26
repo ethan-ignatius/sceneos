@@ -400,7 +400,15 @@ export function GenerationPanel({
                 }
               />
               {debug?.latestStatus?.observability ? (
-                <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all text-[10px] text-fg-tertiary/85">
+                // Bumped 7rem→24rem and forced a real scroll surface so the
+                // requestPayload + manifest dump doesn't clip past the bottom
+                // of the drawer. data-lenis-prevent stops the page-level
+                // smooth-scroll engine from hijacking the wheel events while
+                // the user is reading the payload.
+                <pre
+                  data-lenis-prevent
+                  className="max-h-96 overflow-auto whitespace-pre break-all rounded-md border border-fg-tertiary/15 bg-bg-base/60 p-2 text-[10px] leading-[1.5] text-fg-tertiary/85 [scrollbar-width:thin]"
+                >
                   {JSON.stringify(debug.latestStatus.observability, null, 2)}
                 </pre>
               ) : null}
