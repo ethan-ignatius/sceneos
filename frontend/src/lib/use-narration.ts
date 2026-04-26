@@ -128,6 +128,24 @@ function _stopAudio() {
   }
 }
 
+// One-time toast latch — when ElevenLabs is down (free-tier lockout,
+// network, etc.) we want to TELL the user the narrator is on browser
+// fallback rather than silently degrading. Fires once per session so
+// every beat doesn't queue a toast.
+let _browserTtsToastShown = false;
+function _maybeShowBrowserTtsToast(): void {
+  if (_browserTtsToastShown) return;
+  _browserTtsToastShown = true;
+  // Lazy import so this module stays free of route-time dependencies.
+  void import("sonner").then(({ toast }) => {
+    toast.message("Using browser voice for narration", {
+      description:
+        "ElevenLabs is unreachable (free-tier lockout or network) — running on the browser's built-in voice for now.",
+      duration: 6000,
+    });
+  });
+}
+
 function _speakWithBrowserTTS(
   text: string,
   onEnd: () => void,
@@ -137,18 +155,31 @@ function _speakWithBrowserTTS(
     onEnd();
     return;
   }
+  _maybeShowBrowserTtsToast();
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 0.95;
-  utterance.pitch = 0.85;
+  // rate/pitch tuned for a "narrator" register on the OS voices, not
+  // the chipmunk-fast default. Volume max — there's no Web Audio
+  // hop here so 1.0 is the ceiling. Browser TTS is platform-quiet
+  // on Windows / Mac compared to ElevenLabs MP3 + 1.6× gain, but at
+  // these settings it should at least be hearable over the
+  // background loop.
+  utterance.rate = 0.92;
+  utterance.pitch = 0.9;
   utterance.volume = 1.0;
 
   const voices = window.speechSynthesis.getVoices();
-  const preferred = voices.find(
-    (v) =>
-      /daniel|aaron|james|google uk english male/i.test(v.name) && v.lang.startsWith("en"),
-  ) ?? voices.find((v) => v.lang.startsWith("en") && /male/i.test(v.name))
-    ?? voices.find((v) => v.lang.startsWith("en"));
+  // Prefer Daniel / Aaron / Microsoft Guy (deep US/UK male voices
+  // present on most platforms). Fall through to any English male
+  // voice, then any English voice, then default.
+  const preferred =
+    voices.find(
+      (v) =>
+        /daniel|aaron|james|guy|david|google uk english male/i.test(v.name) &&
+        v.lang.startsWith("en"),
+    ) ??
+    voices.find((v) => v.lang.startsWith("en") && /male/i.test(v.name)) ??
+    voices.find((v) => v.lang.startsWith("en"));
   if (preferred) utterance.voice = preferred;
 
   utterance.onend = onEnd;

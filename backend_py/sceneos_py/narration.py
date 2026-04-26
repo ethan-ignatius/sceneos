@@ -95,6 +95,15 @@ _MOMENT_PROMPTS: dict[str, str] = {
         "Match the tone the filmmaker established. "
         "End on a note that makes them feel proud of what they created."
     ),
+    "editor_arrived": (
+        f"{_PERSONA}\n\n"
+        "The filmmaker just stepped into the editing suite — every beat is "
+        "rendered and waiting on the timeline. Welcome them in. Hint at what "
+        "the editor offers: trims, pacing, music bed, captions. Make them feel "
+        "like a director walking into the cutting room with rough takes ready.\n\n"
+        "Write EXACTLY 2-3 sentences (~25-35 words). Confident, grounded, with "
+        "a hint of craft."
+    ),
 }
 
 _MOCK_SCRIPTS: dict[str, str] = {
@@ -112,6 +121,10 @@ _MOCK_SCRIPTS: dict[str, str] = {
     ),
     "beat_locked": "That's the take. Let's bring it to life.",
     "beat_complete": "There it is. Exactly what this moment needed.",
+    "editor_arrived": (
+        "We're in the cutting room now. Every take is on the timeline — "
+        "trim it, pace it, score it. The film's yours to shape."
+    ),
     "summary": (
         "Every story begins with a single frame. Yours started with an idea — "
         "a feeling you wanted the world to see. Beat by beat, you shaped it into "
@@ -218,6 +231,15 @@ def _moment_user_prompt(moment: str, context: dict) -> str:
             return _beat_user_prompt(beat, manifest, continuity)
         return f"MASTER PROMPT: {master}"
 
+    if moment == "editor_arrived":
+        beats = manifest.get("beats") or []
+        approved_count = sum(1 for b in beats if b.get("status") == "approved")
+        return (
+            f"MASTER PROMPT: {master}\n"
+            f"BEATS LANDED: {approved_count} of {len(beats)}\n"
+            "STAGE: refine — the cut is on the timeline."
+        )
+
     if moment == "summary":
         return _summary_user_prompt(manifest, continuity)
 
@@ -310,6 +332,31 @@ async def synthesize_speech(text: str, voice_id: str | None = None) -> tuple[byt
             )
             r.raise_for_status()
             audio_bytes = r.content
+    except httpx.HTTPStatusError as exc:
+        # Surface 401 / 403 distinctly. The 401 here is most often
+        # `detected_unusual_activity` (ElevenLabs abuse detector
+        # disabling free-tier access) which the user needs to know
+        # about — debugging it from a generic warning is hard.
+        body_preview = ""
+        try:
+            body_preview = exc.response.text[:300]
+        except Exception:
+            pass
+        if exc.response.status_code in (401, 403):
+            logger.error(
+                "[narration] ElevenLabs auth/policy error (%s) — likely free-tier "
+                "abuse-detector lockout. Upgrade plan or rotate key from a "
+                "different IP. Body: %s",
+                exc.response.status_code,
+                body_preview,
+            )
+        else:
+            logger.warning(
+                "[narration] ElevenLabs %s: %s",
+                exc.response.status_code,
+                body_preview,
+            )
+        return None
     except Exception as exc:
         logger.warning("[narration] ElevenLabs synthesis failed: %s", exc)
         return None
