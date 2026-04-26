@@ -4,6 +4,13 @@ issues/
 examples-locked/
 demo-plan/
 
+# Service-account JSONs and any other secret material — repo-wide
+# safety net so a stray *.json in any subfolder can't be committed
+# without an explicit override.
+.secrets/
+*service-account*.json
+*-sa-*.json
+
 # Node / Vite
 node_modules/
 dist/
