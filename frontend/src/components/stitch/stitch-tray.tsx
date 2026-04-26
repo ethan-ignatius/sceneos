@@ -24,6 +24,7 @@ import {
   buildClipUrl,
   buildThumbnailUrl,
 } from "@/lib/cloudinary";
+import { renderHighlightedUrl } from "@/lib/url-display";
 import { api, ApiError } from "@/lib/api";
 import { playRenderWhoosh } from "@/lib/audio-cues";
 import { SPRING, DURATIONS, EASE } from "@/lib/motion-presets";
@@ -144,6 +145,10 @@ export function StitchTray({ onClose }: StitchTrayProps) {
 
   return (
     <motion.aside
+      id="stitch-tray"
+      role="dialog"
+      aria-modal="false"
+      aria-label="Stitch tray — review and approve takes"
       initial={{ x: "calc(100% + 2rem)", opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: "calc(100% + 2rem)", opacity: 0 }}
@@ -256,7 +261,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             ) : (
               <div className="break-all font-mono text-caption leading-[1.65] text-fg-secondary">
                 <span className="text-fg-tertiary/70">{segments.head}</span>
-                <span>{segments.middle}</span>
+                <span>{renderHighlightedUrl(segments.middle)}</span>
                 {segments.tail ? (
                   shouldType ? (
                     <span key={revealKey} className="url-segment-glow">
@@ -270,7 +275,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
                       />
                     </span>
                   ) : (
-                    <span>{segments.tail}</span>
+                    <span>{renderHighlightedUrl(segments.tail)}</span>
                   )
                 ) : null}
                 <span className="text-brand-ember">{segments.base}</span>

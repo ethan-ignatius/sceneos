@@ -96,6 +96,19 @@ export function NodeDetailDrawer() {
           setStartedAt((prev) => prev ?? status.startedAt!);
         }
         if (status.status === "succeeded") {
+          // Race-aware write: canvas-route's speculative poller may have
+          // promoted the same jobId already. If clipPublicId is set, just
+          // flip the beat to preview — re-writing the same publicId churns
+          // store subscribers for nothing.
+          const m = useBeatGraphStore.getState().manifest;
+          const liveScene = m?.beats
+            .find((b) => b.beatId === beatId)
+            ?.scenes.find((s) => s.sceneId === sceneId);
+          if (!liveScene) return; // manifest reset mid-poll
+          if (liveScene.clipPublicId) {
+            updateBeat(beatId, { status: "preview" });
+            return;
+          }
           updateScene(beatId, sceneId, {
             jobId,
             clipPublicId: status.clipPublicId,
@@ -436,12 +449,23 @@ export function NodeDetailDrawer() {
               const canLock = !!userAnswers && userAnswers.length > 0;
 
               if (isReadyToGenerate) {
+                // Without a refinedPrompt the backend has nothing to send
+                // to Veo. The button shouldn't even be reachable in this
+                // state (lock-it-in writes a refinedPrompt), but guard
+                // anyway so a stale manifest can't dispatch a no-op render.
+                const canRoll = !!beat.scenes[0]?.refinedPrompt;
                 return (
                   <Button
                     size="lg"
                     variant="primary"
+                    disabled={!canRoll}
                     className="w-full ember-pulse"
                     onClick={handleGenerate}
+                    aria-label={
+                      canRoll
+                        ? "Roll camera — start the render"
+                        : "Roll camera unavailable until the beat has a refined prompt"
+                    }
                   >
                     <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
                     <span className="font-body text-meta font-medium">Roll camera</span>

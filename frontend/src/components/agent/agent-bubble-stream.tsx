@@ -473,6 +473,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         {error ? (
           <div
             role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
             className="flex items-center justify-between gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-caption text-state-error"
           >
             <span>{error}</span>

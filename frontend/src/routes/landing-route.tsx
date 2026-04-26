@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
 import { ArrowUp, Mic } from "lucide-react";
+import { toast } from "sonner";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { api, ApiError } from "@/lib/api";
@@ -47,6 +48,12 @@ export function LandingRoute() {
   const [draft, setDraft] = useState(masterPrompt);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Double-submit guard. Voice settle (3s silence) and Enter can fire
+  // in the same tick before navigation unmounts the form, dispatching
+  // /api/decompose twice. The ref flips synchronously inside submit so
+  // a second call early-returns; the state mirror disables the buttons.
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   // True the moment the user clicks a tier chip; from then on, verbosity
   // never overrides their choice. Without this lock, typing more would
   // silently bump them up a tier and the chip selection would feel haunted.
@@ -134,8 +141,14 @@ export function LandingRoute() {
     } else if (e) {
       e.preventDefault();
     }
+    // Synchronous ref guard — state setters are deferred, so a same-tick
+    // race (voice settles AND Enter pressed) would otherwise pass the
+    // gate twice. The ref flips before any work runs.
+    if (submittingRef.current) return;
     const trimmed = (voiceText ?? draft).trim();
     if (!trimmed) return;
+    submittingRef.current = true;
+    setSubmitting(true);
     setMasterPrompt(trimmed);
     initialize({ masterPrompt: trimmed, videoType });
 
@@ -213,6 +226,12 @@ export function LandingRoute() {
           setDecomposeStatus("error");
           const detail = err instanceof ApiError ? err.details : err;
           console.warn("[landing] decompose failed; keeping template beats", detail);
+          // The canvas is still functional — beats fall back to their
+          // template defaults — but the user deserves to know why their
+          // story didn't get refined into per-beat prompts.
+          toast.error("Couldn't refine your story — using template beats.", {
+            description: "You can still direct each beat from the canvas.",
+          });
         });
     }
 
@@ -336,7 +355,7 @@ export function LandingRoute() {
                 onFocus={() => setFocused(true)}
                 onBlur={() => setFocused(false)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (e.key === "Enter" && !e.shiftKey && !submitting) {
                     e.preventDefault();
                     submit();
                   }
@@ -402,13 +421,14 @@ export function LandingRoute() {
 
                 <motion.button
                   type="submit"
-                  disabled={!ready}
-                  aria-label="Begin"
-                  whileTap={ready ? { scale: 0.94 } : undefined}
+                  disabled={!ready || submitting}
+                  aria-label={submitting ? "Sending you into the canvas" : "Begin"}
+                  aria-busy={submitting}
+                  whileTap={ready && !submitting ? { scale: 0.94 } : undefined}
                   className={cn(
                     "grid h-9 w-9 place-items-center rounded-full transition-all duration-200",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base",
-                    ready
+                    ready && !submitting
                       ? "bg-brand-ember text-bg-base shadow-[0_0_18px_rgba(240,168,104,0.45)] hover:bg-brand-ember/90"
                       : "bg-fg-tertiary/15 text-fg-tertiary",
                   )}
