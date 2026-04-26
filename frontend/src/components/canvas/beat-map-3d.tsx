@@ -89,6 +89,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   // position=…>` prop — which read on screen as the orbs blinking out.
   const positions = useMemo(() => computeBeatPositions(beats), [beats.length]);
 
+  // First unstarted beat — drives the "start here" guidance overlay.
+  // Pending or questioning both count as "not yet committed." Once every
+  // beat is past those states, guidance vanishes entirely (the canvas
+  // becomes a working board, not an onboarding board).
+  const guidedTargetId = useMemo(
+    () => beats.find((b) => b.status === "pending" || b.status === "questioning")?.beatId ?? null,
+    [beats],
+  );
+
   // Camera distance scales with beat count. The new wider spread (1.55x)
   // means a 7-beat timeline is ~10.85 world-units wide; we need to be far
   // enough back that all of them sit comfortably inside the 42° vertical
@@ -299,7 +308,11 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       <Canvas
         camera={{ position: [0, 0.4, cameraZ], fov: 42 }}
         gl={{ antialias: true, powerPreference: "high-performance" }}
-        dpr={[1, 1.75]}
+        // DPR cap raised 1.75 → 2 so retina screens render the canvas at
+        // native pixel density instead of an 87.5% downsample. Combined
+        // with anisotropy 16 on each planet texture, surface detail stays
+        // crisp under zoom. (1.5 max keeps mid-tier mobile from frying.)
+        dpr={[1, Math.min(window.devicePixelRatio || 2, 2)]}
         // Force ACES tone mapping so postprocess Bloom uses correct luminance
         // space — prevents ember from clamping toward white. Issues #046 + #166.
         onCreated={({ gl }) => {
@@ -328,30 +341,39 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
         <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
-        {/* INNER Suspense boundary — critical. Without this, any texture or
-            HDR load that suspends inside the Canvas (Environment HDR, planet
-            textures, ring alpha) propagates UP through the React tree to the
-            outer Suspense in canvas-route.tsx, which unmounts the WHOLE
-            BeatMap3D and shows "Composing the canvas." Result: planets pop
-            in, then a transient cache miss on a single texture takes them
-            all down. Localising the boundary here means a re-suspension only
-            briefly hides the suspended subtree, never the entire canvas.
-            Fallback is null (an invisible WebGL "gap") because we never want
-            DOM chrome to flash inside the GL surface. */}
+        {/* Environment HDR in its OWN Suspense boundary so its (relatively
+            slow) load doesn't gate the planets. Without this, the HDR
+            being mid-flight would suspend the inner boundary that planets
+            ALSO live in, leaving the canvas dark while we wait — exactly
+            the "moment of dark space after Pulling focus disappears" the
+            user flagged. Now planets render the moment their textures
+            (already preloaded) resolve, regardless of HDR state. */}
         <Suspense fallback={null}>
-          {/* `background={false}` keeps the HDR for reflections only — we keep
-              our explicit warm-near-black `<color>` background. */}
           <Environment preset="night" background={false} />
+        </Suspense>
+
+        {/* Planets, stars, traces — share their own boundary so a single
+            re-suspension here only briefly hides this subtree, not the
+            full BeatMap3D via the outer canvas-route Suspense. */}
+        <Suspense fallback={null}>
           <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} fade speed={0.3} />
-
           <ConnectingPath positions={positions} />
-
           {beats.map((beat, i) => (
             <NodeMesh
               key={beat.beatId}
               beat={beat}
               position={positions[i]}
               onHoverChange={setHoveredBeatId}
+              introIndex={i}
+              // Guide the user to the first beat that hasn't been
+              // worked yet. As soon as ANY beat is active, all guides
+              // hide so the camera/drawer take focus. Once the user
+              // closes the drawer, the guide returns on the next
+              // unfinished beat — gentle nudge, not blocker.
+              isGuidedTarget={
+                activeBeatId === null &&
+                guidedTargetId === beat.beatId
+              }
             />
           ))}
         </Suspense>
@@ -393,19 +415,9 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
             postprocess after the pipeline (Veo + stitch + delivery) is
             verified end-to-end. */}
       </Canvas>
-      {/* Edge-vignette feedback while panning. Gentle 5% darkening at the
-          frame edges signals "you're in motion" without obstructing the
-          scene. CSS-only; no per-frame React work. */}
-      <div
-        aria-hidden
-        className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${
-          panning ? "opacity-100" : "opacity-0"
-        }`}
-        style={{
-          background:
-            "radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%)",
-        }}
-      />
+      {/* Pan vignette removed (Tier 2 D3): the 5% edge-darkening was too
+          quiet to register as feedback and added a persistent overlay layer
+          during drags. The cursor's grabbing state already signals motion. */}
     </div>
   );
 }

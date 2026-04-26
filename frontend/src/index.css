@@ -46,7 +46,7 @@
      Captions = 500 with the single 0.18em uppercase tracking. Mono = real
      code strings only (URLs, jobIds, beat IDs).
      No serifs anywhere — the single family is the discipline. */
-  --font-display: "Geist", system-ui, -apple-system, sans-serif;
+  --font-display: "Fraunces", "Geist", system-ui, -apple-system, sans-serif;
   --font-body: "Geist", system-ui, -apple-system, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "Cascadia Code", monospace;
 
@@ -177,11 +177,39 @@
     font-family: var(--font-mono);
   }
 
+  /* ──────────────────────────────────────────────────────────────────
+   * .caption-track — the chrome label utility.
+   *
+   * Was a phantom class for months: referenced in 50+ places, defined
+   * nowhere, doing nothing. Components had to bolt on `text-[10px]
+   * uppercase tracking-[0.18em]` manually, which propagated by copy-
+   * paste and produced the dated tracked-tiny-uppercase aesthetic the
+   * user flagged.
+   *
+   * What it now means: a small chrome label, sentence-case, Geist
+   * medium, no uppercase, no tracking. Components that override the
+   * size with text-[Npx] still win — but the family / weight / case /
+   * tracking are LOCKED so a forgotten override can't drift back into
+   * 10px-mono-uppercase territory.
+   *
+   * Use this for: pill eyebrows, small chrome labels, drawer counters,
+   * minimap headers, footer hints. Do NOT use it for body copy, button
+   * text, or display headlines — those use font-body / font-display
+   * directly with explicit sizes.
+   * ────────────────────────────────────────────────────────────────── */
+  .caption-track {
+    font-family: var(--font-body);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    font-feature-settings: "kern", "calt", "tnum";
+  }
+
   /* Z-index hierarchy (single source of truth — DO NOT use ad-hoc values):
        5   film-grain                       (under all UI)
        10  persistent URL strip             (canvas chrome, bottom)
        20  master-prompt card, stitch CTA   (canvas chrome, top)
-       30  stage-indicator, mock-mode-chip  (always-on chrome)
+       30  stage-indicator                  (always-on chrome)
        40  node-detail-drawer               (covers chrome)
        50  stitch-tray                      (covers drawer)
        60  modals (HowItWorks, command-menu)

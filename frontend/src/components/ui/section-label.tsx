@@ -48,7 +48,7 @@ export function SectionLabel({ icon, children, variant = "dark", className }: Se
           {icon}
         </span>
       ) : null}
-      <span className={cn("font-mono text-[10px] uppercase tracking-[0.18em]", labelColors[variant])}>
+      <span className={cn("font-body text-[12px] font-medium", labelColors[variant])}>
         {children}
       </span>
     </div>

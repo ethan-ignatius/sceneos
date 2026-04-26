@@ -160,7 +160,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       {/* Header — eyebrow + headline + close */}
       <header className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-7 pb-5 pt-6">
         <div className="space-y-2">
-          <div className="caption-track text-[10px] text-fg-tertiary">Stitch</div>
+          <div className="font-body text-[12px] font-medium text-fg-tertiary">Stitch</div>
           <h2 className="font-display text-[1.6rem] italic leading-[1.08] tracking-[-0.018em] text-fg-primary">
             {headline}
           </h2>
@@ -176,8 +176,11 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       </header>
 
       {/* Body — vertical list of beat rows */}
-      <div className="flex-1 space-y-4 overflow-y-auto px-7 py-5">
-        <ul className="space-y-2.5">
+      <div
+        data-lenis-prevent
+        className="flex-1 space-y-6 overflow-y-auto px-7 py-5 [scrollbar-width:thin]"
+      >
+        <ul className="divide-y divide-fg-tertiary/12">
           {manifest?.beats.map((b, i) => (
             <li key={b.beatId}>
               <BeatRow
@@ -355,126 +358,104 @@ function BeatRow({
   return (
     <div
       className={cn(
-        "flex items-center gap-4 rounded-xl border bg-bg-elev-1/40 p-3 transition-colors",
-        isApproved
-          ? "border-brand-ember/45 shadow-[0_0_0_1px_rgba(240,168,104,0.08),0_12px_28px_-16px_rgba(240,168,104,0.35)]"
-          : "border-fg-tertiary/15 hover:border-fg-tertiary/25",
+        "relative flex items-center gap-3 py-3 pl-3 transition-colors sm:gap-4 sm:py-3.5",
+        // Approved: a single 1px ember bar on the left edge (structural cue,
+        // not a decorative outline). Replaces the old card-shadow+border.
+        isApproved &&
+          "before:absolute before:left-0 before:top-1/2 before:h-7 before:w-px before:-translate-y-1/2 before:bg-brand-ember",
       )}
     >
-      {/* 16:9 preview tile — video when clip exists, gradient placeholder otherwise */}
-      <div className="relative aspect-video w-32 flex-shrink-0 overflow-hidden rounded-lg bg-bg-base/60 sm:w-40">
-        {videoUrl ? (
-          <video
-            src={videoUrl}
-            poster={thumbnailUrl ?? undefined}
-            muted
-            loop
-            playsInline
-            autoPlay
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        ) : (
-          <PreviewPlaceholder generating={isGenerating} />
-        )}
-        {/* Status pip — top-right corner */}
-        <div className="absolute right-1.5 top-1.5">
-          {isApproved ? (
-            <span
-              className="grid h-5 w-5 place-items-center rounded-full bg-brand-ember text-bg-base"
-              style={{ boxShadow: "0 0 10px rgba(240,168,104,0.6)" }}
-              aria-label="Approved"
-            >
-              <Check size={11} strokeWidth={3} aria-hidden="true" />
-            </span>
-          ) : isGenerating ? (
-            <span className="grid h-5 w-5 place-items-center rounded-full bg-bg-base/80">
+      {/* Left: a 16:9 video thumb when a clip exists; otherwise just the
+          index in caption-track. Reserving a placeholder tile for "no take
+          yet" rows was visual noise — the empty state earns no real estate
+          until there's something to show. */}
+      {hasClip ? (
+        <div className="relative aspect-video w-20 flex-shrink-0 overflow-hidden rounded-md bg-bg-base/60 sm:w-24">
+          {videoUrl ? (
+            <video
+              src={videoUrl}
+              poster={thumbnailUrl ?? undefined}
+              muted
+              loop
+              playsInline
+              autoPlay
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : null}
+          {isGenerating ? (
+            <span className="absolute inset-0 grid place-items-center bg-bg-base/40">
               <Loader2 size={11} strokeWidth={1.5} className="animate-spin text-brand-ember" />
             </span>
           ) : null}
         </div>
-      </div>
-
-      {/* Middle column — index, name, status text */}
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="caption-track text-[9px] tabular-nums text-fg-tertiary/80">
+      ) : (
+        <span
+          className={cn(
+            "flex w-8 flex-shrink-0 items-center font-body text-[12px] font-medium tabular-nums sm:w-10",
+            isApproved ? "text-brand-ember/80" : "text-fg-tertiary/65",
+          )}
+        >
           {(index + 1).toString().padStart(2, "0")}
-        </div>
-        <div className="truncate font-display text-[17px] italic leading-[1.1] text-fg-primary">
+        </span>
+      )}
+
+      {/* Middle: beat name + status caption. The index badge in the prior
+          design lived here too; with the conditional left slot it lives
+          there now, which removes a duplicate display. */}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span
+          className={cn(
+            "truncate font-display text-[15px] italic leading-[1.15]",
+            isApproved ? "text-brand-ember" : "text-fg-primary",
+          )}
+        >
           {beat.beatName}
-        </div>
-        <div className="font-body text-[11px] leading-snug text-fg-tertiary">
+        </span>
+        <span className="font-body text-[11.5px] leading-snug text-fg-tertiary">
           <BeatStatusLabel status={status} approved={isApproved} />
-        </div>
+        </span>
       </div>
 
-      {/* Right column — actions */}
+      {/* Right: actions. Labels collapse to icon-only below `sm` so tight
+          drawer widths (mobile / narrow split) stay usable. */}
       <div className="flex flex-shrink-0 items-center gap-1.5">
         {canApprove ? (
           <button
             type="button"
             onClick={onApprove}
-            className="inline-flex items-center gap-1.5 rounded-full bg-brand-ember px-3 py-1.5 font-body text-[11px] font-medium text-bg-base transition-colors hover:bg-brand-ember/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elev-1"
+            className="inline-flex items-center gap-1 rounded-full bg-brand-ember px-2.5 py-1.5 font-body text-[11px] font-medium text-bg-base transition-colors hover:bg-brand-ember/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elev-1"
             aria-label="Approve this take"
             title="Approve"
           >
-            <Check size={12} strokeWidth={2.5} aria-hidden="true" />
-            Approve
+            <Check size={11} strokeWidth={2.5} aria-hidden="true" />
+            <span className="hidden sm:inline">Approve</span>
           </button>
         ) : null}
         {canRetake ? (
           <button
             type="button"
             onClick={onRetake}
-            className="inline-flex items-center gap-1.5 rounded-full border border-fg-tertiary/25 px-3 py-1.5 font-body text-[11px] text-fg-secondary transition-colors hover:border-fg-tertiary/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-fg-tertiary"
+            className="inline-flex items-center gap-1 rounded-full border border-fg-tertiary/20 px-2.5 py-1.5 font-body text-[11px] text-fg-secondary transition-colors hover:border-fg-tertiary/45 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-fg-tertiary"
             aria-label="Send this take back to be regenerated"
             title="Re-take"
           >
-            <RotateCw size={11} strokeWidth={1.5} aria-hidden="true" />
-            Re-take
+            <RotateCw size={10} strokeWidth={1.5} aria-hidden="true" />
+            <span className="hidden sm:inline">Re-take</span>
           </button>
         ) : null}
         {!canApprove && !canRetake ? (
           <button
             type="button"
             onClick={onOpen}
-            className="inline-flex items-center gap-1.5 rounded-full border border-fg-tertiary/25 px-3 py-1.5 font-body text-[11px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+            className="inline-flex items-center gap-1 rounded-full border border-fg-tertiary/20 px-2.5 py-1.5 font-body text-[11px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
             aria-label={isGenerating ? "Open beat (generating)" : "Direct this beat"}
             title={isGenerating ? "Generating" : "Direct"}
           >
-            <Play size={11} strokeWidth={1.5} aria-hidden="true" />
-            {isGenerating ? "Generating" : "Direct"}
+            <Play size={10} strokeWidth={1.5} aria-hidden="true" />
+            <span className="hidden sm:inline">{isGenerating ? "Generating" : "Direct"}</span>
           </button>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-/**
- * The placeholder shown in a beat row's preview tile when no clip exists
- * yet. Two states:
- *   generating  → ember-pulse bar, "Generating" caption
- *   pending     → static dim pattern + "No take yet" caption
- *
- * Kept tiny on purpose — the tile is 160×90, anything richer fights the
- * actual video previews on rows that do have clips.
- */
-function PreviewPlaceholder({ generating }: { generating: boolean }) {
-  return (
-    <div className="absolute inset-0 grid place-items-center bg-gradient-to-br from-bg-elev-2 to-bg-base">
-      {generating ? (
-        <div className="flex flex-col items-center gap-1.5">
-          <span
-            aria-hidden
-            className="ember-pulse h-1.5 w-8 rounded-full bg-brand-ember"
-          />
-          <span className="font-body text-[10px] text-brand-ember/85">Generating</span>
-        </div>
-      ) : (
-        <span className="font-body text-[10.5px] italic text-fg-tertiary">
-          No take yet
-        </span>
-      )}
     </div>
   );
 }

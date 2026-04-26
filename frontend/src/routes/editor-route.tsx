@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Loader2, RefreshCw } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { ArrowLeft, ArrowRight, Loader2, RefreshCw, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { EditorTimeline } from "@/components/editor/editor-timeline";
@@ -291,15 +291,19 @@ export function EditorRoute() {
   };
 
   // ── Routing guards ───────────────────────────────────────────────────
+  // Both no-manifest and no-approvals used to redirect silently, which made
+  // /edit feel identical to wherever the user landed next. Visible empty
+  // states keep the user oriented — they SEE they're at /edit, just with
+  // nothing to refine yet, and pick the explicit way back.
   const seedMode = searchParams.get("seed") === "demo";
   if (!manifest) {
-    return seedMode ? <SeedingFallback /> : <Navigate to="/" replace />;
+    return seedMode ? <SeedingFallback /> : <EditorAwaitingApprovalsFallback hasManifest={false} />;
   }
   const hasApproved = manifest.beats.some((b) =>
     b.scenes.some((s) => s.approved && s.clipPublicId),
   );
   if (!hasApproved) {
-    return seedMode ? <SeedingFallback /> : <Navigate to="/canvas" replace />;
+    return seedMode ? <SeedingFallback /> : <EditorAwaitingApprovalsFallback hasManifest={true} />;
   }
 
   // ── Final-step navigation ────────────────────────────────────────────
@@ -315,14 +319,26 @@ export function EditorRoute() {
 
   const handleBackToCanvas = () => navigate("/canvas");
 
+  // Save & exit — archives the current project (via reset()'s archive) and
+  // returns to landing. Resume from /projects or the landing recent-3 rail.
+  const resetStore = useBeatGraphStore((s) => s.reset);
+  const handleSaveAndExit = () => {
+    resetStore();
+    navigate("/");
+  };
+
   return (
     <main className="film-grain min-h-screen bg-bg-base px-6 py-10 md:py-14">
       <div className="mx-auto max-w-[112rem] space-y-8">
-        {/* Header */}
-        <header className="flex flex-wrap items-end justify-between gap-4">
+        {/* Header — stacks vertically on mobile so the headline + prompt
+            quote get full width, then the action row drops below. On md+
+            the row sits to the right of the headline as a flex justify
+            split. Previous flex-wrap caused two CTAs to crowd the headline
+            unevenly on narrow viewports. */}
+        <header className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between md:gap-4">
           <div className="space-y-2">
-            <div className="caption-track text-[10px] text-fg-tertiary">
-              Stage 7 · Editor · Cloudinary
+            <div className="font-body text-[12px] font-medium text-fg-tertiary">
+              Editor · Cloudinary
             </div>
             <motion.h1
               initial={{ opacity: 0, y: 8 }}
@@ -332,11 +348,15 @@ export function EditorRoute() {
             >
               The cut, take one.
             </motion.h1>
-            <p className="max-w-prose font-display italic text-base text-fg-secondary">
+            <p className="max-w-prose font-display italic text-lg text-fg-secondary">
               "{manifest.masterPrompt}"
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-shrink-0 flex-wrap items-center gap-2 self-start md:self-end">
+            <Button variant="ghost" size="md" onClick={handleSaveAndExit}>
+              <LogOut size={14} strokeWidth={1.5} aria-hidden="true" />
+              Save &amp; exit
+            </Button>
             <Button variant="ghost" size="md" onClick={handleBackToCanvas}>
               <ArrowLeft size={14} strokeWidth={1.5} aria-hidden="true" />
               Back to canvas
@@ -355,7 +375,7 @@ export function EditorRoute() {
         </header>
 
         {bootError ? (
-          <div className="rounded-md border border-state-error/40 bg-state-error/10 px-4 py-3 font-mono text-[12px] text-state-error">
+          <div className="rounded-md border border-state-error/40 bg-state-error/10 px-4 py-3 font-body text-[13px] text-state-error">
             {bootError}
           </div>
         ) : null}
@@ -374,8 +394,8 @@ export function EditorRoute() {
                   muted
                 />
               ) : (
-                <div className="flex h-[28rem] items-center justify-center font-mono text-[11px] text-fg-tertiary">
-                  Loading the cut…
+                <div className="flex h-[28rem] items-center justify-center font-display text-[15px] italic text-fg-tertiary">
+                  Loading the cut.
                 </div>
               )}
               <AnimatePresence>
@@ -385,7 +405,7 @@ export function EditorRoute() {
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: DURATIONS.quick, ease: EASE.outQuart }}
-                    className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-bg-base/80 px-3 py-1 font-mono text-[10px] text-fg-tertiary backdrop-blur"
+                    className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-bg-base/80 px-3.5 py-1.5 font-body text-[11.5px] font-medium text-fg-tertiary backdrop-blur"
                   >
                     <RefreshCw size={11} strokeWidth={1.5} className="animate-spin" />
                     Re-baking transform
@@ -404,9 +424,9 @@ export function EditorRoute() {
                 onPatchClip={handlePatchClip}
               />
             ) : (
-              <div className="flex items-center gap-2 font-mono text-[11px] text-fg-tertiary">
+              <div className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary">
                 <Loader2 size={12} className="animate-spin" />
-                Loading timeline…
+                Loading timeline.
               </div>
             )}
 
@@ -421,7 +441,7 @@ export function EditorRoute() {
                   onClose={() => setSelectedIdx(null)}
                 />
               ) : (
-                <div className="rounded-md border border-dashed border-fg-tertiary/20 bg-bg-elev-1/40 p-4 text-[12px] text-fg-tertiary">
+                <div className="rounded-md border border-dashed border-fg-tertiary/20 bg-bg-elev-1/40 p-4 font-body text-[13px] text-fg-tertiary">
                   Click a beat on the timeline to refine its trim, transition, and caption.
                 </div>
               )}
@@ -433,10 +453,10 @@ export function EditorRoute() {
             {/* Cloudinary URL — shown like the stitch tray's URL strip, for the demo viewer */}
             {editor.finalUrl ? (
               <section className="space-y-2">
-                <div className="caption-track text-[10px] text-fg-tertiary">
+                <div className="font-body text-[12px] font-medium text-fg-tertiary">
                   Final delivery URL · regenerated on every change
                 </div>
-                <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 p-3 font-mono text-[10.5px] leading-[1.65] text-fg-secondary">
+                <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
                   {editor.finalUrl}
                 </div>
               </section>
@@ -469,6 +489,57 @@ function SeedingFallback() {
       <div className="flex items-center gap-2 font-mono text-[11px] text-fg-tertiary">
         <Loader2 size={12} className="animate-spin" aria-hidden="true" />
         Seeding demo…
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Visible empty state for two cases that used to redirect silently:
+ *   hasManifest=false  → user navigated to /edit with no active project
+ *   hasManifest=true   → project exists but no take is approved yet
+ *
+ * Reuses the editor route's chrome register (film-grain background,
+ * Fraunces display headline, primary CTA) so the user sees they ARE at
+ * /edit and isn't bounced silently to / or /canvas.
+ */
+function EditorAwaitingApprovalsFallback({ hasManifest }: { hasManifest: boolean }) {
+  const navigate = useNavigate();
+  return (
+    <main className="film-grain min-h-screen bg-bg-base px-6 py-10 md:py-14">
+      <div className="mx-auto flex min-h-[70vh] max-w-[60rem] flex-col items-start justify-center gap-6">
+        <div className="font-body text-[12px] font-medium text-fg-tertiary">
+          Editor · Awaiting cut
+        </div>
+        <h1 className="font-display text-display-md italic text-fg-primary">
+          {hasManifest ? "Nothing to refine yet." : "No project in flight."}
+        </h1>
+        <p className="max-w-prose font-display italic text-lg text-fg-secondary">
+          {hasManifest ? (
+            <>
+              Approve a take on <em>the</em> canvas first. The editor opens once
+              there's a cut to refine.
+            </>
+          ) : (
+            <>
+              Type a prompt to begin. The editor opens after the canvas builds
+              and at least one take lands.
+            </>
+          )}
+        </p>
+        <div className="flex flex-wrap items-center gap-3 pt-2">
+          {hasManifest ? (
+            <Button size="md" variant="primary" onClick={() => navigate("/canvas")}>
+              <ArrowLeft size={14} strokeWidth={1.5} aria-hidden="true" />
+              Back to canvas
+            </Button>
+          ) : (
+            <Button size="md" variant="primary" onClick={() => navigate("/")}>
+              <ArrowLeft size={14} strokeWidth={1.5} aria-hidden="true" />
+              Begin a project
+            </Button>
+          )}
+        </div>
       </div>
     </main>
   );

@@ -26,6 +26,27 @@ export interface EditorTurn {
  */
 export type DecomposeStatus = "idle" | "pending" | "success" | "error";
 
+/**
+ * A project archived to the user's local history. `reset()` snapshots the
+ * current manifest into this list before clearing, so the user can resume
+ * past projects from the landing route's "Recent projects" rail or the
+ * dedicated /projects view.
+ *
+ * Capped at 12 most recent (oldest dropped) so localStorage doesn't bloat.
+ */
+export interface ArchivedProject {
+  /** Stable identifier — equals manifest.projectId. */
+  id: string;
+  /** ISO timestamp at the moment of archive. */
+  archivedAt: string;
+  /** Mirrored from the manifest for cheap rendering on list rows. */
+  masterPrompt: string;
+  /** Full manifest snapshot — restored verbatim on resume. */
+  manifest: Manifest;
+}
+
+const PROJECTS_CAP = 12;
+
 interface BeatGraphState {
   manifest: Manifest | null;
   activeBeatId: string | null;
@@ -46,12 +67,30 @@ interface BeatGraphState {
    * of the Canvas and bleed through translucent overlays otherwise.
    */
   stitchTrayOpen: boolean;
+  /**
+   * 2D minimap is now power-user chrome — off by default, toggled from the
+   * command palette ("Toggle overview"). Beat order is already legible from
+   * the L→R recession + connecting path; the minimap earns its real estate
+   * only when the user asks for it.
+   */
+  minimapOpen: boolean;
+  /**
+   * Archived projects (most recent first). Populated by reset() and
+   * resumeProject(); rendered on the landing recent-3 rail and on /projects.
+   */
+  projects: ArchivedProject[];
 
   // mutations
   initialize: (params: { masterPrompt: string; videoType: VideoType }) => void;
   setDecomposeStatus: (status: DecomposeStatus) => void;
   setActiveBeat: (beatId: string | null) => void;
   setStitchTrayOpen: (open: boolean) => void;
+  setMinimapOpen: (open: boolean) => void;
+  /** Promote an archived project back to the active manifest. Archives any
+   *  current manifest first so nothing in flight is silently destroyed. */
+  resumeProject: (projectId: string) => void;
+  /** Permanently delete a single archived project. */
+  discardProject: (projectId: string) => void;
   updateBeat: (beatId: string, patch: Partial<Beat>) => void;
   updateScene: (beatId: string, sceneId: string, patch: Partial<Scene>) => void;
   appendAgentTurn: (beatId: string, sceneId: string, turn: AgentTurn) => void;
@@ -108,6 +147,8 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       decomposeStatus: "idle",
       editor: EDITOR_INITIAL,
       stitchTrayOpen: false,
+      minimapOpen: false,
+      projects: [],
 
       initialize: ({ masterPrompt, videoType }) => {
         const beats = buildInitialBeats(videoType);
@@ -123,6 +164,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
           decomposeStatus: "idle",
           editor: EDITOR_INITIAL,
           stitchTrayOpen: false,
+          minimapOpen: false,
         });
       },
 
@@ -131,6 +173,8 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       setActiveBeat: (beatId) => set({ activeBeatId: beatId }),
 
       setStitchTrayOpen: (open) => set({ stitchTrayOpen: open }),
+
+      setMinimapOpen: (open) => set({ minimapOpen: open }),
 
       updateBeat: (beatId, patch) => {
         const m = get().manifest;
@@ -271,14 +315,66 @@ export const useBeatGraphStore = create<BeatGraphState>()(
 
       resetEditor: () => set({ editor: EDITOR_INITIAL }),
 
-      reset: () =>
+      resumeProject: (projectId) => {
+        const state = get();
+        const target = state.projects.find((p) => p.id === projectId);
+        if (!target) return;
+        // Archive any current manifest first so resuming never silently
+        // drops in-progress work. The target is then promoted, deduped from
+        // the projects list (so it doesn't appear twice), and capped.
+        const archivedHead = state.manifest
+          ? [
+              {
+                id: state.manifest.projectId,
+                archivedAt: nowISO(),
+                masterPrompt: state.manifest.masterPrompt,
+                manifest: state.manifest,
+              },
+              ...state.projects.filter(
+                (p) => p.id !== state.manifest!.projectId && p.id !== projectId,
+              ),
+            ]
+          : state.projects.filter((p) => p.id !== projectId);
+        set({
+          manifest: target.manifest,
+          activeBeatId: null,
+          decomposeStatus: "idle",
+          editor: EDITOR_INITIAL,
+          stitchTrayOpen: false,
+          minimapOpen: false,
+          projects: archivedHead.slice(0, PROJECTS_CAP),
+        });
+      },
+
+      discardProject: (projectId) =>
+        set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) })),
+
+      reset: () => {
+        const state = get();
+        // Snapshot the active manifest into the archive before clearing.
+        // No-op when there's nothing to archive (e.g., reset() called twice
+        // in a row, or called on an already-empty session).
+        const projects = state.manifest
+          ? [
+              {
+                id: state.manifest.projectId,
+                archivedAt: nowISO(),
+                masterPrompt: state.manifest.masterPrompt,
+                manifest: state.manifest,
+              },
+              ...state.projects.filter((p) => p.id !== state.manifest!.projectId),
+            ].slice(0, PROJECTS_CAP)
+          : state.projects;
         set({
           manifest: null,
           activeBeatId: null,
           decomposeStatus: "idle",
           editor: EDITOR_INITIAL,
           stitchTrayOpen: false,
-        }),
+          minimapOpen: false,
+          projects,
+        });
+      },
     }),
     {
       name: "sceneos:beat-graph",
@@ -288,6 +384,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         manifest: state.manifest,
         activeBeatId: state.activeBeatId,
         editor: state.editor,
+        projects: state.projects,
       }) as unknown as BeatGraphState,
     },
   ),

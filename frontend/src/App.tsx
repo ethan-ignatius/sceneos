@@ -8,7 +8,6 @@ import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
 import { StageIndicator } from "@/components/ui/stage-indicator";
-import { MockModeChip } from "@/components/ui/mock-mode-chip";
 import { useLenis } from "@/lib/use-lenis";
 
 export default function App() {
@@ -31,7 +30,6 @@ export default function App() {
       <CinematicCursor />
       <CommandMenuMount />
       <StageIndicator />
-      <MockModeChip />
     </AppErrorBoundary>
   );
 }

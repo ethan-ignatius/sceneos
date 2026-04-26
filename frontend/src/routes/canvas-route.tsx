@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
-import { LocateFixed } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { NodeDetailDrawer } from "@/components/node/node-detail-drawer";
 import { StitchTray } from "@/components/stitch/stitch-tray";
@@ -18,6 +18,7 @@ const BeatMap3D = lazy(() =>
 );
 
 export function CanvasRoute() {
+  const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
   const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
@@ -26,6 +27,16 @@ export function CanvasRoute() {
   // drilling. Recent refactor; see beat-graph-store.ts.
   const stitchOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
   const setStitchOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
+  // Minimap is now opt-in chrome via the command palette ("Toggle overview").
+  // Default false; the canvas reads as a clean cinematic on first land.
+  const minimapOpen = useBeatGraphStore((s) => s.minimapOpen);
+  // reset() now archives the current manifest before clearing — driving the
+  // /projects history. Save & exit = reset + return to landing.
+  const reset = useBeatGraphStore((s) => s.reset);
+  const saveAndExit = useCallback(() => {
+    reset();
+    navigate("/");
+  }, [reset, navigate]);
 
   // Ambient projector loop. Fades in over 0.8s, fades out over 0.6s.
   // Mute is checked at start time only — toggling mid-canvas doesn't
@@ -104,7 +115,7 @@ export function CanvasRoute() {
           type="button"
           onClick={() => setStitchOpen(!stitchOpen)}
           aria-label={`Open stitch tray — ${approvedCount} of ${totalCount} beats ready`}
-          className="pointer-events-auto group inline-flex min-h-9 items-center gap-2.5 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/70 px-3.5 py-1.5 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] transition-[border-color,background-color] duration-200 hover:border-brand-ember/45 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+          className="pointer-events-auto group inline-flex min-h-10 items-center gap-3 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 py-2 pl-4 pr-3.5 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] transition-[border-color,background-color] duration-200 hover:border-brand-ember/45 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
         >
           <span
             aria-hidden
@@ -116,13 +127,13 @@ export function CanvasRoute() {
                   : "bg-fg-tertiary/40"
             }`}
           />
-          <span className="caption-track text-[10px] text-fg-secondary group-hover:text-brand-ember/90">
+          <span className="font-body text-[12.5px] font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
             Stitch
           </span>
-          <span className="font-mono text-[11px] tabular-nums text-fg-primary">
-            {approvedCount.toString().padStart(2, "0")}
-            <span className="text-fg-tertiary/50"> / </span>
-            {totalCount.toString().padStart(2, "0")}
+          <span className="font-display text-[14px] italic leading-none tabular-nums text-fg-primary">
+            {approvedCount}
+            <span className="mx-1 text-fg-tertiary/45">of</span>
+            {totalCount}
           </span>
         </button>
       </motion.div>
@@ -134,54 +145,47 @@ export function CanvasRoute() {
         <DecomposeIndicator />
       </div>
 
+      {/* Save & exit — top-left counterweight to the stitch pill. Archives
+          the current manifest into /projects history and returns to landing.
+          Subdued by default; lifts to fg-secondary on hover. */}
+      <motion.div
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+        className="pointer-events-none absolute left-4 top-4 z-20 md:left-6 md:top-5"
+      >
+        <button
+          type="button"
+          onClick={saveAndExit}
+          aria-label="Save current project and return to landing"
+          title="Save & exit"
+          className="pointer-events-auto group inline-flex min-h-9 items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+        >
+          <LogOut size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
+          <span className="font-body text-[12px] font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+            Save &amp; exit
+          </span>
+        </button>
+      </motion.div>
+
       {/* Always-visible URL strip — Cloudinary track-hero feature is no
           longer hidden behind the stitch tray (VIABILITY V2 / issue #072). */}
       <PersistentUrlStrip onOpenTray={() => setStitchOpen(true)} />
 
-      {/* 2D top-down minimap — the React-Flow-style overview. Click a beat
-          to fly the camera to it. Hidden when the stitch tray is open
-          (it would overlap on smaller viewports). */}
-      {!stitchOpen ? <Minimap beats={manifest.beats} activeBeatId={activeBeatId} /> : null}
-
-      {/* Re-center affordance — bottom-right corner. Subdued by default,
-          ember on hover. Always available; the keyboard shortcut (Esc) is
-          power-user, this is discoverable. Hidden when the stitch tray is
-          open (it would overlap). */}
-      {!stitchOpen ? (
-        <button
-          type="button"
-          onClick={recenterCamera}
-          aria-label="Re-center camera (Esc)"
-          title="Re-center camera (Esc)"
-          className="pointer-events-auto group fixed bottom-4 right-4 z-20 inline-flex items-center gap-2 rounded-full border border-fg-tertiary/25 bg-bg-elev-1/70 px-3 py-1.5 caption-track text-[10px] text-fg-tertiary backdrop-blur-xl transition-colors duration-200 hover:border-brand-ember/60 hover:bg-bg-elev-1/85 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
-        >
-          <LocateFixed size={12} strokeWidth={1.5} aria-hidden="true" />
-          <span>Re-center</span>
-          <span className="ml-1 hidden text-fg-tertiary/60 sm:inline">⎋</span>
-        </button>
+      {/* 2D top-down minimap — the React-Flow-style overview. Off by default
+          (Tier 2 D4): the canvas reads cleaner as a cinematic when first
+          loaded, and the L→R recession + connecting path already convey
+          beat order. Toggled on demand from the command palette. */}
+      {minimapOpen && !stitchOpen ? (
+        <Minimap beats={manifest.beats} activeBeatId={activeBeatId} />
       ) : null}
 
-      {/* Whisper-soft control hint along the bottom centre. Almost
-          invisible at idle (text-fg-tertiary/45), discoverable on hover.
-          Tells the user: scroll-zoom + drag-pan + shift-drag-orbit + Esc.
-          Hidden on mobile (no hover, no scroll-wheel) and behind the
-          stitch tray. */}
-      {!stitchOpen ? (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none fixed inset-x-0 bottom-4 z-10 hidden justify-center sm:flex"
-        >
-          <div className="caption-track flex items-center gap-3 text-[9.5px] text-fg-tertiary/45 transition-colors duration-300 hover:text-fg-tertiary">
-            <span>scroll · zoom</span>
-            <span className="h-1 w-1 rounded-full bg-fg-tertiary/30" />
-            <span>drag · pan</span>
-            <span className="h-1 w-1 rounded-full bg-fg-tertiary/30" />
-            <span>⇧ drag · orbit</span>
-            <span className="h-1 w-1 rounded-full bg-fg-tertiary/30" />
-            <span>⎋ recenter</span>
-          </div>
-        </div>
-      ) : null}
+      {/* Re-center button + control hint removed (Tier 2 D1, D2): both
+          competed with the persistent URL strip and the stitch pill for
+          attention without being primary affordances. Esc still re-centers
+          (handler above), and the canvas's drag/scroll/⇧-orbit controls
+          are discoverable on hover. The command palette (⌘K) surfaces
+          re-center, mute, jump-to-beat, and overview-toggle for power use. */}
 
       <AnimatePresence>{activeBeatId ? <NodeDetailDrawer key={activeBeatId} /> : null}</AnimatePresence>
 
@@ -202,21 +206,41 @@ export function CanvasRoute() {
  * "Pulling focus" is a film-set call ("hold for focus") that happens to
  * also describe a 3D scene resolving — both meanings land.
  */
+/**
+ * Loading state. The visible content is delayed by 350ms — if the lazy
+ * R3F bundle resolves faster than that (typical: bundle is preloaded
+ * during the bridge so it lands warm), the user never sees a flash. If
+ * the load is genuinely slow, the content fades in gracefully and
+ * carries through to the canvas mount without a hard cut.
+ *
+ * Background is bg-bg-base — identical to the R3F Canvas's `<color>`
+ * background — so the moment Suspense unmounts the fallback, the only
+ * change is the planets ramping in via NodeMesh's intro animation;
+ * there's no color shift, no dark gap.
+ */
 function CanvasFallback() {
   return (
-    <div className="grid h-full w-full place-items-center bg-bg-base">
+    <div
+      className="grid h-full w-full place-items-center bg-bg-base"
+      style={{
+        // 350ms delayed fade-in — under that threshold and the user
+        // never sees the spinner at all.
+        animation: "canvasFallbackIn 600ms ease 350ms forwards",
+        opacity: 0,
+      }}
+    >
       <div className="flex flex-col items-center gap-4 text-center">
         <span
           aria-hidden
-          className="ember-pulse h-2.5 w-2.5 rounded-full bg-brand-ember shadow-[0_0_24px_rgba(240,168,104,0.55)]"
+          className="ember-pulse h-2 w-2 rounded-full bg-brand-ember shadow-[0_0_18px_rgba(240,168,104,0.45)]"
         />
-        <h2 className="font-display text-display-md italic leading-[1.0] text-fg-primary">
-          Pulling focus.
-        </h2>
-        <p className="caption-track text-[10px] text-fg-tertiary">
-          Loading the scene
+        <p className="font-body text-[12px] tracking-[0.04em] text-fg-tertiary/80">
+          pulling focus
         </p>
       </div>
+      {/* Inline keyframes to keep the fallback self-contained — no
+          coupling to Tailwind config or global stylesheets. */}
+      <style>{`@keyframes canvasFallbackIn { to { opacity: 1; } }`}</style>
     </div>
   );
 }
@@ -225,7 +249,7 @@ function CanvasMissingManifestFallback() {
   return (
     <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
       <div className="max-w-md space-y-5 text-center">
-        <div className="caption-track text-[10px] text-fg-tertiary">No active project</div>
+        <div className="font-body text-[12px] font-medium text-fg-tertiary">No active project</div>
         <h2 className="font-display text-display-md italic leading-snug text-fg-primary">
           Start with a sentence.
         </h2>
@@ -235,7 +259,7 @@ function CanvasMissingManifestFallback() {
         </p>
         <Link
           to="/"
-          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
+          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
         >
           Back to landing
         </Link>
@@ -249,7 +273,7 @@ function CanvasEmptyBeatsFallback() {
   return (
     <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
       <div className="max-w-md space-y-5 text-center">
-        <div className="caption-track text-[10px] text-state-error">Stale project state</div>
+        <div className="font-body text-[12px] font-medium text-state-error">Stale project state</div>
         <h2 className="font-display text-display-md italic leading-snug text-fg-primary">
           The manifest is empty.
         </h2>
@@ -264,7 +288,7 @@ function CanvasEmptyBeatsFallback() {
             localStorage.removeItem("sceneos:prompt");
             location.href = "/";
           }}
-          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
+          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
         >
           Reset and restart
         </button>

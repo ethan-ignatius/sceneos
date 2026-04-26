@@ -83,11 +83,11 @@ export function EditorAgentPanel({
       )}
     >
       {/* Header */}
-      <header className="space-y-1.5 border-b border-fg-tertiary/15 px-5 pb-4 pt-5">
-        <div className="caption-track text-[10px] text-fg-tertiary">
+      <header className="space-y-2 border-b border-fg-tertiary/15 px-5 pb-4 pt-5">
+        <div className="font-body text-[12px] font-medium text-fg-tertiary">
           Editor · Director voice
         </div>
-        <h2 className="font-display text-xl italic leading-tight text-fg-primary">
+        <h2 className="font-display text-2xl italic leading-tight text-fg-primary">
           {committed ? "Locked." : "What do you want to refine?"}
         </h2>
       </header>
@@ -95,10 +95,11 @@ export function EditorAgentPanel({
       {/* Conversation scroller */}
       <div
         ref={scrollRef}
+        data-lenis-prevent
         className="flex-1 space-y-4 overflow-y-auto px-5 py-5 [scrollbar-width:thin]"
       >
         {conversation.length === 0 && !thinking && !latest ? (
-          <div className="rounded-sm border border-dashed border-fg-tertiary/20 bg-bg-base/40 p-4 text-[12px] leading-relaxed text-fg-tertiary">
+          <div className="rounded-md border border-dashed border-fg-tertiary/20 bg-bg-base/40 p-4 font-body text-[13px] leading-relaxed text-fg-tertiary">
             The cut just rendered. Tell me what you want to change, or wait for me to suggest something.
           </div>
         ) : null}
@@ -111,10 +112,10 @@ export function EditorAgentPanel({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex items-center gap-2 text-[11px] font-mono text-fg-tertiary"
+            className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
           >
             <Loader2 size={11} strokeWidth={1.5} className="animate-spin" />
-            <span>Director is watching the cut…</span>
+            <span>Director is watching the cut.</span>
           </motion.div>
         ) : null}
 
@@ -132,14 +133,14 @@ export function EditorAgentPanel({
                 "shadow-[inset_0_0_0_1px_rgba(240,168,104,0.06)]",
               )}
             >
-              <div className="flex items-center gap-1.5 caption-track text-[10px] text-brand-ember">
-                <Sparkles size={11} strokeWidth={1.5} aria-hidden="true" />
+              <div className="flex items-center gap-1.5 font-body text-[12px] font-medium text-brand-ember">
+                <Sparkles size={12} strokeWidth={1.5} aria-hidden="true" />
                 <span>Director suggests</span>
               </div>
-              <p className="text-[13px] leading-relaxed text-fg-primary">{proposal.rationale}</p>
+              <p className="font-body text-[13.5px] leading-relaxed text-fg-primary">{proposal.rationale}</p>
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {livingMatchesProposal ? (
-                  <span className="caption-track text-[9px] text-fg-tertiary">Applied</span>
+                  <span className="font-body text-[11.5px] text-fg-tertiary">Applied</span>
                 ) : (
                   <>
                     <Button size="sm" variant="primary" onClick={onAcceptProposal}>
@@ -154,7 +155,7 @@ export function EditorAgentPanel({
 
               {/* Follow-up suggestions — same shape as the questionnaire pills. */}
               <div className="space-y-1.5 pt-2">
-                <div className="caption-track text-[9px] text-fg-tertiary">
+                <div className="font-body text-[11.5px] font-medium text-fg-tertiary">
                   Or try
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -172,8 +173,8 @@ export function EditorAgentPanel({
                       onClick={() => handleSuggestion(s)}
                       disabled={thinking || committed}
                       className={cn(
-                        "rounded-sm border border-fg-tertiary/20 bg-bg-base/60 px-3 py-2",
-                        "text-left text-[12px] leading-snug text-fg-secondary",
+                        "rounded-md border border-fg-tertiary/20 bg-bg-base/60 px-3.5 py-2.5",
+                        "text-left font-body text-[13px] leading-snug text-fg-secondary",
                         "transition-colors duration-200 ease-out",
                         "hover:border-brand-ember-dim/60 hover:text-fg-primary",
                         "disabled:pointer-events-none disabled:opacity-50",
@@ -195,11 +196,11 @@ export function EditorAgentPanel({
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
               className="space-y-2 rounded-md border border-state-success/40 bg-state-success/5 p-4"
             >
-              <div className="caption-track text-[10px] text-state-success">Locked</div>
-              <p className="font-display text-base italic leading-snug text-fg-primary">
+              <div className="font-body text-[12px] font-medium text-state-success">Locked</div>
+              <p className="font-display text-lg italic leading-snug text-fg-primary">
                 {commit.summary}
               </p>
-              <p className="text-[12px] leading-relaxed text-fg-tertiary">{commit.rationale}</p>
+              <p className="font-body text-[13px] leading-relaxed text-fg-tertiary">{commit.rationale}</p>
             </motion.div>
           ) : null}
         </AnimatePresence>

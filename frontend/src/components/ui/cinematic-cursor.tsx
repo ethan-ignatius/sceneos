@@ -66,7 +66,11 @@ export function CinematicCursor() {
         dot.style.opacity = hoverRef.current ? "0" : "1";
       }
       if (ring) {
-        const scale = hoverRef.current ? 2.4 : 1;
+        // Ring is rendered at its full hover size (56×56) and scaled DOWN
+        // for the idle state. This avoids upscaling a 24×24 raster to 56px
+        // on hover, which made the border look chunky / pixelated. Native
+        // hover render = crisp; downscale on idle is forgiving.
+        const scale = hoverRef.current ? 1 : 0.43;
         const fill = hoverRef.current ? "1" : "0";
         ring.style.transform = `translate3d(${ringX.current}px, ${ringY.current}px, 0) translate(-50%, -50%) scale(${scale})`;
         ring.style.setProperty("--ring-fill", fill);

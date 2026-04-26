@@ -84,10 +84,10 @@ export function StageIndicator() {
             transition={{ duration: 0.22, ease: [0.25, 1, 0.5, 1] }}
             className="ml-1 inline-flex items-baseline gap-1.5"
           >
-            <span className="font-mono text-[9px] tabular-nums text-fg-tertiary/70">
+            <span className="font-mono text-[11.5px] tabular-nums text-fg-tertiary/70">
               {(activeIndex + 1).toString().padStart(2, "0")}
             </span>
-            <span className="text-[12px] font-medium text-fg-primary">
+            <span className="font-body text-[13px] font-medium text-fg-primary">
               {activeStage.label}
             </span>
           </motion.span>

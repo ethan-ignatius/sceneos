@@ -59,8 +59,8 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
 
   if (!src) {
     return (
-      <div className="grid h-full place-items-center font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary">
-        Clip not yet available
+      <div className="grid h-full place-items-center font-display text-[14px] italic text-fg-tertiary">
+        Clip not yet available.
       </div>
     );
   }
@@ -109,10 +109,10 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.18em]"
+        className="flex items-baseline justify-between font-body text-[12px] font-medium"
       >
         <span className="text-fg-tertiary">Refined prompt</span>
-        <span className="text-fg-tertiary/70 tabular-nums">
+        <span className="font-mono text-[12px] tabular-nums text-fg-tertiary/70">
           {scene.durationSeconds ?? beat.archetype.suggestedDuration}s
         </span>
       </motion.div>

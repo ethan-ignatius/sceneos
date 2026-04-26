@@ -186,9 +186,9 @@ export function NodeDetailDrawer() {
           className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-6 pb-4 pt-5"
         >
           <div>
-            <div className="caption-track text-[9px] tabular-nums text-fg-tertiary/70">
+            <div className="font-body text-[12px] font-medium tabular-nums text-fg-tertiary">
               <span className="text-brand-ember">{(beatIndex + 1).toString().padStart(2, "0")}</span>
-              <span className="mx-1.5 text-fg-tertiary/40">/</span>
+              <span className="mx-1.5 text-fg-tertiary/45">of</span>
               <span>{totalBeats.toString().padStart(2, "0")}</span>
             </div>
             <h2 className="mt-1.5 font-display text-2xl italic leading-[1.05] text-fg-primary">
@@ -197,7 +197,7 @@ export function NodeDetailDrawer() {
           </div>
           <button
             onClick={() => setActiveBeat(null)}
-            className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-fg-tertiary/70 transition-colors hover:bg-bg-elev-2 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
+            className="grid h-8 w-8 flex-shrink-0 place-items-center rounded-full bg-bg-elev-2/40 text-fg-tertiary transition-colors hover:bg-bg-elev-2/80 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember"
             aria-label="Close drawer"
             title="Close"
           >
@@ -260,7 +260,7 @@ export function NodeDetailDrawer() {
                     onClick={handleGenerate}
                   >
                     <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
-                    <span className="caption-track text-[12px]">Roll camera</span>
+                    <span className="font-body text-[13px] font-medium">Roll camera</span>
                   </Button>
                 );
               }
@@ -291,7 +291,7 @@ export function NodeDetailDrawer() {
                 <button
                   type="button"
                   onClick={lockIn}
-                  className="block w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-2/30 px-4 py-2.5 caption-track text-[10px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+                  className="block w-full rounded-md border border-fg-tertiary/25 bg-bg-elev-2/30 px-4 py-2.5 font-body text-[12.5px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:bg-bg-elev-2/50 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
                   aria-label="Lock in answers and prepare to generate"
                 >
                   I have enough — lock it in

@@ -82,9 +82,14 @@ export function FinalDeliveryRoute() {
     navigate("/");
   }, [reset, resetPrompt, navigate]);
 
-  // Guard: if there's no rendered cinematic, this route shouldn't be visible.
-  if (!manifest || !finalUrl) {
+  // Guard: no manifest = no project at all; landing is the right home for
+  // that. Has-manifest-but-no-finalUrl is the broken-feeling case (used to
+  // bounce to / silently); give it a visible empty state instead.
+  if (!manifest) {
     return <Navigate to="/" replace />;
+  }
+  if (!finalUrl) {
+    return <FinalAwaitingRenderFallback />;
   }
 
   // Append fl_attachment for forced download. Cloudinary's transform tells
@@ -101,18 +106,22 @@ export function FinalDeliveryRoute() {
     // to opacity when the user prefers reduced motion.
     <MotionConfig reducedMotion="user">
       <main className="film-grain relative min-h-screen overflow-x-hidden bg-black px-6 py-16">
-        {/* Letterbox bars — top + bottom, 12vh each, slide-in for the
-            "fade-to-cinema" reveal. Full-screen black film frame. */}
+        {/* Letterbox bars — top + bottom, 10vh each, slide-in for the
+            "fade-to-cinema" reveal. MotionConfig reducedMotion="user"
+            above auto-degrades scaleY → opacity, but the initial state
+            still renders a solid black bar at full height for one frame.
+            Adding `opacity: 0` to initial means the reduced-motion path
+            fades the bar in cleanly instead of cutting from black. */}
         <motion.div
-          initial={{ scaleY: 0 }}
-          animate={{ scaleY: 1 }}
+          initial={{ scaleY: 0, opacity: 0 }}
+          animate={{ scaleY: 1, opacity: 1 }}
           transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
           className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[10vh] origin-top bg-black"
           aria-hidden="true"
         />
         <motion.div
-          initial={{ scaleY: 0 }}
-          animate={{ scaleY: 1 }}
+          initial={{ scaleY: 0, opacity: 0 }}
+          animate={{ scaleY: 1, opacity: 1 }}
           transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
           className="pointer-events-none fixed inset-x-0 bottom-0 z-40 h-[10vh] origin-bottom bg-black"
           aria-hidden="true"
@@ -124,12 +133,12 @@ export function FinalDeliveryRoute() {
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
           className="pointer-events-none fixed inset-x-0 top-0 z-50 flex h-[10vh] items-center justify-between px-8 sm:px-12"
         >
-          <div className="caption-track text-[9px] text-fg-tertiary/80">
+          <div className="font-body text-[11.5px] font-medium text-fg-tertiary/80">
             <span className="text-brand-ember">●</span>
-            <span className="ml-2">A SceneOS Production</span>
+            <span className="ml-2">A SceneOS production</span>
           </div>
-          <div className="caption-track text-[9px] text-fg-tertiary/80">
-            {manifest.videoType.toUpperCase()} · {formatDuration(manifest.durationSeconds)}
+          <div className="font-body text-[11.5px] font-medium tabular-nums text-fg-tertiary/80">
+            {manifest.videoType} · {formatDuration(manifest.durationSeconds)}
           </div>
         </motion.div>
         <motion.div
@@ -138,10 +147,10 @@ export function FinalDeliveryRoute() {
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
           className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex h-[10vh] items-center justify-between px-8 sm:px-12"
         >
-          <div className="caption-track text-[9px] text-fg-tertiary/80">
-            Cloudinary · fl_splice
+          <div className="font-body text-[11.5px] text-fg-tertiary/80">
+            Composed with Cloudinary
           </div>
-          <div className="caption-track text-[9px] tabular-nums text-fg-tertiary/80">
+          <div className="font-body text-[11.5px] tabular-nums text-fg-tertiary/80">
             {new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric" }).format(new Date())}
           </div>
         </motion.div>
@@ -157,7 +166,7 @@ export function FinalDeliveryRoute() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.1 }}
-              className="font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary"
+              className="font-body text-[12.5px] font-medium tabular-nums text-fg-tertiary"
             >
               Delivered · {manifest.videoType} · {formatDuration(manifest.durationSeconds)}
             </motion.p>
@@ -234,7 +243,7 @@ export function FinalDeliveryRoute() {
           className="relative z-10 mx-auto mt-32 grid max-w-[64rem] gap-10 pb-16"
         >
           <div className="space-y-2">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
+            <div className="font-body text-[12px] font-medium text-fg-tertiary">
               Master prompt
             </div>
             <p className="max-w-prose font-display italic text-[1.25rem] leading-[1.45] text-fg-secondary">
@@ -243,7 +252,7 @@ export function FinalDeliveryRoute() {
           </div>
 
           <div className="space-y-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
+            <div className="font-body text-[12px] font-medium text-fg-tertiary">
               Beat manifest
             </div>
             <ol className="divide-y divide-fg-tertiary/15 border-y border-fg-tertiary/15">
@@ -281,7 +290,7 @@ export function FinalDeliveryRoute() {
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.0 }}
           className={cn(
             "btn--edge-underline group fixed right-8 top-[3.5vh] z-[60] inline-flex items-center gap-2",
-            "rounded-md px-3 py-1.5 caption-track text-[10px]",
+            "rounded-full border border-fg-tertiary/20 px-4 py-2 font-body text-[12px] font-medium",
             "text-fg-tertiary transition-colors duration-200 hover:text-fg-primary",
           )}
         >
@@ -304,4 +313,58 @@ function formatDuration(seconds: number | undefined): string {
   const ss = Math.floor(seconds % 60);
   if (mm === 0) return `${ss}s`;
   return `${mm}m ${ss.toString().padStart(2, "0")}s`;
+}
+
+/**
+ * Visible empty state when a manifest exists but the cinematic hasn't
+ * been rendered yet. Replaces the previous silent `<Navigate to="/" />`
+ * which made /final feel like it was bouncing the user to landing.
+ *
+ * Mirrors the route's letterbox register (top + bottom black bars,
+ * Fraunces display headline) so the user sees they ARE at /final, just
+ * with nothing delivered yet.
+ */
+function FinalAwaitingRenderFallback() {
+  const navigate = useNavigate();
+  return (
+    <MotionConfig reducedMotion="user">
+      <main className="film-grain relative min-h-screen overflow-x-hidden bg-bg-base px-6 py-16">
+        <motion.div
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
+          className="pointer-events-none fixed inset-x-0 top-0 z-40 h-[10vh] origin-top bg-black"
+          aria-hidden="true"
+        />
+        <motion.div
+          initial={{ scaleY: 0 }}
+          animate={{ scaleY: 1 }}
+          transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-40 h-[10vh] origin-bottom bg-black"
+          aria-hidden="true"
+        />
+        <section className="relative z-10 mx-auto flex min-h-screen max-w-[64rem] flex-col items-center justify-center gap-6 text-center">
+          <div className="font-body text-[12px] font-medium text-fg-tertiary">
+            Final delivery · Awaiting render
+          </div>
+          <h1 className="font-display text-display-lg italic text-fg-primary">
+            The cinematic isn't rendered yet.
+          </h1>
+          <p className="max-w-prose font-display italic text-[1.125rem] leading-[1.45] text-fg-secondary">
+            Approve every take on <em>the</em> canvas, then stitch the cut.
+            Final delivery opens once <em>the</em> render lands.
+          </p>
+          <Button
+            size="lg"
+            variant="primary"
+            onClick={() => navigate("/canvas")}
+            className="mt-3"
+          >
+            Continue from canvas
+            <ArrowRight size={16} strokeWidth={1.5} aria-hidden="true" />
+          </Button>
+        </section>
+      </main>
+    </MotionConfig>
+  );
 }

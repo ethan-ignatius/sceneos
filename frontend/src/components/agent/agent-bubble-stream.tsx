@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import { Send, Loader2, RotateCcw, Mic, MicOff, ImagePlus, X } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { Send, Loader2, RotateCcw, Mic, MicOff, ImagePlus, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
@@ -54,6 +55,14 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // Collapse old turns by default — only the last few are visible. The user
   // can opt to expand via the button at the top of the scroller.
   const [showAllTurns, setShowAllTurns] = useState(false);
+  // The latest agent question's three "or pick one" suggestions, surfaced
+  // as clickable pills above the input. Cleared on user submit and
+  // replaced when the next agent turn arrives. The data is on the wire
+  // via AgentResponse.suggestedAnswers; the editor renders the same
+  // shape via suggestedFollowups.
+  const [latestSuggestions, setLatestSuggestions] = useState<
+    readonly [string, string, string] | null
+  >(null);
 
   // Reference frames — drag-drop or file picker. Stored as dataUris in
   // local component state and prefixed onto the userMessage with a marker
@@ -188,6 +197,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             timestamp: nowISO(),
           });
           updateBeat(beat.beatId, { status: "questioning" });
+          setLatestSuggestions(res.suggestedAnswers ?? null);
         } else if (res.kind === "sufficient") {
           // Edge case: agent considers itself sufficient on first turn.
           updateScene(beat.beatId, scene.sceneId, {
@@ -234,6 +244,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           content: res.question,
           timestamp: nowISO(),
         });
+        setLatestSuggestions(res.suggestedAnswers ?? null);
       } else {
         updateScene(beat.beatId, scene.sceneId, {
           refinedPrompt: res.refinedPrompt,
@@ -245,6 +256,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           content: `Cued. ${res.sceneSummary}. Call action when ready.`,
           timestamp: nowISO(),
         });
+        // Beat is sufficient — no more questions, drop any stale pills.
+        setLatestSuggestions(null);
       }
       setPendingRetryMessage(null);
     } catch (err) {
@@ -283,12 +296,26 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     });
     setDraft("");
     setImageRefs([]);
+    setLatestSuggestions(null);
     await callAgent(`${refMarker}${trimmed}`);
   };
 
   const retry = async () => {
     if (!pendingRetryMessage || inFlight) return;
     await callAgent(pendingRetryMessage);
+  };
+
+  // Click on a suggested-answer pill = submit it as a user turn (skipping
+  // the typing). Mirrors the editor's followup pattern.
+  const handleSuggestion = async (suggestion: string) => {
+    if (inFlight || !manifest) return;
+    appendAgentTurn(beat.beatId, scene.sceneId, {
+      role: "user",
+      content: suggestion,
+      timestamp: nowISO(),
+    });
+    setLatestSuggestions(null);
+    await callAgent(suggestion);
   };
 
   return (
@@ -305,8 +332,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-md border-2 border-dashed border-brand-ember/60 bg-brand-ember/5 backdrop-blur-sm"
         >
-          <div className="caption-track text-[11px] text-brand-ember">
-            Drop frames · mood · references
+          <div className="font-display text-[14px] italic text-brand-ember">
+            Drop frames, mood, references.
           </div>
         </div>
       ) : null}
@@ -325,7 +352,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           push the input form off-viewport. The drawer body already has
           `overflow-hidden flex-1`, so `min-h-0` here is what actually
           enables the inner overflow-y-auto to clip rather than grow. */}
-      <div ref={scrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1">
+      <div
+        ref={scrollRef}
+        data-lenis-prevent
+        className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1"
+      >
         {(() => {
           const turns = scene.conversation;
           const VISIBLE = 4; // last ~2 questions + 2 answers
@@ -338,7 +369,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllTurns(true)}
-                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3 py-1 caption-track text-[10px] text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-[12px] font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                   aria-label={`Show ${collapsedCount} earlier turn${collapsedCount === 1 ? "" : "s"}`}
                 >
                   ↑ {collapsedCount} earlier turn{collapsedCount === 1 ? "" : "s"}
@@ -348,7 +379,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllTurns(false)}
-                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3 py-1 caption-track text-[10px] text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-[12px] font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                   aria-label="Collapse earlier turns"
                 >
                   ↓ collapse
@@ -369,7 +400,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           <div
             role="status"
             aria-live="polite"
-            className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary"
+            className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
           >
             <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
             Composing the shot.
@@ -395,6 +426,34 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           </div>
         ) : null}
       </div>
+
+      {/* Suggested answers — three "or pick one" options the agent emitted
+          with its latest question. Clicking submits the suggestion as a
+          user turn (skipping the typing). Cleared on user submit, on a
+          new agent turn without suggestions, or when the beat goes
+          sufficient. Mirrors the editor's followup pill pattern. */}
+      {latestSuggestions && !inFlight ? (
+        <div className="mt-3 flex flex-col gap-1.5 border-t border-fg-tertiary/30 pt-3">
+          {latestSuggestions.map((s, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => void handleSuggestion(s)}
+              disabled={inFlight}
+              className={cn(
+                "rounded-md border border-fg-tertiary/20 bg-bg-base/60 px-3.5 py-2.5",
+                "text-left font-body text-[13px] leading-snug text-fg-secondary",
+                "transition-colors duration-200 ease-out",
+                "hover:border-brand-ember-dim/60 hover:text-fg-primary",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember",
+                "disabled:pointer-events-none disabled:opacity-50",
+              )}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {/* Reference-frame thumbnail strip — appears above the input when
           images have been dropped. Each thumb has an X to remove. */}

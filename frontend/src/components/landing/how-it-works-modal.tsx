@@ -57,7 +57,7 @@ export function HowItWorksModal({ open, onOpenChange }: HowItWorksModalProps) {
               </span>
               <div className="space-y-1">
                 <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary tabular-nums">
+                  <span className="font-body text-[12px] font-medium tabular-nums text-fg-tertiary">
                     {(i + 1).toString().padStart(2, "0")}
                   </span>
                   <span className="font-display text-lg italic text-fg-primary">{step.verb}</span>
@@ -71,7 +71,7 @@ export function HowItWorksModal({ open, onOpenChange }: HowItWorksModalProps) {
         })}
       </ol>
 
-      <p className="mt-6 border-t border-fg-tertiary/20 pt-4 font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
+      <p className="mt-6 border-t border-fg-tertiary/20 pt-4 font-body text-[12px] font-medium text-fg-tertiary">
         Built for LA Hacks 2026 · Cloudinary track
       </p>
     </Dialog>
