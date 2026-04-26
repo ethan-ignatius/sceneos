@@ -7,6 +7,7 @@ import type {
   EditorApplyRequest,
   EditorApplyResponse,
   EditorInitResponse,
+  EditorStreamEvent,
   EditorTurnRequest,
   EditorTurnResponse,
   GenerateRequest,
@@ -106,6 +107,54 @@ async function* agentStream(
   }
 }
 
+/**
+ * Stream `/api/editor/stream` SSE events. Same envelope as agentStream
+ * — `type` discriminator, `result` event mirrors EditorTurnResponse so
+ * consumers can branch on `kind` ("propose" | "commit") inside it.
+ *
+ * Editor latency on Vertex Gemini 2.5 Flash is ~6–8s per turn (same
+ * profile as the main agent). Streaming gives the user transparent
+ * thinking-token feedback during the wait so the UI never reads as
+ * frozen.
+ */
+async function* editorStream(
+  body: EditorTurnRequest,
+  signal?: AbortSignal,
+): AsyncGenerator<EditorStreamEvent, void, unknown> {
+  const res = await fetch(`${BASE_URL}/api/editor/stream`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    let details: unknown = undefined;
+    try { details = await res.json(); } catch { /* swallow */ }
+    throw new ApiError(res.status, `editor/stream failed: ${res.status}`, details);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      for (const line of block.split("\n")) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          yield JSON.parse(line.slice(6)) as EditorStreamEvent;
+        } catch {
+          /* swallow malformed event */
+        }
+      }
+    }
+  }
+}
+
 export const api = {
   // Legacy one-shot agent turn. Prefer agentStream() for live thinking UI.
   agent: (body: AgentRequest) =>
@@ -146,6 +195,8 @@ export const api = {
       method: "POST",
       body,
     }),
+
+  editorStream,
 
   editorApply: (body: EditorApplyRequest) =>
     request<EditorApplyRequest, EditorApplyResponse>("/api/editor/apply", {

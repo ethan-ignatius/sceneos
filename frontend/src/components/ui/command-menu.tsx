@@ -14,14 +14,47 @@ import {
   LocateFixed,
   Map as MapIcon,
   FolderClock,
+  Beaker,
+  Scissors,
+  PlayCircle,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { useBeatGraphStore, selectApprovedClipPublicIds } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { isAudioMuted, setAudioMuted } from "@/lib/audio-cues";
 import { buildSpliceUrl } from "@/lib/cloudinary";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
+import type { EditDecisions } from "@/types/api";
 import { toast } from "sonner";
+
+// ─── TEMP DEMO SEED — REMOVE BEFORE PRODUCTION ──────────────────────────
+// Five well-known Cloudinary `demo`-cloud sample videos. Used by the
+// dev-only "Seed demo state" command to fast-forward into the post-
+// generation flow (canvas all-approved → stitch → editor → final) without
+// waiting on real provider calls. Tracked for removal in task #94.
+const DEMO_CLOUD = "demo";
+const DEMO_CLIPS = [
+  { publicId: "elephants", durationSeconds: 6 },
+  { publicId: "dog", durationSeconds: 5 },
+  { publicId: "old_couple", durationSeconds: 8 },
+  { publicId: "kitten_fighting", durationSeconds: 4 },
+  { publicId: "sample", durationSeconds: 5 },
+] as const;
+
+function buildDemoSpliceUrl(): string {
+  // Build a real Cloudinary fl_splice URL using the demo cloud's public
+  // sample assets. The base clip is the LAST entry; the others splice on
+  // top in order (Cloudinary's own URL convention).
+  const ids = DEMO_CLIPS.map((c) => c.publicId);
+  const base = ids[ids.length - 1];
+  const splices = ids
+    .slice(0, -1)
+    .map((id) => `fl_splice,l_video:${id}/fl_layer_apply`)
+    .join("/");
+  return `https://res.cloudinary.com/${DEMO_CLOUD}/video/upload/${splices}/${base}.mp4`;
+}
+// ─── END TEMP DEMO SEED ─────────────────────────────────────────────────
 
 /**
  * Global ⌘K command palette. Mounted at App root, listens for meta+k / ctrl+k.
@@ -47,7 +80,13 @@ export function CommandMenu() {
   const setMinimapOpen = useBeatGraphStore((s) => s.setMinimapOpen);
   const reset = useBeatGraphStore((s) => s.reset);
   const resetPrompt = usePromptStore((s) => s.reset);
-  const approvedIds = useBeatGraphStore(selectApprovedClipPublicIds);
+  // useShallow: selectApprovedClipPublicIds builds a fresh array on every
+  // call. Without shallow equality, Zustand v5 treats each call as a new
+  // state and re-renders on every store update — under React 19 the
+  // command-menu subtree fast-paths into a max-update-depth crash that
+  // takes the whole app down before any route mounts. See
+  // SENIOR_FRONTEND_TRANSMISSION Part 12.4.
+  const approvedIds = useBeatGraphStore(useShallow(selectApprovedClipPublicIds));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -110,6 +149,86 @@ export function CommandMenu() {
     close();
   };
 
+  const jumpToEditor = () => {
+    navigate("/edit");
+    close();
+  };
+
+  const jumpToFinal = () => {
+    navigate("/final");
+    close();
+  };
+
+  // ─── TEMP DEMO SEED — REMOVE BEFORE PRODUCTION ────────────────────────
+  // Pre-fills the manifest with approved beats + working Cloudinary
+  // demo-cloud clip URLs + a real fl_splice final URL + editor decisions.
+  // Lets the user walk the post-generation flow (canvas all-approved →
+  // stitch tray → editor → final delivery) without waiting on real
+  // provider calls. Tracked for removal in task #94.
+  const seedDemoState = () => {
+    const store = useBeatGraphStore.getState();
+    // 1. Initialize a manifest if one doesn't exist. The user might have
+    //    triggered this from a fresh landing — give them a project to
+    //    seed into.
+    if (!store.manifest) {
+      store.initialize({
+        masterPrompt: "demo: a cinematic morning interrupted by something extraordinary",
+        videoType: "trailer",
+      });
+    }
+    const fresh = useBeatGraphStore.getState().manifest;
+    if (!fresh) {
+      toast.error("Couldn't initialize demo manifest.");
+      return;
+    }
+    // 2. Approve each beat with a demo clip. Slice to whichever is shorter
+    //    (manifest beats vs DEMO_CLIPS) so we never index past either.
+    const beatsToSeed = fresh.beats.slice(0, DEMO_CLIPS.length);
+    beatsToSeed.forEach((beat, i) => {
+      const demoClip = DEMO_CLIPS[i];
+      const scene = beat.scenes[0];
+      if (!scene) return;
+      store.updateScene(beat.beatId, scene.sceneId, {
+        clipPublicId: demoClip.publicId,
+        clipUrl: `https://res.cloudinary.com/${DEMO_CLOUD}/video/upload/${demoClip.publicId}.mp4`,
+        durationSeconds: demoClip.durationSeconds,
+        approved: true,
+        refinedPrompt:
+          scene.refinedPrompt ??
+          `demo: ${beat.beatName} — placeholder prompt seeded by the dev demo command.`,
+      });
+      store.updateBeat(beat.beatId, { status: "approved" });
+    });
+    // 3. Pre-bake the final cinematic URL so /final + /edit work without a
+    //    backend round-trip.
+    const totalDuration = beatsToSeed.reduce(
+      (sum, _, i) => sum + DEMO_CLIPS[i].durationSeconds,
+      0,
+    );
+    const finalUrl = buildDemoSpliceUrl();
+    const thumbnailUrl = `https://res.cloudinary.com/${DEMO_CLOUD}/video/upload/so_99p,f_jpg/${DEMO_CLIPS[0].publicId}.jpg`;
+    store.setFinalCinematic({ finalUrl, thumbnailUrl, durationSeconds: totalDuration });
+    // 4. Pre-seed editor decisions + baked URL so /edit doesn't need to
+    //    call /api/editor/init.
+    const decisions: EditDecisions = {
+      clips: beatsToSeed.map((beat, i) => ({
+        beatId: beat.beatId,
+        publicId: DEMO_CLIPS[i].publicId,
+        durationSeconds: DEMO_CLIPS[i].durationSeconds,
+      })),
+    };
+    store.setEditorBaked({
+      decisions,
+      finalUrl,
+      thumbnailUrl,
+      durationSeconds: totalDuration,
+    });
+    toast.success(`Demo state seeded — ${beatsToSeed.length} beats approved.`);
+    if (window.location.pathname !== "/canvas") navigate("/canvas");
+    close();
+  };
+  // ─── END TEMP DEMO SEED ───────────────────────────────────────────────
+
   return (
     <AnimatePresence>
       {open ? (
@@ -137,7 +256,10 @@ export function CommandMenu() {
                   className="w-full bg-transparent font-body text-base text-fg-primary placeholder:text-fg-tertiary focus:outline-none"
                 />
               </div>
-              <Command.List className="max-h-[24rem] overflow-y-auto p-2">
+              <Command.List
+                data-lenis-prevent
+                className="max-h-[24rem] overflow-y-auto p-2 [scrollbar-width:thin]"
+              >
                 <Command.Empty className="px-3 py-6 text-center font-display text-[14px] italic text-fg-tertiary">
                   No matches.
                 </Command.Empty>
@@ -214,6 +336,26 @@ export function CommandMenu() {
                       close();
                     }}
                   />
+                  <CommandRow
+                    icon={<Scissors size={14} strokeWidth={1.5} />}
+                    label="Jump to editor"
+                    hint="/edit"
+                    onSelect={jumpToEditor}
+                  />
+                  <CommandRow
+                    icon={<PlayCircle size={14} strokeWidth={1.5} />}
+                    label="Jump to final delivery"
+                    hint="/final"
+                    onSelect={jumpToFinal}
+                  />
+                  {import.meta.env.DEV ? (
+                    <CommandRow
+                      icon={<Beaker size={14} strokeWidth={1.5} />}
+                      label="Seed demo state (dev)"
+                      hint="approve all + bake URL"
+                      onSelect={seedDemoState}
+                    />
+                  ) : null}
                   <CommandRow
                     icon={<RotateCcw size={14} strokeWidth={1.5} />}
                     label="Reset session"

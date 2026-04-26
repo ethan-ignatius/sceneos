@@ -6,12 +6,17 @@ import type { EditorTurn } from "@/stores/beat-graph-store";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
+import { renderThoughtMarkdown } from "@/lib/render-thought-markdown";
 
 interface EditorAgentPanelProps {
   conversation: EditorTurn[];
   /** The most recent agent emission. Drives the proposal card and follow-ups. */
   latest: EditorTurnResponse | null;
   thinking: boolean;
+  /** Live thinking-token accumulator from /api/editor/stream. While thinking
+   *  is true and this string is non-empty, the panel renders the live
+   *  thoughts in place of the static "Director is watching the cut" loader. */
+  streamingThought?: string;
   onUserMessage: (text: string) => void;
   onAcceptProposal: () => void;
   onRevertProposal: () => void;
@@ -39,6 +44,7 @@ export function EditorAgentPanel({
   conversation,
   latest,
   thinking,
+  streamingThought = "",
   onUserMessage,
   onAcceptProposal,
   onRevertProposal,
@@ -107,15 +113,43 @@ export function EditorAgentPanel({
           <ConversationTurn key={i} turn={t} />
         ))}
 
+        {/* Live thinking — same hairline-bordered register as the per-beat
+            agent's "Thinking" panel. Streamed thoughts win over the static
+            loader; the loader only shows during the cold-start window
+            before the first thought chunk arrives. */}
         {thinking ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
-          >
-            <Loader2 size={11} strokeWidth={1.5} className="animate-spin" />
-            <span>Director is watching the cut.</span>
-          </motion.div>
+          streamingThought ? (
+            <motion.div
+              role="status"
+              aria-live="polite"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: [0.25, 1, 0.5, 1] }}
+              className="rounded-md border border-fg-tertiary/15 bg-bg-base/40 px-4 py-3"
+            >
+              <div className="caption-track mb-2 flex items-center gap-1.5 text-[10px] text-fg-tertiary">
+                <motion.span
+                  aria-hidden="true"
+                  className="h-1.5 w-1.5 rounded-full bg-brand-ember"
+                  animate={{ opacity: [0.35, 1, 0.35] }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <span>Director thinking</span>
+              </div>
+              <p className="font-display text-[13.5px] italic leading-relaxed text-fg-tertiary/85">
+                {renderThoughtMarkdown(streamingThought)}
+              </p>
+            </motion.div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
+            >
+              <Loader2 size={11} strokeWidth={1.5} className="animate-spin" />
+              <span>Director is watching the cut.</span>
+            </motion.div>
+          )
         ) : null}
 
         {/* Proposal card */}

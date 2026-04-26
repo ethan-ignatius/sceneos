@@ -1,5 +1,5 @@
-import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { MotionConfig, motion } from "motion/react";
+import { useCallback, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Download, Link2, ArrowRight, Copy, Check } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -7,66 +7,38 @@ import { usePromptStore } from "@/stores/prompt-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
 import { SparkleField } from "@/components/landing/sparkle-field";
-import { useScrollVelocity } from "@/lib/use-scroll-velocity";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
-import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 /**
  * The exhale. The delivery. The screen the user shares.
  *
- * Choreography (see docs/FINAL_DELIVERY.md §2–§4):
- *   0.00s   Route mounts on bg-bg-base. The "fade-to-cinema" is the
- *           absence of route transition + the content's own staggered
- *           entrance. No black-overlay div needed.
- *   0.15s   "Your cinematic." headline slides up + fades in (filmIn 0.72s).
- *   0.35s   Player fades in.
- *   0.55s   Two actions cascade.
+ * Aggressive letterbox treatment per SENIOR_FRONTEND_TRANSMISSION Part
+ * 6.17: black bars top + bottom carry the chrome, the video sits in the
+ * frame between, the user is *in* the cinema. The bars are functional
+ * — every piece of chrome (project mark, Make another, type · duration)
+ * lives inside them so nothing competes with the cinematic in the middle.
  *
- * Subtle parallax (§8): as the user scrolls, the player drifts up
- * 0 → -20px Y via window-bound useScrollVelocity. Disabled under
- * prefers-reduced-motion.
+ * Composition: anchor is the player; counterweight is the headline above
+ * it. One italic prompt-quote underneath the action row and that's all.
+ * Parallax + below-fold "Beat manifest" + "Composed with Cloudinary"
+ * footer + redundant date slate all dropped — they were decorative noise
+ * the user already saw on the canvas.
+ *
+ * Choreography:
+ *   0.00s   Route mounts on bg-black. Letterbox bars slide in (scaleY).
+ *   0.15s   "Your cinematic." headline rises + fades in (filmIn 0.72s).
+ *   0.35s   Player fades + scales in.
+ *   0.50s   URL track-hero panel.
+ *   0.65s   Action row.
+ *   0.80s   Master-prompt quote underline.
  */
 export function FinalDeliveryRoute() {
   const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
   const reset = useBeatGraphStore((s) => s.reset);
   const resetPrompt = usePromptStore((s) => s.reset);
-  const reducedMotion = useReducedMotion();
   const [urlCopied, setUrlCopied] = useState(false);
-
-  const playerWrapRef = useRef<HTMLDivElement>(null);
-
-  // Window-bound scroll velocity drives the parallax. The hook returns
-  // a clamped progress 0..1 we read each RAF tick.
-  const { progressRef, registerElement } = useScrollVelocity({ clamp: [0, 1] });
-  useEffect(() => {
-    return registerElement(window);
-    // registerElement reads opts via closure — safe to omit from deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (reducedMotion) return;
-    let raf = 0;
-    const tick = () => {
-      const el = playerWrapRef.current;
-      if (el) {
-        const offset = progressRef.current * -20;
-        el.style.transform = `translate3d(0, ${offset}px, 0)`;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      // Clear the inline transform so the player snaps back to its layout
-      // position. Without this, toggling prefers-reduced-motion mid-session
-      // leaves the parallax offset frozen — reads as a centering bug.
-      const el = playerWrapRef.current;
-      if (el) el.style.transform = "";
-    };
-  }, [reducedMotion, progressRef]);
 
   const finalUrl = manifest?.finalCloudinaryUrl;
 
@@ -101,19 +73,16 @@ export function FinalDeliveryRoute() {
     ? finalUrl
     : finalUrl.replace("/upload/", "/upload/fl_attachment/");
 
-  const beatList = manifest.beats;
-
   return (
     // MotionConfig reducedMotion="user" auto-degrades transform animations
     // to opacity when the user prefers reduced motion.
     <MotionConfig reducedMotion="user">
-      <main className="film-grain relative min-h-screen overflow-x-hidden bg-black px-6 py-16">
-        {/* Letterbox bars — top + bottom, 10vh each, slide-in for the
-            "fade-to-cinema" reveal. MotionConfig reducedMotion="user"
-            above auto-degrades scaleY → opacity, but the initial state
-            still renders a solid black bar at full height for one frame.
-            Adding `opacity: 0` to initial means the reduced-motion path
-            fades the bar in cleanly instead of cutting from black. */}
+      <main className="film-grain relative min-h-screen overflow-hidden bg-black px-6">
+        {/* ── Letterbox bars ─────────────────────────────────────────────
+            Top + bottom 10vh each. The chrome lives INSIDE these bars
+            (project mark + Make another up top, type · duration at the
+            bottom-right) — per Transmission Part 6.17, the bars are
+            functional, not decorative. */}
         <motion.div
           initial={{ scaleY: 0, opacity: 0 }}
           animate={{ scaleY: 1, opacity: 1 }}
@@ -128,93 +97,98 @@ export function FinalDeliveryRoute() {
           className="pointer-events-none fixed inset-x-0 bottom-0 z-40 h-[10vh] origin-bottom bg-black"
           aria-hidden="true"
         />
-        {/* End-card slate microcopy in the letterbox — top-left + top-right + bottom-left */}
+
+        {/* ── Top slate ──────────────────────────────────────────────────
+            Project mark left, Make another right. The Make another pill
+            is in caption-track register — film-credit feel, not a CTA. */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
-          className="pointer-events-none fixed inset-x-0 top-0 z-50 flex h-[10vh] items-center justify-between px-8 sm:px-12"
+          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.55 }}
+          className="fixed inset-x-0 top-0 z-50 flex h-[10vh] items-center justify-between px-6 sm:px-10"
         >
-          <div className="font-body text-[11.5px] font-medium text-fg-tertiary/80">
+          <div className="caption-track text-[10px] text-fg-tertiary/85">
             <span className="text-brand-ember">●</span>
             <span className="ml-2">A SceneOS production</span>
           </div>
-          <div className="font-body text-[11.5px] font-medium tabular-nums text-fg-tertiary/80">
-            {manifest.videoType} · {formatDuration(manifest.durationSeconds)}
-          </div>
+          <button
+            type="button"
+            onClick={handleMakeAnother}
+            className="caption-track group inline-flex items-center gap-1.5 text-[10px] text-fg-tertiary transition-colors duration-200 hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember"
+            aria-label="Archive this project and start a new one"
+          >
+            Make another
+            <ArrowRight
+              size={11}
+              strokeWidth={1.5}
+              aria-hidden="true"
+              className="transition-transform duration-200 group-hover:translate-x-0.5"
+            />
+          </button>
         </motion.div>
+
+        {/* ── Bottom slate ───────────────────────────────────────────────
+            Single line: type · duration. The film-credit register at
+            the bottom-right of a frame. Composed-with-Cloudinary +
+            today's date were both decorative noise that duplicated the
+            URL panel and added nothing. */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.6 }}
-          className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex h-[10vh] items-center justify-between px-8 sm:px-12"
+          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.55 }}
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex h-[10vh] items-center justify-end px-6 sm:px-10"
         >
-          <div className="font-body text-[11.5px] text-fg-tertiary/80">
-            Composed with Cloudinary
-          </div>
-          <div className="font-body text-[11.5px] tabular-nums text-fg-tertiary/80">
-            {new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric" }).format(new Date())}
+          <div className="caption-track text-[10px] tabular-nums text-fg-tertiary/85">
+            {manifest.videoType} · {formatDuration(manifest.durationSeconds)}
           </div>
         </motion.div>
 
+        {/* ── Centered composition ───────────────────────────────────────
+            Single anchor (the player) with one counterweight above
+            (headline) and one below (master-prompt quote). Everything
+            else stripped. */}
         <motion.section
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: DURATIONS.quick, ease: EASE.outQuart, delay: 0.4 }}
-          className="relative z-10 mx-auto flex min-h-screen max-w-[80rem] flex-col items-center justify-center gap-10 text-center"
+          className="relative z-10 mx-auto flex min-h-screen max-w-[80rem] flex-col items-center justify-center gap-7 py-[12vh] text-center"
         >
-          <div className="space-y-3">
-            <motion.p
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.1 }}
-              className="font-body text-[12.5px] font-medium tabular-nums text-fg-tertiary"
-            >
-              Delivered · {manifest.videoType} · {formatDuration(manifest.durationSeconds)}
-            </motion.p>
-            <motion.h1
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn, delay: 0.15 }}
-              className="text-display-lg italic text-fg-primary"
-            >
-              Your cinematic.
-            </motion.h1>
-          </div>
+          <motion.h1
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn, delay: 0.15 }}
+            className="font-display text-display-lg italic leading-[1.05] tracking-[-0.02em] text-fg-primary text-balance"
+          >
+            Your cinematic.
+          </motion.h1>
 
-          {/* 70vw player; capped on very wide viewports. The wrapping div is
-              the parallax target — VideoPlayer keeps its own internal layout. */}
+          {/* 16:9 player. No caption — the URL panel below carries that
+              load, the player just plays. 70vw on desktop, 90vw on
+              narrow so it doesn't shrink to a postage stamp. */}
           <motion.div
-            ref={playerWrapRef}
             initial={{ opacity: 0, scale: 0.985 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn, delay: 0.35 }}
-            // 70vw at desktop; on narrow viewports the player stretches to
-            // 90vw so it doesn't shrink to a postage stamp on mobile.
-            className="w-[90vw] max-w-[1200px] sm:w-[70vw]"
-            style={{ willChange: "transform" }}
+            className="w-[90vw] max-w-[1100px] sm:w-[72vw]"
           >
             <VideoPlayer
               src={finalUrl}
               suggestedDurationSeconds={manifest.durationSeconds}
               autoPlay
               muted={false}
-              caption="Final cut · Cloudinary fl_splice"
             />
           </motion.div>
 
-          {/* fl_splice URL panel — the artifact. The cinematic IS this URL;
-              surfacing it as the centerpiece between the player and the
-              actions makes the Cloudinary track-hero unmistakable in the
-              demo. Mono body, ember tail, copy + open affordances. */}
+          {/* fl_splice URL panel — the cinematic IS this URL. Mono body,
+              caption-track eyebrow, copy affordance right. */}
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.5 }}
-            className="w-[90vw] max-w-[1200px] sm:w-[70vw]"
+            className="w-[90vw] max-w-[1100px] sm:w-[72vw]"
           >
             <div className="flex items-baseline justify-between gap-3 pb-1.5">
-              <span className="font-body text-[11.5px] font-medium tracking-[0.02em] text-fg-tertiary">
+              <span className="caption-track text-[10px] text-fg-tertiary">
                 Stitched · Cloudinary fl_splice
               </span>
               <button
@@ -230,7 +204,7 @@ export function FinalDeliveryRoute() {
                     toast.error("Couldn't reach the clipboard.");
                   }
                 }}
-                className="inline-flex items-center gap-1.5 font-body text-[11.5px] text-fg-tertiary transition-colors hover:text-fg-primary"
+                className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:text-fg-primary"
                 aria-label="Copy cinematic URL"
               >
                 {urlCopied ? (
@@ -246,15 +220,13 @@ export function FinalDeliveryRoute() {
                 )}
               </button>
             </div>
-            <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 px-4 py-3 text-left font-mono text-[12px] leading-[1.6] text-fg-secondary">
+            <div className="break-all rounded-[2px] border border-fg-tertiary/15 bg-bg-base/50 px-4 py-3 text-left font-mono text-[12px] leading-[1.6] text-fg-secondary">
               {finalUrl}
             </div>
           </motion.div>
 
-          {/* Three actions — Download primary, Copy share link ghost,
-              Reopen editor link. Download leads (the user came here for
-              the file); Copy is the share path; Reopen editor is the
-              "I want to refine more" escape. */}
+          {/* Action row. Download primary (the user came here for the file).
+              Copy + Reopen editor as quiet ghost links. */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -267,98 +239,28 @@ export function FinalDeliveryRoute() {
                 Download MP4
               </a>
             </Button>
-            <Button
-              size="lg"
-              variant="ghost"
-              onClick={handleCopy}
-              className="btn--edge-underline"
-            >
+            <Button size="lg" variant="ghost" onClick={handleCopy}>
               <Link2 size={16} strokeWidth={1.5} aria-hidden="true" />
               Copy share link
             </Button>
-            <Button
-              size="lg"
-              variant="ghost"
-              onClick={() => navigate("/edit")}
-              className="btn--edge-underline"
-            >
+            <Button size="lg" variant="ghost" onClick={() => navigate("/edit")}>
               Reopen editor
             </Button>
           </motion.div>
+
+          {/* Master prompt — single italic line, no eyebrow. The user
+              already saw their work; this is just a quiet receipt at
+              the foot of the cinema. Below-fold "Beat manifest" list
+              dropped (decorative). */}
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 0.8 }}
+            className="max-w-prose font-display italic text-[1.0625rem] leading-[1.5] text-fg-tertiary text-pretty"
+          >
+            "{manifest.masterPrompt}"
+          </motion.p>
         </motion.section>
-
-        {/* Below-the-fold metadata — gives the parallax something to scroll past
-            and documents what was made. Mono / quiet by design. */}
-        <motion.section
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: DURATIONS.cinematic, delay: 0.8 }}
-          className="relative z-10 mx-auto mt-32 grid max-w-[64rem] gap-10 pb-16"
-        >
-          <div className="space-y-2">
-            <div className="font-body text-[12px] font-medium text-fg-tertiary">
-              Master prompt
-            </div>
-            <p className="max-w-prose font-display italic text-[1.25rem] leading-[1.45] text-fg-secondary">
-              {manifest.masterPrompt}
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <div className="font-body text-[12px] font-medium text-fg-tertiary">
-              Beat manifest
-            </div>
-            <ol className="divide-y divide-fg-tertiary/15 border-y border-fg-tertiary/15">
-              {beatList.map((b, i) => {
-                // Prefer the scene's actual refined duration; fall back to
-                // the archetype's suggested length only if the agent didn't
-                // refine it.
-                const dur = b.scenes[0]?.durationSeconds ?? b.archetype.suggestedDuration;
-                return (
-                  <li
-                    key={b.beatId}
-                    className="grid grid-cols-[3rem_1fr_auto] items-baseline gap-4 py-3 font-mono text-xs"
-                  >
-                    <span className="text-fg-tertiary tabular-nums">
-                      {(i + 1).toString().padStart(2, "0")}
-                    </span>
-                    <span>
-                      <span className="text-fg-primary">{b.beatName}</span>
-                      <span className="ml-2 text-fg-tertiary">· {b.archetype.mood}</span>
-                    </span>
-                    <span className="text-fg-tertiary tabular-nums">{dur}s</span>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
-        </motion.section>
-
-        {/* "Make another" — top-right ghost, returns to landing with a
-            clean store. `right-8` clipped on `<sm`; switching to safe-
-            area + responsive offsets keeps it inside the viewport on
-            phones (right-3 / right-4) while preserving the desktop
-            placement (sm:right-8). */}
-        <motion.button
-          type="button"
-          onClick={handleMakeAnother}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart, delay: 1.0 }}
-          className={cn(
-            "btn--edge-underline group fixed right-3 top-[3.5vh] z-[60] inline-flex items-center gap-2 sm:right-8",
-            "rounded-full border border-fg-tertiary/20 px-3 py-1.5 font-body text-[11.5px] font-medium sm:px-4 sm:py-2 sm:text-[12px]",
-            "text-fg-tertiary transition-colors duration-200 hover:text-fg-primary",
-          )}
-        >
-          Make another
-          <ArrowRight
-            size={14}
-            strokeWidth={1.5}
-            aria-hidden="true"
-            className="transition-transform duration-200 group-hover:translate-x-0.5"
-          />
-        </motion.button>
       </main>
     </MotionConfig>
   );

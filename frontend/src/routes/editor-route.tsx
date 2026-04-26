@@ -106,10 +106,15 @@ export function EditorRoute() {
 
   const [latest, setLatest] = useState<EditorTurnResponse | null>(null);
   const [thinking, setThinking] = useState(false);
+  // Live thinking accumulator for /api/editor/stream — populated by
+  // "thought" events, surfaced through EditorAgentPanel so the wait
+  // for the agent reads as live director thinking, not a frozen loader.
+  const [streamingThought, setStreamingThought] = useState("");
   const [baking, setBaking] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [selectedClipIndex, setSelectedClipIndex] = useState<number | null>(null);
+  const editorAbortRef = useRef<AbortController | null>(null);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -190,38 +195,70 @@ export function EditorRoute() {
   );
 
   // ── Agent turn helpers ────────────────────────────────────────────────
+  // Streamed via /api/editor/stream so the user sees thinking tokens
+  // accumulate during the ~6s Vertex Gemini turn — the same UX pattern
+  // we use for the per-beat agent. The result event carries either a
+  // propose or commit payload; we branch on `ev.kind` after appending
+  // the thinking trace.
   const callAgent = useCallback(
     async (userMessage?: string) => {
       if (!manifest || !editor.decisions || thinking) return;
       setThinking(true);
+      setStreamingThought("");
+      const ctrl = new AbortController();
+      editorAbortRef.current = ctrl;
       try {
         if (userMessage) {
           appendEditorTurn({ role: "user", content: userMessage, timestamp: nowISO() });
         }
-        const res = await api.editorTurn({
-          manifest,
-          decisions: editor.decisions,
-          conversation: editor.conversation,
-          userMessage,
-        });
-        if (!mountedRef.current) return;
-        setLatest(res);
-        const agentText =
-          res.kind === "commit"
-            ? res.summary
-            : res.rationale;
-        appendEditorTurn({
-          role: "agent",
-          content: agentText,
-          timestamp: nowISO(),
-          decisions: res.decisions,
-        });
-        if (res.kind === "commit") {
-          // Lock immediately — the user asked.
-          await bake(res.decisions);
-          markEditorCommitted();
+        for await (const ev of api.editorStream(
+          {
+            manifest,
+            decisions: editor.decisions,
+            conversation: editor.conversation,
+            userMessage,
+          },
+          ctrl.signal,
+        )) {
+          if (!mountedRef.current) break;
+          if (ev.type === "thought") {
+            setStreamingThought((prev) => prev + ev.chunk);
+          } else if (ev.type === "result") {
+            // Re-shape the SSE result into the same EditorTurnResponse
+            // discriminated union the rest of the route expects.
+            const payload: EditorTurnResponse =
+              ev.kind === "commit"
+                ? {
+                    kind: "commit",
+                    decisions: ev.decisions,
+                    rationale: ev.rationale,
+                    summary: ev.summary,
+                  }
+                : {
+                    kind: "propose",
+                    decisions: ev.decisions,
+                    rationale: ev.rationale,
+                    suggestedFollowups: ev.suggestedFollowups,
+                  };
+            setLatest(payload);
+            const agentText = payload.kind === "commit" ? payload.summary : payload.rationale;
+            appendEditorTurn({
+              role: "agent",
+              content: agentText,
+              timestamp: nowISO(),
+              decisions: payload.decisions,
+            });
+            if (payload.kind === "commit") {
+              await bake(payload.decisions);
+              markEditorCommitted();
+            }
+            setStreamingThought("");
+          } else if (ev.type === "error") {
+            toast.error(ev.message);
+          }
         }
       } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
         toast.error(err instanceof ApiError ? err.message : "Agent turn failed.");
       } finally {
         if (mountedRef.current) setThinking(false);
@@ -237,6 +274,14 @@ export function EditorRoute() {
       markEditorCommitted,
     ],
   );
+
+  // Abort any in-flight editor stream when the route unmounts so
+  // closing the editor doesn't leak a polling reader.
+  useEffect(() => {
+    return () => {
+      editorAbortRef.current?.abort();
+    };
+  }, []);
 
   // First agent turn: invite the director to look at the cut once it's baked.
   const firstTurnFiredRef = useRef(false);
@@ -506,6 +551,7 @@ export function EditorRoute() {
                 conversation={editor.conversation}
                 latest={latest}
                 thinking={thinking}
+                streamingThought={streamingThought}
                 onUserMessage={(text) => void callAgent(text)}
                 onAcceptProposal={handleAcceptProposal}
                 onRevertProposal={handleRevertProposal}

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Send, Loader2, RotateCcw, Mic, ImagePlus, X, Sparkles } from "lucide-react";
+import { Send, Loader2, RotateCcw, Mic, ImagePlus, X } from "lucide-react";
 import { toast } from "sonner";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
@@ -12,6 +12,7 @@ import { useSpeechSynthesis } from "@/lib/use-speech-synthesis";
 import { isAudioMuted } from "@/lib/audio-cues";
 import { nowISO } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { renderThoughtMarkdown } from "@/lib/render-thought-markdown";
 
 interface ImageRef {
   id: string;
@@ -438,30 +439,36 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             </>
           );
         })()}
-        {/* Live thinking display — replaces the static "Composing the
-            shot." spinner with the actual Gemini thinking tokens as
-            they stream in. If thinking is empty (cold start, no events
-            yet), fall back to the static line. Once a thought chunk
-            arrives, it appears character-by-character — same animation
-            principle as agent bubbles, but driven by the SSE stream
-            instead of TextSplitter. Italic display Fraunces matches
-            the rest of the agent voice. */}
+        {/* Live thinking — its own register, distinct from chat bubbles.
+            Hairline-bordered mini-panel with a "Thinking" eyebrow + a
+            breathing ember dot so the user reads it as meta-content
+            (the director's working out, not the director's reply).
+            Markdown bold (**...**) is parsed inline so the agent's
+            structured thoughts don't show raw asterisks. */}
         {inFlight ? (
           streamingThought ? (
-            <div
+            <motion.div
               role="status"
               aria-live="polite"
-              className="flex items-start gap-2 font-display text-[14px] italic leading-relaxed text-fg-tertiary"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.24, ease: [0.25, 1, 0.5, 1] }}
+              className="rounded-md border border-fg-tertiary/15 bg-bg-base/40 px-4 py-3"
             >
-              <Loader2
-                size={12}
-                className="mt-1 animate-spin flex-shrink-0"
-                strokeWidth={1.5}
-                aria-hidden="true"
-              />
-              <span className="opacity-85">{streamingThought}</span>
-            </div>
-          ) : (
+              <div className="caption-track mb-2 flex items-center gap-1.5 text-[10px] text-fg-tertiary">
+                <motion.span
+                  aria-hidden="true"
+                  className="h-1.5 w-1.5 rounded-full bg-brand-ember"
+                  animate={{ opacity: [0.35, 1, 0.35] }}
+                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <span>Thinking</span>
+              </div>
+              <p className="font-display text-[13.5px] italic leading-relaxed text-fg-tertiary/85">
+                {renderThoughtMarkdown(streamingThought)}
+              </p>
+            </motion.div>
+          ) : scene.conversation.length === 0 ? (
             <div
               role="status"
               aria-live="polite"
@@ -470,7 +477,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
               Composing the shot.
             </div>
-          )
+          ) : null
         ) : null}
         {error ? (
           <div
@@ -493,59 +500,42 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         ) : null}
       </div>
 
-      {/* Suggested answers — three "or pick one" options the agent emitted
-          with its latest question. Clicking submits the suggestion as a
-          user turn (skipping the typing). Cleared on user submit, on a
-          new agent turn without suggestions, or when the beat goes
-          sufficient. Eyebrow + sparkle icon make it unmistakable that
-          these are AI hand-offs the user can lean on; AnimatePresence
-          fades them in/out so they don't pop. */}
-      {/* Suggested answers — three "or pick one" hand-offs the agent
-          emitted with its latest question. Mirrors the mock-frontend's
-          "suggested · click to send · or write your own below" pattern.
-          Clicking a pill submits it as a user turn (skipping typing).
-          The eyebrow copy explicitly tells the user they can either
-          click a pill OR type below — the previous "or pick one"
-          underplayed that they had agency to ignore the pills. */}
+      {/* Suggested answers — three options the agent emitted with its
+          latest question. Hairline-divided rows, no card chrome, no
+          icon, no helper-text eyebrow — the affordance reads itself
+          (clickable text rows beneath a hairline). Group fades in;
+          clicking a row submits it as a user turn. Cleared on user
+          submit, on a new agent turn without suggestions, or when
+          the beat goes sufficient. */}
       <AnimatePresence initial={false}>
         {latestSuggestions && !inFlight ? (
           <motion.div
             key="suggestions"
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-            className="mt-3 space-y-2 border-t border-brand-ember-dim/30 pt-3"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-3 border-t border-fg-tertiary/15"
+            role="group"
+            aria-label="Agent suggestions — pick one or keep typing"
           >
-            <div className="flex items-center gap-1.5 caption-track text-[10px] text-brand-ember/80">
-              <Sparkles size={11} strokeWidth={1.7} aria-hidden="true" />
-              <span>suggested · click to send · or write your own below</span>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {latestSuggestions.map((s, i) => (
-                <motion.button
-                  key={i}
-                  type="button"
-                  onClick={() => void handleSuggestion(s)}
-                  disabled={inFlight}
-                  initial={{ opacity: 0, y: -3 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.22, delay: 0.05 + i * 0.04, ease: [0.16, 1, 0.3, 1] }}
-                  whileHover={{ y: -1 }}
-                  whileTap={{ scale: 0.985 }}
-                  className={cn(
-                    "rounded-lg border border-brand-ember-dim/35 bg-brand-ember/[0.04] px-3.5 py-2.5",
-                    "text-left font-body text-[13px] leading-snug text-fg-secondary",
-                    "transition-[border-color,background-color,color] duration-200 ease-out",
-                    "hover:border-brand-ember/65 hover:bg-brand-ember/10 hover:text-fg-primary",
-                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember",
-                    "disabled:pointer-events-none disabled:opacity-50",
-                  )}
-                >
-                  {s}
-                </motion.button>
-              ))}
-            </div>
+            {latestSuggestions.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => void handleSuggestion(s)}
+                disabled={inFlight}
+                className={cn(
+                  "block w-full border-b border-fg-tertiary/12 px-1 py-2.5 last:border-b-0",
+                  "text-left font-body text-[13.5px] leading-snug text-fg-secondary",
+                  "transition-colors duration-200 ease-out",
+                  "hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember",
+                  "disabled:pointer-events-none disabled:opacity-50",
+                )}
+              >
+                {s}
+              </button>
+            ))}
           </motion.div>
         ) : null}
       </AnimatePresence>

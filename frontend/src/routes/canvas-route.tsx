@@ -121,7 +121,13 @@ export function CanvasRoute() {
     // R3F-driven animations (camera breath, sparkles drift) are gated
     // separately inside their components via matchMedia.
     <MotionConfig reducedMotion="user">
-    <main className="relative h-screen w-screen overflow-hidden bg-bg-base">
+    {/* select-none on the canvas main: drag-pan over the chrome (Save &
+        exit, Stitch pill, planet name labels, etc.) was triggering text
+        selection that stuck until the user clicked elsewhere. The 3D
+        canvas + chrome is a viewport, not a document — nothing here is
+        meant to be copied. The drawer + URL strip opt back in via
+        select-text on their own roots. */}
+    <main className="relative h-screen w-screen select-none overflow-hidden bg-bg-base">
       <CanvasErrorBoundary>
         <Suspense fallback={<CanvasFallback />}>
           <BeatMap3D beats={manifest.beats} />

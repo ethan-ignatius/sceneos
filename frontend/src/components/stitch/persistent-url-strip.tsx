@@ -128,7 +128,7 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
       transition={{ duration: 0.36, ease: [0.25, 1, 0.5, 1] }}
       className="pointer-events-none absolute inset-x-0 bottom-12 z-10 flex justify-center px-6"
     >
-      <div className="pointer-events-auto flex min-h-10 max-w-[calc(100vw-3rem)] items-center gap-3 rounded-full border border-fg-tertiary/20 bg-bg-elev-1/75 py-2 pl-5 pr-2 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)]">
+      <div className="pointer-events-auto flex min-h-10 max-w-[calc(100vw-3rem)] select-text items-center gap-3 rounded-full border border-fg-tertiary/20 bg-bg-elev-1/75 py-2 pl-5 pr-2 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)]">
         <span
           aria-hidden
           className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-ember shadow-[0_0_8px_rgba(240,168,104,0.55)]"

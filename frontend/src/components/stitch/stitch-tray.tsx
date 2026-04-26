@@ -149,8 +149,10 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       exit={{ x: "calc(100% + 2rem)", opacity: 0 }}
       transition={SPRING.drawer}
       className={cn(
-        // Bottom-sheet on <md, floating panel on >=md.
-        "fixed inset-x-0 bottom-0 z-50 flex max-h-[88svh] w-full flex-col rounded-t-2xl",
+        // Bottom-sheet on <md, floating panel on >=md. select-text reverses
+        // the canvas main's select-none — the URL string and beat names
+        // here ARE meant to be copyable.
+        "fixed inset-x-0 bottom-0 z-50 flex max-h-[88svh] w-full select-text flex-col rounded-t-2xl",
         "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[42rem] md:max-w-[calc(100vw-3rem)] md:rounded-2xl",
         "overflow-hidden border border-fg-tertiary/15",
         "bg-[#14110f]/[0.97] backdrop-blur-2xl",
