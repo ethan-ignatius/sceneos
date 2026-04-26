@@ -12,6 +12,7 @@ SceneOS is a frontend-led, full-stack project for **LA Hacks 2026** that turns a
 This file is the entry point. Sub-documents live in `docs/`:
 
 - [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md) — service design, API contract, integrations
+- [`docs/EDITOR_ARCHITECTURE.md`](docs/EDITOR_ARCHITECTURE.md) — Stage 7 editor: backend modules, EditDecisions schema, frontend components, Cloudinary URL bake
 - [`docs/FRONTEND_PHILOSOPHY.md`](docs/FRONTEND_PHILOSOPHY.md) — design language, motion system, component patterns
 - [`docs/HACKATHON_STRATEGY.md`](docs/HACKATHON_STRATEGY.md) — track selection, judging map, day plan
 - [`docs/STITCH_PROMPTS.md`](docs/STITCH_PROMPTS.md) — Google Stitch prompts per screen for prototyping

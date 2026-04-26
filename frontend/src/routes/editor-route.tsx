@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -10,15 +10,20 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Image as ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { EditorAgentPanel } from "@/components/editor/editor-agent-panel";
+import { EditorTimeline } from "@/components/editor/editor-timeline";
+import { EditorClipDetail } from "@/components/editor/editor-clip-detail";
+import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { api, ApiError } from "@/lib/api";
 import { nowISO } from "@/lib/utils";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
-import type { EditDecisions, EditorTurnResponse } from "@/types/api";
+import type { EditClipDecision, EditDecisions, EditorTurnResponse } from "@/types/api";
+import type { BeatMood } from "@/types/manifest";
 import { toast } from "sonner";
 
 /**
@@ -104,6 +109,7 @@ export function EditorRoute() {
   const [baking, setBaking] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
+  const [selectedClipIndex, setSelectedClipIndex] = useState<number | null>(null);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -257,9 +263,38 @@ export function EditorRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor.decisions, editor.finalUrl]);
 
+  // ── Direct-manipulation handlers (timeline + toolbar + clip detail) ──
+  // The agent is the primary surface, but the user can also patch the cut
+  // directly. Each patch merges into the living decisions and queues a
+  // debounced re-bake against /api/editor/apply.
+  const patchClip = useCallback(
+    (index: number, patch: Partial<EditClipDecision>) => {
+      if (!editor.decisions) return;
+      const clips = editor.decisions.clips.map((c, i) => (i === index ? { ...c, ...patch } : c));
+      queueBake({ ...editor.decisions, clips });
+    },
+    [editor.decisions, queueBake],
+  );
+
+  const patchGlobal = useCallback(
+    (patch: Partial<EditDecisions>) => {
+      if (!editor.decisions) return;
+      queueBake({ ...editor.decisions, ...patch });
+    },
+    [editor.decisions, queueBake],
+  );
+
+  // beatLabels map for the timeline — name + mood keyed by beatId.
+  const beatLabels = useMemo<Record<string, { name: string; mood: BeatMood }>>(() => {
+    const map: Record<string, { name: string; mood: BeatMood }> = {};
+    for (const b of manifest?.beats ?? []) {
+      map[b.beatId] = { name: b.beatName, mood: b.archetype.mood };
+    }
+    return map;
+  }, [manifest]);
+
   // ── Agent-driven edit handlers ───────────────────────────────────────
-  // No manual per-clip or global edit handlers any more — the agent emits
-  // proposals; Apply edit is the only path that mutates EditDecisions.
+  // The agent emits proposals; Apply edit accepts the WHOLE decisions object.
 
   const handleAcceptProposal = () => {
     if (!latest || latest.kind !== "propose") return;
@@ -368,11 +403,13 @@ export function EditorRoute() {
           </div>
         ) : null}
 
-        {/* Main grid: preview hero + agent rail. The agent IS the editor —
-            timeline, per-clip detail, and global toolbar were removed. The
-            user proposes edits in chat; "Apply edit" re-bakes the URL. */}
+        {/* Main grid: preview + timeline + global toolbar + agent rail.
+            The agent is still the primary surface; timeline + toolbar give
+            the user direct manipulation when they want it. Every patch
+            queues a debounced re-bake against /api/editor/apply, so all
+            three surfaces converge on the same Cloudinary URL. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
-          <section className="space-y-5">
+          <section className="space-y-6">
             {/* Cinematic preview frame — letterbox-flavored, ember-tinted
                 hairline border, soft shadow. The video carries the moment;
                 everything around it stays out of its way. */}
@@ -406,78 +443,77 @@ export function EditorRoute() {
               </AnimatePresence>
             </div>
 
-            {/* Live Cloudinary URL — the artifact. The agent's edits write
-                directly to this URL via /api/editor/apply; copying it is
-                the user's takeaway from /edit. Track-hero treatment: mono
-                body, ember tail, copy + open-in-new-tab affordances. */}
-            {editor.finalUrl ? (
-              <section className="space-y-2">
-                <div className="flex items-baseline justify-between">
-                  <span className="font-body text-[12px] font-medium text-fg-secondary">
-                    Master cut · live URL
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!editor.finalUrl) return;
-                        try {
-                          await navigator.clipboard.writeText(editor.finalUrl);
-                          setUrlCopied(true);
-                          window.setTimeout(() => setUrlCopied(false), 1400);
-                          toast.success("Master cut URL copied.");
-                        } catch {
-                          toast.error("Couldn't reach the clipboard.");
-                        }
-                      }}
-                      className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
-                      aria-label="Copy master cut URL"
-                    >
-                      {urlCopied ? (
-                        <>
-                          <Check size={11} strokeWidth={2} className="text-brand-ember" aria-hidden="true" />
-                          <span className="text-brand-ember">Copied</span>
-                        </>
-                      ) : (
-                        <>
-                          <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
-                          Copy
-                        </>
-                      )}
-                    </button>
-                    <a
-                      href={editor.finalUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
-                      aria-label="Open master cut URL in a new tab"
-                    >
-                      <ExternalLink size={11} strokeWidth={1.5} aria-hidden="true" />
-                      Open
-                    </a>
-                  </div>
-                </div>
-                <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
-                  {editor.finalUrl}
-                </div>
-              </section>
+            {/* Live Cloudinary URL — THE artifact. Every edit, agent-led
+                or direct-manipulation, deterministically rewrites this
+                single CDN URL. No render server, no ffmpeg job — Cloudinary
+                evaluates the transform on demand and CDN-caches the MP4.
+                The chip rail shows the transform vocabulary baked in.
+                The poster-frame derivative under it is the same publicId
+                with `/so_auto/<id>.jpg` swapped onto the tail — proof that
+                Cloudinary owns the entire delivery surface. */}
+            {editor.finalUrl ? <CloudinaryArtifactStrip url={editor.finalUrl} decisions={editor.decisions} thumbnailUrl={editor.thumbnailUrl} urlCopied={urlCopied} setUrlCopied={setUrlCopied} /> : null}
+
+            {/* Timeline — scrubber + per-beat trim handles. Click a beat
+                to open the per-clip detail panel (transition, caption,
+                trim numerics) below. Drag the handles to retrim. Every
+                change queues a re-bake. */}
+            {editor.decisions && editor.decisions.clips.length > 0 ? (
+              <EditorTimeline
+                decisions={editor.decisions}
+                beatLabels={beatLabels}
+                selectedIndex={selectedClipIndex}
+                onSelectClip={(i) =>
+                  setSelectedClipIndex((curr) => (curr === i ? null : i))
+                }
+                onPatchClip={patchClip}
+              />
             ) : null}
+
+            {/* Per-clip detail — transition slider + caption input. */}
+            <AnimatePresence mode="wait">
+              {selectedClipIndex !== null && editor.decisions?.clips[selectedClipIndex] ? (
+                <motion.div
+                  key={selectedClipIndex}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+                >
+                  <EditorClipDetail
+                    index={selectedClipIndex}
+                    label={
+                      beatLabels[editor.decisions.clips[selectedClipIndex].beatId ?? ""]
+                        ?.name ?? `Beat ${selectedClipIndex + 1}`
+                    }
+                    clip={editor.decisions.clips[selectedClipIndex]}
+                    onPatch={(p) => patchClip(selectedClipIndex, p)}
+                    onClose={() => setSelectedClipIndex(null)}
+                  />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
           </section>
 
-          {/* Right column — agent panel. Only edit surface; sticky on lg
-              so the chat stays in view as the URL strip scrolls below. */}
-          <div className="lg:sticky lg:top-10 lg:h-[calc(100vh-5rem)]">
-            <EditorAgentPanel
-              conversation={editor.conversation}
-              latest={latest}
-              thinking={thinking}
-              onUserMessage={(text) => void callAgent(text)}
-              onAcceptProposal={handleAcceptProposal}
-              onRevertProposal={handleRevertProposal}
-              onCommitNow={handleCommitNow}
-              committed={editor.committed}
-              livingDecisions={editor.decisions}
-            />
+          {/* Right column — global toolbar above, agent panel below. The
+              column scrolls naturally; the agent's flex-1 inner scroller
+              keeps long chats out of the page scroll. */}
+          <div className="space-y-5 lg:sticky lg:top-10 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
+            {editor.decisions ? (
+              <EditorToolbar decisions={editor.decisions} onPatch={patchGlobal} />
+            ) : null}
+            <div className="lg:min-h-[28rem]">
+              <EditorAgentPanel
+                conversation={editor.conversation}
+                latest={latest}
+                thinking={thinking}
+                onUserMessage={(text) => void callAgent(text)}
+                onAcceptProposal={handleAcceptProposal}
+                onRevertProposal={handleRevertProposal}
+                onCommitNow={handleCommitNow}
+                committed={editor.committed}
+                livingDecisions={editor.decisions}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -545,4 +581,199 @@ function EditorAwaitingApprovalsFallback({ hasManifest }: { hasManifest: boolean
       </div>
     </main>
   );
+}
+
+/**
+ * The Cloudinary artifact panel.
+ *
+ * Every edit — agent-led or direct-manipulation — deterministically rewrites
+ * the URL shown here. There is no render server. Cloudinary's CDN evaluates
+ * the transform pipeline on demand and caches the result.
+ *
+ * Layout:
+ *   - Header: "Master cut · live URL" + Copy + Open
+ *   - Mono URL block (break-all)
+ *   - Transform-vocabulary chip rail derived from the current EditDecisions —
+ *     so the user can SEE which Cloudinary capabilities they're touching
+ *     (fl_splice, e_fade, l_text, l_audio, look LUT, watermark, ducking).
+ *   - Poster-frame thumbnail derivative — same publicId, /so_auto/<id>.jpg
+ *     swapped onto the tail. Click-to-open in a new tab.
+ *
+ * This is the prize-winning surface for the Cloudinary Company Challenge:
+ * the URL IS the artifact, the transform chips name the capabilities, and
+ * the thumbnail proves Cloudinary owns the entire delivery layer.
+ */
+function CloudinaryArtifactStrip({
+  url,
+  decisions,
+  thumbnailUrl,
+  urlCopied,
+  setUrlCopied,
+}: {
+  url: string;
+  decisions: EditDecisions | null;
+  thumbnailUrl: string | null;
+  urlCopied: boolean;
+  setUrlCopied: (v: boolean) => void;
+}) {
+  const chips = useMemo(() => deriveTransformChips(decisions), [decisions]);
+  return (
+    <section className="space-y-3 rounded-md border border-brand-ember-dim/30 bg-bg-elev-1/40 p-4">
+      <div className="flex items-baseline justify-between">
+        <div className="space-y-0.5">
+          <div className="font-body text-[11px] font-medium uppercase tracking-[0.08em] text-brand-ember">
+            Cloudinary · single-URL bake
+          </div>
+          <div className="font-display text-[15px] italic text-fg-primary">
+            Master cut · live URL
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(url);
+                setUrlCopied(true);
+                window.setTimeout(() => setUrlCopied(false), 1400);
+                toast.success("Master cut URL copied.");
+              } catch {
+                toast.error("Couldn't reach the clipboard.");
+              }
+            }}
+            className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+            aria-label="Copy master cut URL"
+          >
+            {urlCopied ? (
+              <>
+                <Check size={11} strokeWidth={2} className="text-brand-ember" aria-hidden="true" />
+                <span className="text-brand-ember">Copied</span>
+              </>
+            ) : (
+              <>
+                <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
+                Copy
+              </>
+            )}
+          </button>
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+            aria-label="Open master cut URL in a new tab"
+          >
+            <ExternalLink size={11} strokeWidth={1.5} aria-hidden="true" />
+            Open
+          </a>
+        </div>
+      </div>
+
+      <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
+        {url}
+      </div>
+
+      {chips.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {chips.map((c) => (
+            <span
+              key={c.label}
+              title={c.hint}
+              className="inline-flex items-center gap-1 rounded-full border border-brand-ember-dim/40 bg-brand-ember/[0.06] px-2.5 py-1 font-mono text-[10.5px] text-brand-ember"
+            >
+              {c.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {thumbnailUrl ? (
+        <a
+          href={thumbnailUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group inline-flex items-center gap-2 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+          aria-label="Open poster-frame derivative in a new tab"
+        >
+          <ImageIcon size={11} strokeWidth={1.5} aria-hidden="true" />
+          Poster-frame derivative
+          <span className="font-mono text-[10.5px] text-fg-tertiary/70 group-hover:text-brand-ember">
+            /so_auto/&lt;id&gt;.jpg
+          </span>
+        </a>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Derive a chip per Cloudinary capability the current EditDecisions touches.
+ * Each chip names the transform segment that ends up in the URL — so the
+ * user can read the URL and see which chip emitted what.
+ */
+function deriveTransformChips(decisions: EditDecisions | null): { label: string; hint: string }[] {
+  if (!decisions) return [];
+  const chips: { label: string; hint: string }[] = [];
+  const clips = decisions.clips ?? [];
+  if (clips.length > 1) {
+    chips.push({
+      label: `fl_splice × ${clips.length - 1}`,
+      hint: "Cloudinary spliced overlay clips onto the base — one fl_splice per overlay.",
+    });
+  }
+  const trimmed = clips.filter(
+    (c) => (c.trimStart ?? 0) > 0 || (c.trimEnd ?? c.durationSeconds) < c.durationSeconds,
+  ).length;
+  if (trimmed > 0) {
+    chips.push({
+      label: `so / eo × ${trimmed}`,
+      hint: "Per-beat trim — Cloudinary so_/eo_ on the layer opener.",
+    });
+  }
+  const fades = clips.filter((c, i) => i > 0 && (c.transitionMs ?? 0) > 0).length;
+  if (fades > 0) {
+    chips.push({
+      label: `e_fade × ${fades}`,
+      hint: "Cross-fade transitions between beats.",
+    });
+  }
+  const grades = clips.filter((c) => c.colorGrade && c.colorGrade.length > 0).length;
+  if (grades > 0) {
+    chips.push({
+      label: `e_brightness/contrast × ${grades}`,
+      hint: "Per-beat color grade.",
+    });
+  }
+  const captions = clips.filter((c) => c.caption && c.caption.length > 0).length;
+  if (captions > 0) {
+    chips.push({
+      label: `l_text × ${captions}`,
+      hint: "Timeline-anchored caption overlay.",
+    });
+  }
+  if (decisions.look && decisions.look !== "neutral") {
+    chips.push({
+      label: `look:${decisions.look}`,
+      hint: "Global LUT applied across the whole cut.",
+    });
+  }
+  if (decisions.audio?.publicId) {
+    chips.push({
+      label: "l_audio",
+      hint: "Music bed overlay with volume + fade.",
+    });
+  }
+  if (decisions.duckOriginalAudioDb != null) {
+    chips.push({
+      label: `e_volume:${decisions.duckOriginalAudioDb}`,
+      hint: "Original clip audio ducked under the music bed.",
+    });
+  }
+  if (decisions.watermarkPublicId) {
+    chips.push({
+      label: "l_watermark",
+      hint: "Lower-right corner watermark.",
+    });
+  }
+  return chips;
 }
