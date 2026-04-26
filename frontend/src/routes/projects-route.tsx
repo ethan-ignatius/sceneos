@@ -87,19 +87,36 @@ export function ProjectsRoute() {
   const localProjects = useBeatGraphStore((s) => s.projects);
   const resumeProject = useBeatGraphStore((s) => s.resumeProject);
   const discardProject = useBeatGraphStore((s) => s.discardProject);
+  const { isAuthenticated, isLoading: authLoading, loginWithRedirect } = useAuth0();
 
   const [remoteProjects, setRemoteProjects] = useState<MongoProject[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Only fetch the Mongo archive when the user is signed in. The
+  // backend filters by X-User-Id (set in App.tsx via setApiUserId) so
+  // an anonymous request gets [] anyway, but skipping the call keeps
+  // the network panel cleaner during the auth loading state.
   useEffect(() => {
+    if (!isAuthenticated) {
+      setRemoteProjects([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     api
       .listProjects()
       .then(setRemoteProjects)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [isAuthenticated]);
 
-  const merged = mergeProjects(localProjects, remoteProjects);
+  // Local-storage projects only show for the signed-in user. Without
+  // auth, the page reads as a clean "sign in to see your archive"
+  // wall — no leaked dev state, no mock data, no localStorage
+  // residue from a teammate.
+  const merged = isAuthenticated
+    ? mergeProjects(localProjects, remoteProjects)
+    : [];
 
   const handleResume = (project: MergedProject) => {
     if (project.source === "mongo") {
@@ -159,19 +176,48 @@ export function ProjectsRoute() {
               Projects · <span className="font-mono tabular-nums text-fg-secondary">{merged.length}</span> archived
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:text-brand-ember"
-          >
-            <ArrowLeft size={13} strokeWidth={1.5} aria-hidden="true" />
-            Landing
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/")}
+              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:text-brand-ember"
+            >
+              <ArrowLeft size={13} strokeWidth={1.5} aria-hidden="true" />
+              Landing
+            </button>
+            <AuthChip />
+          </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[64rem] px-6 pb-12 pt-6 md:pt-8">
-        {loading ? (
+        {AUTH_REQUIRED && !authLoading && !isAuthenticated ? (
+          // Auth wall — page reads as "your archive lives behind a
+          // sign-in" so the user understands why the list is empty
+          // instead of assuming the product is broken. The Sign-in
+          // CTA hands off to Auth0's Universal Login.
+          <div className="border-y border-fg-tertiary/15 py-20 text-center">
+            <Lock size={18} strokeWidth={1.5} aria-hidden="true" className="mx-auto mb-4 text-fg-tertiary" />
+            <div className="font-body text-body-sm font-medium text-fg-secondary">
+              Sign in to see your archive.
+            </div>
+            <p className="mx-auto mt-2 max-w-prose font-body text-pill leading-relaxed text-fg-tertiary">
+              Projects are tied to your account so your work stays with you across devices.
+            </p>
+            <button
+              type="button"
+              onClick={() =>
+                loginWithRedirect({
+                  authorizationParams: { redirect_uri: window.location.origin },
+                })
+              }
+              className="mt-6 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-brand-ember/55 bg-brand-ember/10 px-4 py-2 font-body text-pill font-medium text-brand-ember transition-[border-color,background-color] duration-200 hover:border-brand-ember hover:bg-brand-ember/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+            >
+              <LogIn size={12} strokeWidth={2} aria-hidden="true" />
+              Sign in
+            </button>
+          </div>
+        ) : loading || authLoading ? (
           <div className="border-y border-fg-tertiary/15 py-20 text-center">
             <div className="font-body text-body-sm font-medium text-fg-secondary">
               Loading projects…
@@ -223,72 +269,77 @@ export function ProjectsRoute() {
                     visible: { opacity: 1, y: 0 },
                   }}
                   transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-                  className="group relative"
+                  className={cn(
+                    "group grid items-center gap-4 px-3 py-4 transition-colors duration-150",
+                    "grid-cols-[1fr_auto] sm:gap-6 sm:px-4",
+                    "hover:bg-bg-elev-1/40 focus-within:bg-bg-elev-1/55",
+                  )}
                 >
+                  {/* Left column — clickable text region. Reserves its
+                      own grid cell so the action buttons on the right
+                      never crowd into the title or metadata strip. */}
                   <button
                     type="button"
                     onClick={() => handleResume(p)}
                     aria-label={`Resume ${p.masterPrompt}`}
-                    className="grid w-full cursor-pointer grid-cols-[1fr_auto] items-center gap-4 px-3 py-4 text-left transition-colors duration-150 hover:bg-bg-elev-1/40 focus-visible:bg-bg-elev-1/55 focus-visible:outline-none sm:gap-6 sm:px-4"
+                    className="min-w-0 cursor-pointer space-y-2 text-left focus-visible:outline-none"
                   >
-                    <div className="min-w-0 space-y-2">
-                      <div className="flex items-baseline gap-2">
-                        <p className="line-clamp-1 flex-1 font-body text-body-sm font-medium leading-snug text-fg-primary transition-colors group-hover:text-brand-ember">
-                          {p.masterPrompt}
-                        </p>
-                        <ArrowUpRight
-                          size={13}
-                          strokeWidth={1.75}
-                          aria-hidden="true"
-                          className="flex-shrink-0 text-fg-tertiary opacity-0 transition-[opacity,color,transform] duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-brand-ember group-hover:opacity-100"
-                        />
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                        <span className="font-mono text-micro tabular-nums text-fg-tertiary">
-                          {date} · {time}
-                        </span>
-                        <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
-                        <span className="font-mono text-micro uppercase tracking-[0.08em] text-fg-tertiary">
-                          {p.videoType}
-                        </span>
-                        <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
-                        <BeatProgressStrip beats={p.beatStatuses} />
-                        <span
-                          className={cn(
-                            "font-mono text-micro tabular-nums",
-                            isComplete ? "text-brand-ember" : "text-fg-tertiary",
-                          )}
-                        >
-                          {p.approvedCount}/{p.totalBeats}
-                          {isComplete ? " · ready" : ""}
-                        </span>
-                        {p.source === "mongo" && (
-                          <span title="Stored in MongoDB Atlas">
-                            <Cloud size={10} strokeWidth={1.5} className="text-brand-ember/60" />
-                          </span>
+                    <div className="flex items-baseline gap-2">
+                      <p className="line-clamp-1 flex-1 font-body text-body-sm font-medium leading-snug text-fg-primary transition-colors group-hover:text-brand-ember">
+                        {p.masterPrompt}
+                      </p>
+                      <ArrowUpRight
+                        size={13}
+                        strokeWidth={1.75}
+                        aria-hidden="true"
+                        className="flex-shrink-0 text-fg-tertiary opacity-0 transition-[opacity,color,transform] duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-brand-ember group-hover:opacity-100"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <span className="font-mono text-micro tabular-nums text-fg-tertiary">
+                        {date} · {time}
+                      </span>
+                      <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
+                      <span className="font-mono text-micro uppercase tracking-[0.18em] text-fg-tertiary">
+                        {p.videoType}
+                      </span>
+                      <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
+                      <BeatProgressStrip beats={p.beatStatuses} />
+                      <span
+                        className={cn(
+                          "font-mono text-micro tabular-nums",
+                          isComplete ? "text-brand-ember" : "text-fg-tertiary",
                         )}
-                        {p.source === "local" && (
-                          <span title="Local only (browser)">
-                            <HardDrive size={10} strokeWidth={1.5} className="text-fg-tertiary/40" />
-                          </span>
-                        )}
-                        {p.source === "both" && (
-                          <span title="Synced: local + MongoDB Atlas" className="flex items-center gap-0.5">
-                            <HardDrive size={10} strokeWidth={1.5} className="text-fg-tertiary/40" />
-                            <Cloud size={10} strokeWidth={1.5} className="text-brand-ember/60" />
-                          </span>
-                        )}
-                      </div>
+                      >
+                        {p.approvedCount}/{p.totalBeats}
+                        {isComplete ? " · ready" : ""}
+                      </span>
+                      {p.source === "mongo" && (
+                        <span title="Stored in MongoDB Atlas">
+                          <Cloud size={10} strokeWidth={1.5} className="text-brand-ember/60" />
+                        </span>
+                      )}
+                      {p.source === "local" && (
+                        <span title="Local only (browser)">
+                          <HardDrive size={10} strokeWidth={1.5} className="text-fg-tertiary/40" />
+                        </span>
+                      )}
+                      {p.source === "both" && (
+                        <span title="Synced: local + MongoDB Atlas" className="flex items-center gap-0.5">
+                          <HardDrive size={10} strokeWidth={1.5} className="text-fg-tertiary/40" />
+                          <Cloud size={10} strokeWidth={1.5} className="text-brand-ember/60" />
+                        </span>
+                      )}
                     </div>
                   </button>
-                  <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 sm:right-4">
+                  {/* Right column — actions. Sits in its own grid cell
+                      so the left column's text wraps cleanly against
+                      it instead of overlapping. */}
+                  <div className="flex flex-shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleResume(p);
-                      }}
-                      className="pointer-events-auto inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1.5 font-body text-pill font-medium text-brand-ember opacity-80 transition-[opacity,color,background-color] duration-200 hover:bg-brand-ember/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-1 focus-visible:ring-offset-bg-base"
+                      onClick={() => handleResume(p)}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1.5 font-body text-pill font-medium text-brand-ember opacity-80 transition-[opacity,color,background-color] duration-200 hover:bg-brand-ember/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-1 focus-visible:ring-offset-bg-base"
                     >
                       <Play size={11} strokeWidth={2} aria-hidden="true" />
                       Resume
