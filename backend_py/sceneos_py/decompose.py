@@ -322,14 +322,27 @@ async def decompose_master_prompt(params: dict) -> dict:
             config=cfg,
         )
 
-    response = await with_reliability(
-        "vertex.gemini.decompose",
-        lambda: asyncio.to_thread(_call_sync, 0.6),
-        timeout_seconds=120.0,
-        max_attempts=2,
-        base_backoff=1.5,
-        breaker_name="vertex.gemini",
-    )
+    try:
+        response = await with_reliability(
+            "vertex.gemini.decompose",
+            lambda: asyncio.to_thread(_call_sync, 0.6),
+            timeout_seconds=120.0,
+            max_attempts=2,
+            base_backoff=1.5,
+            breaker_name="vertex.gemini",
+        )
+    except Exception as call_exc:
+        # Vertex Gemini errored out (403 billing-disabled, 429 quota,
+        # CircuitOpenError after repeated failures, network blip). Don't
+        # 502 the user — synthesize a stub decomposition so the canvas
+        # still gets beats. The continuity bible has its own fallback
+        # inside _gemini_continuity_bible.
+        logger.warning(
+            "[decompose] Gemini call failed (%s); using stub decomposition",
+            type(call_exc).__name__,
+        )
+        bible = await _gemini_continuity_bible(params["masterPrompt"], params["beats"])
+        return stub_decomposition(params, bible=bible)
 
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
