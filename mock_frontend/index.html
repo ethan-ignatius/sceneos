@@ -562,14 +562,19 @@
     }
 
     /* ── Status poll (after orchestrate) ───────────────────────────────── */
-    async function pollStatus(jobId, maxAttempts = 10, intervalMs = 800) {
+    async function pollStatus(jobId, maxAttempts = 180, intervalMs = 2000) {
+      // Real providers (especially Veo + Cloudinary persist) can take minutes.
+      // The old 10x800ms window (8s) falsely looked like "video never generated".
+      let nextInterval = intervalMs;
       for (let i = 0; i < maxAttempts; i++) {
         const res = await fetch(`${apiBase()}/api/status/${encodeURIComponent(jobId)}`);
         if (!res.ok) throw new Error(`status ${res.status}`);
         const body = await res.json();
         if (body.status === 'succeeded') return body;
         if (body.status === 'failed') throw new Error(body.error || 'provider failed');
-        await sleep(intervalMs);
+        // Prefer backend-provided poll cadence when available.
+        nextInterval = Math.max(800, Number(body.pollAfterMs || nextInterval || 2000));
+        await sleep(nextInterval);
       }
       return null;  // timeout — caller decides what to do
     }
@@ -1284,7 +1289,7 @@
         // Poll status briefly for the lastFrameUrl that will seed the next beat.
         if (orchestrateResult && orchestrateResult.jobId) {
           try {
-            const statusBody = await pollStatus(orchestrateResult.jobId, 10, 800);
+            const statusBody = await pollStatus(orchestrateResult.jobId, 180, 2000);
             if (statusBody) {
               previousLastFrameUrl = statusBody.lastFrameUrl || null;
               beat.scenes[0].clipUrl = statusBody.clipUrl;

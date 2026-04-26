@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from typing import Any, AsyncIterator
 
 from ..config import mock_mode
@@ -111,6 +112,20 @@ async def run_agent_turn(req: dict) -> dict:
 
 # ── Streaming entry point ──────────────────────────────────────────────────
 
+# The non-streaming path uses with_reliability(timeout_seconds=30). The
+# streaming path needs a wider window because thinking tokens arrive over
+# 6–15s on the trial tier, but we MUST have a ceiling — without one, a
+# stalled Gemini stream blocks the consumer coroutine (and thus the SSE
+# connection) forever. 45s gives Gemini 2.5 Flash generous room for its
+# thinking budget while still recovering within a minute via Anthropic.
+STREAM_TIMEOUT_SECONDS = 45.0
+
+# Per-chunk liveness: if the producer hasn't put ANYTHING on the queue for
+# this many seconds, the consumer treats it as a stall even if the overall
+# timeout hasn't fired yet. Catches the case where Gemini sends a few
+# thinking tokens then goes silent mid-stream.
+CHUNK_SILENCE_SECONDS = 20.0
+
 
 async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
     """
@@ -126,13 +141,20 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
     yield {"type": "ready"}
 
     manifest = req["manifest"]
-    beat = next((b for b in manifest["beats"] if b["beatId"] == req["beatId"]), None)
+    beat_id = req["beatId"]
+    beat = next((b for b in manifest["beats"] if b["beatId"] == beat_id), None)
     if beat is None:
-        yield {"type": "error", "message": f"beatId not found in manifest ({req['beatId']})"}
+        yield {"type": "error", "message": f"beatId not found in manifest ({beat_id})"}
         return
 
     conversation = _collect_conversation(beat, req.get("userMessage"))
     user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
+    beat_name = beat.get("beatName", beat_id)
+
+    logger.info(
+        "[agent/stream] start beat=%s user_turns=%d conversation_len=%d",
+        beat_name, user_turn_count, len(conversation),
+    )
 
     client = make_genai_client()
     if client is None:
@@ -145,8 +167,9 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
                 ),
             }
             return
+        logger.info("[agent/stream] stub mode — no Vertex client, beat=%s", beat_name)
         for chunk in [
-            f"[stub mode — no Vertex client] working on the {beat['beatName'].lower()} beat. ",
+            f"[stub mode — no Vertex client] working on the {beat_name.lower()} beat. ",
             f"checking what we know so far: {user_turn_count} user reply(ies). ",
             "tracing facets: subject, action, setting, framing, mood. ",
             "drafting the next question. ",
@@ -170,15 +193,25 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
     SENTINEL = object()
+    # Liveness flag — the producer sets this on first chunk so the consumer
+    # can distinguish "Gemini hasn't responded at all" from "Gemini is
+    # streaming but slowly."
+    producer_alive = threading.Event()
 
     def _producer():
         try:
+            logger.info("[agent/stream] producer started, beat=%s", beat_name)
             stream = client.models.generate_content_stream(
                 model=default_gemini_model_for("agent"),
                 contents=contents,
                 config=config,
             )
+            chunk_count = 0
             for chunk in stream:
+                if chunk_count == 0:
+                    producer_alive.set()
+                    logger.info("[agent/stream] first chunk received, beat=%s", beat_name)
+                chunk_count += 1
                 cands = getattr(chunk, "candidates", None) or []
                 if not cands:
                     continue
@@ -202,16 +235,58 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
                         loop.call_soon_threadsafe(queue.put_nowait, {"kind": "thought", "chunk": text})
                     else:
                         loop.call_soon_threadsafe(queue.put_nowait, {"kind": "text", "chunk": text})
+            logger.info(
+                "[agent/stream] producer finished, beat=%s chunks=%d",
+                beat_name, chunk_count,
+            )
         except Exception as exc:
+            logger.warning(
+                "[agent/stream] producer error, beat=%s: %s: %s",
+                beat_name, type(exc).__name__, exc,
+            )
             loop.call_soon_threadsafe(queue.put_nowait, {"kind": "error", "message": f"{type(exc).__name__}: {exc}"})
         finally:
             loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
 
-    threading.Thread(target=_producer, daemon=True).start()
+    thread = threading.Thread(target=_producer, daemon=True)
+    thread.start()
+
+    # ── Consume the queue with timeout protection ──────────────────────────
+    # Two timeout layers:
+    #   1. STREAM_TIMEOUT_SECONDS (45s) — overall wall-clock ceiling from
+    #      producer start to SENTINEL. Catches total stalls.
+    #   2. CHUNK_SILENCE_SECONDS (20s) — per-get ceiling. Catches mid-stream
+    #      stalls where Gemini sends a few thinking tokens then goes silent.
+    # On any timeout: fall back to Anthropic Haiku and surface a thought
+    # event so the user sees "switching to backup" instead of frozen UI.
 
     final_call: dict | None = None
+    timed_out = False
+    wall_start = time.monotonic()
+
     while True:
-        item = await queue.get()
+        elapsed = time.monotonic() - wall_start
+        remaining = STREAM_TIMEOUT_SECONDS - elapsed
+        if remaining <= 0:
+            timed_out = True
+            logger.warning(
+                "[agent/stream] overall timeout (%.0fs) hit, beat=%s",
+                STREAM_TIMEOUT_SECONDS, beat_name,
+            )
+            break
+        # Use the smaller of remaining wall-clock and per-chunk silence as
+        # the get() timeout. This way both ceilings are enforced.
+        get_timeout = min(remaining, CHUNK_SILENCE_SECONDS)
+        try:
+            item = await asyncio.wait_for(queue.get(), timeout=get_timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            logger.warning(
+                "[agent/stream] chunk silence timeout (%.0fs) hit after %.1fs total, beat=%s",
+                CHUNK_SILENCE_SECONDS, elapsed, beat_name,
+            )
+            break
+
         if item is SENTINEL:
             break
         kind = item["kind"]
@@ -223,18 +298,80 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             final_call = {"name": item["name"], "args": item["args"]}
             yield {"type": "tool_call", "name": item["name"], "args": item["args"]}
         elif kind == "error":
-            # Stream-level Gemini error → surface to client. There is no
-            # second-LLM fallback; the frontend handles errors with a toast.
-            yield {"type": "error", "message": f"Gemini stream error: {item['message']}"}
+            # Stream-level Gemini error → pivot to Anthropic fallback so the
+            # user gets a real answer instead of a dead stream. We surface a
+            # short status thought so the visualizer can show the pivot.
+            logger.warning("[agent/stream] Gemini stream error, beat=%s: %s", beat_name, item["message"])
+            yield {"type": "thought", "chunk": f"[gemini stream error: {item['message']}; falling back to Anthropic Haiku]"}
+            try:
+                result = await _run_anthropic_agent_turn(
+                    beat=beat,
+                    manifest=manifest,
+                    conversation=conversation,
+                )
+            except Exception as exc:
+                yield {"type": "error", "message": f"Both Gemini stream and Anthropic fallback failed: {exc}"}
+                return
+            yield {
+                "type": "tool_call",
+                "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
+                "args": result,
+            }
+            yield {"type": "result", **result}
             return
 
-    if final_call is None:
+    # ── Timeout recovery: fall back to Anthropic ───────────────────────────
+    if timed_out:
         yield {
-            "type": "error",
-            "message": "Gemini stream completed without emitting a tool call.",
+            "type": "thought",
+            "chunk": (
+                f"[gemini stream timed out after {time.monotonic() - wall_start:.0f}s; "
+                f"falling back to Anthropic Haiku]"
+            ),
         }
+        try:
+            result = await _run_anthropic_agent_turn(
+                beat=beat,
+                manifest=manifest,
+                conversation=conversation,
+            )
+        except Exception as exc:
+            logger.error("[agent/stream] Anthropic fallback also failed, beat=%s: %s", beat_name, exc)
+            yield {"type": "error", "message": f"Gemini timed out and Anthropic fallback failed: {exc}"}
+            return
+        logger.info("[agent/stream] Anthropic fallback succeeded, beat=%s kind=%s", beat_name, result.get("kind"))
+        yield {
+            "type": "tool_call",
+            "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
+            "args": result,
+        }
+        yield {"type": "result", **result}
         return
 
+    # ── Normal completion ──────────────────────────────────────────────────
+    if final_call is None:
+        # Stream ended with no function_call. Pivot to Anthropic instead of
+        # surfacing a dead stream.
+        logger.warning("[agent/stream] no tool call in stream, beat=%s — falling back to Anthropic", beat_name)
+        yield {"type": "thought", "chunk": "[gemini stream produced no tool call; falling back to Anthropic Haiku]"}
+        try:
+            result = await _run_anthropic_agent_turn(
+                beat=beat,
+                manifest=manifest,
+                conversation=conversation,
+            )
+        except Exception as exc:
+            yield {"type": "error", "message": f"Stream completed without tool call and fallback failed: {exc}"}
+            return
+        yield {
+            "type": "tool_call",
+            "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
+            "args": result,
+        }
+        yield {"type": "result", **result}
+        return
+
+    logger.info("[agent/stream] tool call received: %s, beat=%s", final_call["name"], beat_name)
     try:
         result = _normalize_call_to_result(final_call["name"], final_call["args"], beat)
     except Exception as exc:

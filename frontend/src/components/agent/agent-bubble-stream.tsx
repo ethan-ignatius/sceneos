@@ -224,6 +224,17 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       if (active && !cancelledRef.current) setError("Director took too long — try again.");
     }, 60_000);
 
+    // Safety timeout — if no result arrives within 60s, abort the
+    // connection. The backend has its own 45s ceiling, but this
+    // catches network-level hangs the backend can't see.
+    const safetyTimer = window.setTimeout(() => {
+      if (!active || cancelledRef.current) return;
+      ctrl.abort();
+      setError("Connection timed out — the director took too long. Try again.");
+      setStreamingThought("");
+      setInFlight(false);
+    }, 60_000);
+
     (async () => {
       try {
         for await (const ev of api.agentStream({ manifest, beatId: beat.beatId }, ctrl.signal)) {
@@ -231,6 +242,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           if (ev.type === "thought" || ev.type === "text") {
             setStreamingThought((prev) => prev + ev.chunk);
           } else if (ev.type === "result") {
+            window.clearTimeout(safetyTimer);
             if (ev.kind === "question") {
               appendAgentTurn(beat.beatId, scene.sceneId, {
                 role: "agent",
@@ -250,6 +262,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             }
             setStreamingThought("");
           } else if (ev.type === "error") {
+            window.clearTimeout(safetyTimer);
             setError(ev.message);
           }
         }
@@ -260,6 +273,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       } finally {
         window.clearTimeout(seedTimeoutId);
+        window.clearTimeout(safetyTimer);
         if (active && !cancelledRef.current) setInFlight(false);
       }
     })();
@@ -287,6 +301,18 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
+    // Safety timeout — if no result arrives within 60s, abort the
+    // connection and surface a retryable error. The backend has its own
+    // 45s ceiling, but this catches network-level hangs.
+    const safetyTimer = window.setTimeout(() => {
+      if (cancelledRef.current) return;
+      ctrl.abort();
+      setError("Connection timed out — the director took too long. Try again.");
+      setStreamingThought("");
+      setPendingRetryMessage(userMessage);
+      setInFlight(false);
+    }, 60_000);
+
     try {
       for await (const ev of api.agentStream(
         { manifest, beatId: beat.beatId, userMessage },
@@ -299,6 +325,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           // the agent's words instead of a frozen "Composing" loader.
           setStreamingThought((prev) => prev + ev.chunk);
         } else if (ev.type === "result") {
+          window.clearTimeout(safetyTimer);
           if (ev.kind === "question") {
             appendAgentTurn(beat.beatId, scene.sceneId, {
               role: "agent",
@@ -324,6 +351,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           setPendingRetryMessage(null);
           setStreamingThought("");
         } else if (ev.type === "error") {
+          window.clearTimeout(safetyTimer);
           setError(ev.message);
           setPendingRetryMessage(userMessage);
         }
@@ -334,6 +362,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       setPendingRetryMessage(userMessage);
     } finally {
+      window.clearTimeout(safetyTimer);
       if (!cancelledRef.current) setInFlight(false);
     }
   };

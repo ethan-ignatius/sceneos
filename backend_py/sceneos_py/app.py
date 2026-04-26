@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import httpx
@@ -33,6 +34,7 @@ from .provider import (
 
 
 logger = logging.getLogger(__name__)
+_KEYFRAME_WAIT_SECONDS = float(env("SCENEOS_KEYFRAME_WAIT_SECONDS", "25") or "25")
 
 app = FastAPI(title="sceneos-backend-py")
 
@@ -87,6 +89,7 @@ def health():
 async def agent(body: dict):
     if mock_mode():
         return mock_service.run_mock_agent_turn(body)
+    t_orch = time.perf_counter()
     try:
         return await agent_service.run_agent_turn(body)
     except Exception as exc:
@@ -239,10 +242,55 @@ async def session_get(project_id: str):
         response["normalPromptId"] = sess["normalPromptId"]
     if sess.get("projectRefs") is not None:
         response["projectRefs"] = sess["projectRefs"]
+    if sess.get("projectKeyframesMeta") is not None:
+        response["projectKeyframesMeta"] = sess["projectKeyframesMeta"]
     spec = session_service.all_speculative_jobs(project_id)
     if spec:
         response["speculativeJobs"] = spec
     return response
+
+
+@app.get("/api/ops/project/{project_id}")
+async def project_observability(project_id: str):
+    """
+    Lightweight observability surface for debugging slow/fragile pipelines.
+    Returns session metadata + beat progress + speculative-job snapshots.
+    """
+    from . import session as session_service
+
+    sess = session_service.get_session(project_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail={"error": "Unknown projectId"})
+
+    manifest = sess.get("manifest") or {}
+    beats = manifest.get("beats") or []
+    beat_rows = []
+    for beat in beats:
+        scene = (beat.get("scenes") or [{}])[0] or {}
+        beat_rows.append({
+            "beatId": beat.get("beatId"),
+            "beatName": beat.get("beatName"),
+            "template": beat.get("template"),
+            "status": beat.get("status"),
+            "hasBeatFacts": bool(scene.get("beatFacts")),
+            "hasRefinedPrompt": bool(scene.get("refinedPrompt")),
+            "jobId": scene.get("jobId"),
+            "clipPublicId": scene.get("clipPublicId"),
+            "lastFrameUrl": scene.get("lastFrameUrl"),
+        })
+
+    return {
+        "projectId": project_id,
+        "mode": sess.get("mode"),
+        "createdAt": sess.get("createdAt"),
+        "videoType": sess.get("videoType"),
+        "moviePlanPresent": bool(sess.get("moviePlan")),
+        "projectKeyframesMeta": sess.get("projectKeyframesMeta"),
+        "projectRefsPresent": bool(sess.get("projectRefs")),
+        "projectKeyframesPresent": bool(sess.get("projectKeyframes")),
+        "speculativeJobs": session_service.all_speculative_jobs(project_id),
+        "beats": beat_rows,
+    }
 
 
 # ── /api/orchestrate/{beat_id} — deterministic per-beat pipeline ──────────
@@ -360,18 +408,37 @@ async def orchestrate(beat_id: str, body: dict):
         # generation triggered by the first markSufficient that ships
         # characterDescription / locationDescription. Each beat picks the
         # keyframe variant best matching its framing.
-        project_keyframes = await session_service.ensure_project_keyframes(
-            project_id=project_id,
-            character_description=beat_facts.get("characterDescription"),
-            location_description=beat_facts.get("locationDescription"),
-            aspect_ratio=aspect_ratio,
-        )
+        t_refs = time.perf_counter()
+        keyframe_timeout = False
+        try:
+            project_keyframes = await asyncio.wait_for(
+                session_service.ensure_project_keyframes(
+                    project_id=project_id,
+                    character_description=beat_facts.get("characterDescription"),
+                    location_description=beat_facts.get("locationDescription"),
+                    aspect_ratio=aspect_ratio,
+                ),
+                timeout=_KEYFRAME_WAIT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            # Fail-open: do not stall the whole beat for minutes waiting on Imagen.
+            # The orchestrator can still proceed (chain-from-previous or text-only).
+            keyframe_timeout = True
+            project_keyframes = None
+            logger.warning(
+                "[orchestrate] keyframe generation timed out after %.1fs project=%s beat=%s",
+                _KEYFRAME_WAIT_SECONDS,
+                project_id,
+                beat_id,
+            )
+        refs_ms = int((time.perf_counter() - t_refs) * 1000)
         # Back-compat single-ref shape for any caller that still reads it.
         project_refs = (
             session_service._refs_from_keyframes(project_keyframes)
             if project_keyframes
             else None
         )
+        t_pipeline = time.perf_counter()
         result = await orchestrator.run_beat_pipeline(
             manifest=manifest,
             beat_id=beat_id,
@@ -380,6 +447,18 @@ async def orchestrate(beat_id: str, body: dict):
             aspect_ratio=aspect_ratio,
             project_refs=project_refs,
             project_keyframes=project_keyframes,
+        )
+        pipeline_ms = int((time.perf_counter() - t_pipeline) * 1000)
+        total_ms = int((time.perf_counter() - t_orch) * 1000)
+        result["orchestrateTiming"] = {
+            "ensureProjectKeyframesMs": refs_ms,
+            "runBeatPipelineMs": pipeline_ms,
+            "totalMs": total_ms,
+            "keyframeTimeout": keyframe_timeout,
+        }
+        logger.info(
+            "[orchestrate] beat=%s project=%s totalMs=%s refsMs=%s pipelineMs=%s",
+            beat_id, project_id, total_ms, refs_ms, pipeline_ms,
         )
         # Cache it under the projectId so subsequent calls (e.g. retries)
         # hit the same job without re-submitting.

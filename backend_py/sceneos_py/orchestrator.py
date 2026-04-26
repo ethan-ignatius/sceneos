@@ -38,11 +38,15 @@ job — NO new work is done.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from typing import Any
 
 from . import vertex_imagen
 from .motion_presets import pick_motion_preset
 from .provider import dispatch_with_fallback, encode_job_id, poll_after_ms_for
+
+logger = logging.getLogger(__name__)
 
 
 # ── Decisions ──────────────────────────────────────────────────────────────
@@ -263,6 +267,8 @@ async def run_beat_pipeline(
     Returns: see implementation. Adds `keyframeSets`, `selectedKeyframe`
     fields when project_keyframes was used.
     """
+    t0 = time.perf_counter()
+    timings_ms: dict[str, int] = {}
     beat = next((b for b in manifest["beats"] if b["beatId"] == beat_id), None)
     if beat is None:
         raise ValueError(f"orchestrator: beatId not found ({beat_id})")
@@ -288,6 +294,7 @@ async def run_beat_pipeline(
     # picks up from the previous frame but doesn't show the same character
     # + world is a worse failure mode than a hard cut between beats.
 
+    t_seed_pick = time.perf_counter()
     if project_keyframes and (project_keyframes.get("character") or project_keyframes.get("location")):
         character_ref, location_ref, seed_image_url, character_set, location_set = _pick_keyframe_seed(
             framing=beat_facts.get("framing") or motion_preset.get("composition"),
@@ -301,6 +308,8 @@ async def run_beat_pipeline(
             project_refs,
         )
         shared_refs = bool(seed_image_url)
+
+    timings_ms["seedPick"] = int((time.perf_counter() - t_seed_pick) * 1000)
 
     if not seed_image_url and chain:
         # Fall back to chaining if project refs failed to produce a real
@@ -331,6 +340,7 @@ async def run_beat_pipeline(
                 beat_id=beat_id,
                 aspect_ratio=aspect_ratio,
             ))
+        t_fallback_refs = time.perf_counter()
         if coros:
             results = await asyncio.gather(*coros, return_exceptions=True)
             for kind, ref in zip(kinds, results):
@@ -345,6 +355,7 @@ async def run_beat_pipeline(
             (character_ref.get("imageUrl") if _ref_is_real(character_ref) else None)
             or (location_ref.get("imageUrl") if _ref_is_real(location_ref) else None)
         )
+        timings_ms["fallbackRefs"] = int((time.perf_counter() - t_fallback_refs) * 1000)
 
     clip_prompt = compose_clip_prompt(beat, beat_facts, motion_preset, aspect_ratio, manifest=manifest)
     refined_prompt = f"{clip_prompt['imagePrompt']} {clip_prompt['motionPrompt']}"
@@ -371,9 +382,11 @@ async def run_beat_pipeline(
     # surface fallbackReason to the frontend so the visualizer can show
     # a clean "Veo unavailable, replaying baked clip" badge instead of
     # a hard error.
+    t_submit = time.perf_counter()
     provider_name, result, original_provider, fallback_reason = (
         await dispatch_with_fallback(gen_params)
     )
+    timings_ms["submitProvider"] = int((time.perf_counter() - t_submit) * 1000)
     provider_job_id = result["jobId"]
 
     response = {
@@ -402,4 +415,24 @@ async def run_beat_pipeline(
     if original_provider:
         response["originalProvider"] = original_provider
         response["fallbackReason"] = fallback_reason
+    timings_ms["total"] = int((time.perf_counter() - t0) * 1000)
+    response["observability"] = {
+        "timingsMs": timings_ms,
+        "seedSource": (
+            "project-keyframe-or-ref"
+            if shared_refs
+            else ("chain:lastFrameUrl" if chain and seed_image_url == previous_last_frame_url else "fallback-per-beat-ref")
+        ),
+        "projectId": manifest.get("projectId"),
+        "beatId": beat_id,
+    }
+    logger.info(
+        "[orchestrator] beat=%s project=%s provider=%s totalMs=%s seedSource=%s timings=%s",
+        beat_id,
+        manifest.get("projectId"),
+        provider_name,
+        timings_ms["total"],
+        response["observability"]["seedSource"],
+        timings_ms,
+    )
     return response

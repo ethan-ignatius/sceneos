@@ -692,6 +692,7 @@ async def ensure_project_keyframes(
     Returns None if there's no project_id (ad-hoc orchestrate) or if
     neither description is provided AND no cached keyframes exist.
     """
+    started = time.perf_counter()
     if not project_id:
         return None
     sess = _SESSIONS.get(project_id)
@@ -702,15 +703,26 @@ async def ensure_project_keyframes(
         if mock_mode():
             return _mock_project_keyframes(character_description, location_description)
         from . import vertex_imagen
-        return await vertex_imagen.generate_project_keyframes(
+        keyframes = await vertex_imagen.generate_project_keyframes(
             project_id=project_id,
             character_description=character_description,
             location_description=location_description,
             aspect_ratio=aspect_ratio,
         )
+        logger.info(
+            "[session] keyframes generated ad-hoc project=%s ms=%s",
+            project_id,
+            int((time.perf_counter() - started) * 1000),
+        )
+        return keyframes
 
     cached = sess.get("projectKeyframes")
     if cached:
+        logger.info(
+            "[session] keyframes cache hit project=%s ms=%s",
+            project_id,
+            int((time.perf_counter() - started) * 1000),
+        )
         return cached
     if not (character_description or location_description):
         return None
@@ -727,4 +739,17 @@ async def ensure_project_keyframes(
         )
     sess["projectKeyframes"] = keyframes
     sess["projectRefs"] = _refs_from_keyframes(keyframes)
+    sess["projectKeyframesMeta"] = {
+        "generatedAt": _now_iso(),
+        "durationMs": int((time.perf_counter() - started) * 1000),
+        "characterProvided": bool(character_description),
+        "locationProvided": bool(location_description),
+    }
+    logger.info(
+        "[session] keyframes generated project=%s ms=%s character=%s location=%s",
+        project_id,
+        sess["projectKeyframesMeta"]["durationMs"],
+        bool(character_description),
+        bool(location_description),
+    )
     return keyframes
