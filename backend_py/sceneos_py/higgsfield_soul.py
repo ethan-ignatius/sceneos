@@ -122,11 +122,16 @@ def _build_soul_payload(
     if variant_hint:
         prompt = f"{prompt} Framing: {variant_hint}."
 
+    # Legacy `soul/standard` endpoint validated live shape: `model` is
+    # required (mirrors the dop/standard endpoint), and unknown fields
+    # cause 400. We send model + prompt + seed + enhance_prompt — the
+    # same minimal envelope shape as the working I2V dop call.
+    import random
     payload: dict[str, Any] = {
+        "model": "soul",
         "prompt": prompt[:1000],
-        "width_and_height": _soul_resolution(aspect_ratio),
-        "quality": "1080p",
-        "enhance_prompt": False,
+        "seed": random.randint(1, 1_000_000),
+        "enhance_prompt": True,
     }
     return payload
 
@@ -138,6 +143,16 @@ async def _post_soul(payload: dict) -> dict:
     }
     async with httpx.AsyncClient(timeout=60) as client:
         res = await client.post(_soul_endpoint(), json=payload, headers=headers)
+        if res.status_code >= 400:
+            # Surface the API's body on validation errors so we can
+            # iterate on the schema. Without this, all we see is the
+            # opaque "400 Bad Request" string and have to guess at
+            # which field the legacy platform rejects.
+            logger.warning(
+                "[higgsfield-soul] %s response body: %s",
+                res.status_code,
+                res.text[:600],
+            )
         res.raise_for_status()
         return res.json()
 

@@ -476,6 +476,7 @@ export type NarrationMoment =
   | "beat_intro"
   | "beat_locked"
   | "beat_complete"
+  | "editor_arrived"
   | "summary";
 
 export interface NarrateMomentRequest {
