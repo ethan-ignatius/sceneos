@@ -687,9 +687,11 @@ function CloudinaryArtifactStrip({
         </div>
       </div>
 
-      <div className="break-all border border-fg-tertiary/15 bg-bg-base/40 p-3.5 font-mono text-pill leading-[1.65] text-fg-secondary">
-        {url}
-      </div>
+      {/* Full URL block dropped per UX feedback — Copy + Open buttons in
+          the row above are the load-bearing affordance; the long mono
+          string was visual noise that didn't help the user act on it.
+          The transform-vocabulary chips below tell the same Cloudinary
+          story without the raw URL. */}
 
       {chips.length > 0 ? (
         <div className="flex flex-wrap gap-x-3 gap-y-1.5">

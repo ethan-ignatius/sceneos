@@ -282,10 +282,22 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
     //                planets all breathing in slightly different phases
     //                read as "the canvas is humming," not "they're all
     //                strobing in unison."
-    const readyPulse = isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.18 + 0.18 : 0;
-    const genPulse = isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.12 + 0.12 : 0;
+    // Pulses softened across the board after Mac/Retina users flagged
+    // the canvas as "flickering too crazy." High-DPI displays render
+    // emissive ramps with much less interpolation than 1x panels, so
+    // the same delta reads as a stutter. Halved amplitudes + slightly
+    // longer periods keep the visual signal without the strobe.
+    //   ready:     was ±0.18 / 1.6s → ±0.09 / 2.0s
+    //   generating:was ±0.12 / 1.0s → ±0.06 / 1.6s (the worst offender)
+    //   approved:  was ±0.06 / 4.2s → ±0.04 / 5.0s (already gentle, just trimmed)
+    const readyPulse = isReady && !reducedMotion
+      ? Math.sin((t * Math.PI * 2) / 2.0) * 0.09 + 0.09
+      : 0;
+    const genPulse = isGenerating && !reducedMotion
+      ? Math.sin((t * Math.PI * 2) / 1.6) * 0.06 + 0.06
+      : 0;
     const approvedPulse = isApproved && !reducedMotion
-      ? Math.sin((t * Math.PI * 2) / 4.2 + introIndex) * 0.06
+      ? Math.sin((t * Math.PI * 2) / 5.0 + introIndex) * 0.04
       : 0;
     if (materialRef.current) {
       // Lerp toward target so a status flip never snaps emissive in one frame.
@@ -337,9 +349,12 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       const approvedHaloPulse = isApproved && !reducedMotion
         ? Math.sin((t * Math.PI * 2) / 4.2 + introIndex) * 0.04
         : 0;
+      // Halo pulses match the trimmed emissive cadences above so the
+      // body and atmosphere breathe in sync — a smaller envelope, a
+      // slower period.
       const pulse =
-        (isReady ? Math.sin((t * Math.PI * 2) / 1.6) * 0.03 + 0.03 : 0) +
-        (isGenerating ? Math.sin((t * Math.PI * 2) / 1.0) * 0.025 + 0.025 : 0) +
+        (isReady && !reducedMotion ? Math.sin((t * Math.PI * 2) / 2.0) * 0.015 + 0.015 : 0) +
+        (isGenerating && !reducedMotion ? Math.sin((t * Math.PI * 2) / 1.6) * 0.012 + 0.012 : 0) +
         approvedHaloPulse;
       // Multiply by introEase so the halo fades in along with the
       // geometry's grow-in.

@@ -93,10 +93,11 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="max-w-prose rounded-md border border-fg-tertiary/20 bg-fg-primary/[0.02] p-3"
+        className="flex min-h-0 flex-1 max-w-prose overflow-hidden rounded-md border border-fg-tertiary/20 bg-fg-primary/[0.02] p-3"
       >
         <p
-          className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-body text-[0.875rem] leading-[1.55] text-fg-secondary"
+          data-lenis-prevent
+          className="h-full w-full overflow-y-auto whitespace-pre-wrap break-words font-body text-[0.875rem] leading-[1.55] text-fg-secondary [scrollbar-width:thin]"
           title={scene.refinedPrompt ?? beat.archetype.intent}
         >
           {scene.refinedPrompt ?? beat.archetype.intent}

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward, RotateCcw, AlertCircle } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Play, Pause, SkipBack, SkipForward, RotateCcw, AlertCircle, Maximize2, Minimize2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EditorPreviewProps {
@@ -17,14 +17,14 @@ interface EditorPreviewProps {
  * CutOS-style preview surface for /edit.
  *
  * Frame holds a clean &lt;video&gt; (no in-frame chrome). Below the frame:
- * a transport row with play/pause, skip ±5s, current/total mono time, and
- * a click-to-seek scrubber. The scrubber's playhead drags via pointer
- * capture, which is what reads as "deliberate" — the same pattern CutOS
- * uses for its main playhead handle.
+ * a transport row with play/pause, skip ±5s, current/total mono time, a
+ * smooth click-to-seek scrubber, and a fullscreen toggle. The scrubber's
+ * playhead drags via pointer capture and is RAF-driven during playback so
+ * the bar moves at 60fps instead of the 250ms `timeupdate` jerk.
  *
- * Spacebar / K toggles play when the frame has focus. The video src changes
- * (re-bakes from the editor) reset position to 0 — same behavior as the
- * canvas drawer's VideoPlayer, since a re-bake is logically a new cut.
+ * Spacebar / K toggles play. Arrow keys skip ±5s. F toggles fullscreen.
+ * The video src changes (re-bakes from the editor) reset position to 0 —
+ * a re-bake is logically a new cut.
  */
 export function EditorPreview({
   src,
@@ -36,15 +36,15 @@ export function EditorPreview({
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrubRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number>(durationSeconds ?? 0);
-  // Load failure overlay. Editor's bake URL points at Cloudinary; on
-  // resumed projects the asset can be rotated/deleted, and during a bake
-  // race the URL can briefly 404 before the new derivative is ready.
   const [loadError, setLoadError] = useState<string | null>(null);
   const [autoplayBlocked, setAutoplayBlocked] = useState(false);
   const [reloadCount, setReloadCount] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -54,15 +54,9 @@ export function EditorPreview({
     setLoadError(null);
     setAutoplayBlocked(false);
     v.load();
-    // Cached video may have v.duration ready synchronously and never
-    // re-fire loadedmetadata on src swap — seed from the element so
-    // the readout doesn't stick at "0:00".
     const seed = v.duration;
     if (Number.isFinite(seed) && seed > 0) setDuration(seed);
     const onTime = () => setCurrentTime(v.currentTime);
-    // loadedmetadata + durationchange together: some MP4 muxers report
-    // metadata before duration is computed, so durationchange catches
-    // the firmer value once it's known.
     const updateDuration = () => {
       const d = v.duration;
       if (Number.isFinite(d) && d > 0) setDuration(d);
@@ -76,8 +70,6 @@ export function EditorPreview({
       setPlaying(false);
       setCurrentTime(v.duration ?? 0);
     };
-    // MediaError codes mapped to human messages — same vocabulary as
-    // VideoPlayer so the two surfaces feel consistent.
     const onError = () => {
       const code = v.error?.code;
       const msg =
@@ -98,9 +90,6 @@ export function EditorPreview({
     v.addEventListener("pause", onPause);
     v.addEventListener("ended", onEnded);
     v.addEventListener("error", onError);
-    // Autoplay-blocked recovery: catch NotAllowedError so we can show
-    // the play overlay instead of leaving the user staring at a frozen
-    // first frame.
     const tryPlay = () => {
       const p = v.play();
       if (p && typeof p.then === "function") {
@@ -124,18 +113,87 @@ export function EditorPreview({
         /* noop */
       }
     };
-    // reloadCount is the Retry hook — bumping re-runs load().
   }, [src, reloadCount]);
 
-  // Late-arriving prop. /api/editor/apply returns durationSeconds but
-  // the URL bake can land first (e.g., demo lookup hit) — promote the
-  // prop into local state once it firms up, preserving any larger value
-  // the video element has already reported.
+  // RAF-driven scrubber — 60fps progress updates while playing. The
+  // <video>'s `timeupdate` event only fires every ~250ms, which is what
+  // makes the bar feel jerky. We drive `currentTime` from
+  // requestAnimationFrame as long as the video is playing, then fall back
+  // to the event when paused (where the user might be scrubbing).
+  useEffect(() => {
+    if (!playing) {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      return;
+    }
+    const tick = () => {
+      const v = videoRef.current;
+      if (v) setCurrentTime(v.currentTime);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [playing]);
+
+  // Late-arriving prop. /api/editor/apply returns durationSeconds but the
+  // URL bake can land first — promote the prop into local state once it
+  // firms up, preserving any larger value the video element already saw.
   useEffect(() => {
     if (typeof durationSeconds !== "number") return;
     if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
     setDuration((prev) => (prev > 0 ? prev : durationSeconds));
   }, [durationSeconds]);
+
+  // Fullscreen — track the actual document.fullscreenElement so we stay
+  // in sync if the user hits Esc. Browsers without the API just no-op.
+  useEffect(() => {
+    const onFsChange = () => {
+      setFullscreen(document.fullscreenElement === frameRef.current);
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const el = frameRef.current;
+    if (!el) return;
+    try {
+      if (document.fullscreenElement === el) {
+        await document.exitFullscreen();
+      } else {
+        await el.requestFullscreen();
+      }
+    } catch {
+      // Browsers can refuse fullscreen if no user gesture was attached
+      // (older Safari, embedded contexts). Silent — the button stays
+      // available, the user can try again.
+    }
+  }, []);
+
+  // Global F-key fullscreen — works anywhere on /edit, not just when
+  // the preview wrapper is focused. Bypassed when typing in any text
+  // surface so "f" still types into the director chat input. Also
+  // bypassed when meta/ctrl/alt is held so it doesn't intercept
+  // browser shortcuts (Cmd-F find, etc.).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "f" && e.key !== "F") return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.matches("input, textarea, [contenteditable='true']")) return;
+      e.preventDefault();
+      void toggleFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleFullscreen]);
 
   const togglePlay = () => {
     const v = videoRef.current;
@@ -189,6 +247,9 @@ export function EditorPreview({
     } else if (e.key === "ArrowRight") {
       e.preventDefault();
       skip(5);
+    } else if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      void toggleFullscreen();
     }
   };
 
@@ -202,8 +263,15 @@ export function EditorPreview({
       onKeyDown={onKeyDown}
       className={cn("space-y-3 outline-none", className)}
     >
-      {/* Video frame — letterbox hairline only. */}
-      <div className="relative overflow-hidden border border-fg-tertiary/15 bg-black">
+      {/* Video frame — letterbox hairline only. requestFullscreen targets
+          this wrapper so the scrubber overlay can ride along when active. */}
+      <div
+        ref={frameRef}
+        className={cn(
+          "relative overflow-hidden border border-fg-tertiary/15 bg-black",
+          fullscreen && "flex h-screen w-screen items-center justify-center border-0",
+        )}
+      >
         <video
           ref={videoRef}
           src={src || undefined}
@@ -214,7 +282,10 @@ export function EditorPreview({
           preload="auto"
           controls={false}
           onClick={togglePlay}
-          className="block aspect-video w-full cursor-pointer object-cover"
+          className={cn(
+            "block w-full cursor-pointer object-cover",
+            fullscreen ? "max-h-screen object-contain" : "aspect-video",
+          )}
         />
         {baking ? (
           <div className="absolute right-3 top-3 inline-flex items-center gap-1.5 bg-bg-base/80 px-2.5 py-1 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary backdrop-blur">
@@ -222,8 +293,6 @@ export function EditorPreview({
             {bakingCaption}
           </div>
         ) : null}
-        {/* Tap-to-play hint on autoplay-block. Sits on top of the frame
-            so the user has an obvious next step instead of a frozen frame. */}
         {autoplayBlocked && !loadError ? (
           <button
             type="button"
@@ -236,9 +305,6 @@ export function EditorPreview({
             </span>
           </button>
         ) : null}
-        {/* Load-error overlay — covers the frame with a non-cinematic
-            message + Retry. Bumps reloadCount to re-run load() against
-            the same src; clears on success. */}
         {loadError ? (
           <div role="alert" className="absolute inset-0 grid place-items-center bg-bg-base/85 backdrop-blur-md">
             <div className="flex max-w-[80%] flex-col items-center gap-3 text-center">
@@ -258,73 +324,138 @@ export function EditorPreview({
             </div>
           </div>
         ) : null}
+
+        {/* Fullscreen-only scrubber overlay — auto-fades when the cursor
+            is idle. We render it inside the frame so requestFullscreen
+            keeps the controls visible while the page chrome is hidden. */}
+        {fullscreen ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center gap-3 bg-gradient-to-t from-bg-base/85 via-bg-base/40 to-transparent px-6 pb-6 pt-12">
+            <button
+              type="button"
+              onClick={togglePlay}
+              className="pointer-events-auto grid h-9 w-9 cursor-pointer place-items-center bg-brand-ember text-black transition-colors hover:bg-brand-ember/90"
+              aria-label={playing ? "Pause" : "Play"}
+            >
+              {playing ? (
+                <Pause size={15} strokeWidth={2} fill="currentColor" />
+              ) : (
+                <Play size={15} strokeWidth={2} fill="currentColor" className="ml-0.5" />
+              )}
+            </button>
+            <span className="font-mono text-chip tabular-nums text-fg-secondary">{formatTime(currentTime)}</span>
+            <div
+              role="slider"
+              aria-label="Scrub timeline"
+              aria-valuemin={0}
+              aria-valuemax={Math.round(safeDuration)}
+              aria-valuenow={Math.round(currentTime)}
+              tabIndex={0}
+              onPointerDown={handleScrubPointerDown}
+              className="pointer-events-auto group relative h-1 flex-1 cursor-ew-resize bg-fg-tertiary/30"
+            >
+              <div className="absolute inset-y-0 left-0 bg-brand-ember" style={{ width: `${progress * 100}%` }} />
+              <div
+                className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-ember"
+                style={{ left: `${progress * 100}%`, boxShadow: "0 0 8px rgba(240,168,104,0.6)" }}
+              />
+            </div>
+            <span className="font-mono text-chip tabular-nums text-fg-secondary">{formatTime(safeDuration)}</span>
+            <button
+              type="button"
+              onClick={() => void toggleFullscreen()}
+              className="pointer-events-auto grid h-7 w-7 cursor-pointer place-items-center text-fg-secondary transition-colors hover:text-fg-primary"
+              aria-label="Exit fullscreen"
+              title="Exit fullscreen (F or Esc)"
+            >
+              <Minimize2 size={14} strokeWidth={1.5} />
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      {/* Transport row: play · skip · time · scrubber · total time. */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1">
+      {/* Inline transport row — only shown when NOT fullscreen, since the
+          fullscreen overlay above carries its own. */}
+      {!fullscreen ? (
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => skip(-5)}
+              className="grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
+              aria-label="Skip back 5 seconds"
+              title="Back 5s (←)"
+            >
+              <SkipBack size={14} strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              onClick={togglePlay}
+              className="grid h-8 w-8 cursor-pointer place-items-center bg-brand-ember text-black transition-colors hover:bg-brand-ember/90"
+              aria-label={playing ? "Pause" : "Play"}
+              title="Play / pause (space)"
+            >
+              {playing ? (
+                <Pause size={14} strokeWidth={2} fill="currentColor" />
+              ) : (
+                <Play size={14} strokeWidth={2} fill="currentColor" className="ml-0.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => skip(5)}
+              className="grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
+              aria-label="Skip forward 5 seconds"
+              title="Forward 5s (→)"
+            >
+              <SkipForward size={14} strokeWidth={1.5} />
+            </button>
+          </div>
+
+          <span className="font-mono text-chip tabular-nums text-fg-tertiary w-[3.25rem]">
+            {formatTime(currentTime)}
+          </span>
+
+          {/* Smooth scrubber — taller invisible hit area, thin visible
+              track. The handle is always visible (not hover-gated) so the
+              eye reads the playhead position immediately. */}
+          <div
+            ref={scrubRef}
+            role="slider"
+            aria-label="Scrub timeline"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(safeDuration)}
+            aria-valuenow={Math.round(currentTime)}
+            tabIndex={0}
+            onPointerDown={handleScrubPointerDown}
+            className="group relative flex h-4 flex-1 cursor-ew-resize items-center"
+          >
+            <div className="relative h-1 w-full bg-fg-tertiary/20 transition-[height] duration-150 group-hover:h-1.5">
+              <div
+                className="absolute inset-y-0 left-0 bg-brand-ember will-change-[width]"
+                style={{ width: `${progress * 100}%` }}
+              />
+              <div
+                className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-ember opacity-70 transition-[opacity,transform] duration-150 group-hover:scale-125 group-hover:opacity-100 will-change-[left]"
+                style={{ left: `${progress * 100}%`, boxShadow: "0 0 8px rgba(240,168,104,0.5)" }}
+              />
+            </div>
+          </div>
+
+          <span className="font-mono text-chip tabular-nums text-fg-tertiary w-[3.25rem] text-right">
+            {formatTime(safeDuration)}
+          </span>
+
           <button
             type="button"
-            onClick={() => skip(-5)}
+            onClick={() => void toggleFullscreen()}
             className="grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
-            aria-label="Skip back 5 seconds"
-            title="Back 5s (←)"
+            aria-label="Enter fullscreen"
+            title="Fullscreen (F)"
           >
-            <SkipBack size={14} strokeWidth={1.5} />
-          </button>
-          <button
-            type="button"
-            onClick={togglePlay}
-            className="grid h-8 w-8 cursor-pointer place-items-center bg-brand-ember text-black transition-colors hover:bg-brand-ember/90"
-            aria-label={playing ? "Pause" : "Play"}
-            title="Play / pause (space)"
-          >
-            {playing ? (
-              <Pause size={14} strokeWidth={2} fill="currentColor" />
-            ) : (
-              <Play size={14} strokeWidth={2} fill="currentColor" className="ml-0.5" />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => skip(5)}
-            className="grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary transition-colors hover:text-fg-primary"
-            aria-label="Skip forward 5 seconds"
-            title="Forward 5s (→)"
-          >
-            <SkipForward size={14} strokeWidth={1.5} />
+            <Maximize2 size={14} strokeWidth={1.5} />
           </button>
         </div>
-
-        <span className="font-mono text-chip tabular-nums text-fg-tertiary w-[3.25rem]">
-          {formatTime(currentTime)}
-        </span>
-
-        <div
-          ref={scrubRef}
-          role="slider"
-          aria-label="Scrub timeline"
-          aria-valuemin={0}
-          aria-valuemax={Math.round(safeDuration)}
-          aria-valuenow={Math.round(currentTime)}
-          tabIndex={0}
-          onPointerDown={handleScrubPointerDown}
-          className="group relative h-1 flex-1 cursor-ew-resize bg-fg-tertiary/20"
-        >
-          <div
-            className="absolute inset-y-0 left-0 bg-brand-ember"
-            style={{ width: `${progress * 100}%` }}
-          />
-          <div
-            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-ember opacity-0 transition-opacity group-hover:opacity-100"
-            style={{ left: `${progress * 100}%`, boxShadow: "0 0 8px rgba(240,168,104,0.6)" }}
-          />
-        </div>
-
-        <span className="font-mono text-chip tabular-nums text-fg-tertiary w-[3.25rem] text-right">
-          {formatTime(safeDuration)}
-        </span>
-      </div>
+      ) : null}
     </div>
   );
 }

@@ -147,17 +147,24 @@ function TimelineBar({ clip, flex, index, label, moodTint, selected, onSelect, o
       className={cn(
         "group relative h-full min-w-[3.5rem] cursor-pointer overflow-hidden text-left",
         "border-l border-fg-tertiary/15 first:border-l-0",
-        "transition-[box-shadow,background-color] duration-200 ease-out",
+        "transition-[box-shadow,background-color,border-color] duration-200 ease-out",
+        // Selected: full ember frame (top + bottom rules) + a subtle
+        // bg lift so the clip reads as the active one even at a glance.
+        // Trimmed-but-not-selected: just the bottom rule (lighter).
         selected
-          ? "shadow-[inset_0_-2px_0_0_rgba(240,168,104,0.7)]"
+          ? "bg-brand-ember/[0.04] shadow-[inset_0_2px_0_0_rgba(240,168,104,0.55),inset_0_-2px_0_0_rgba(240,168,104,0.85)]"
           : trimmed
             ? "shadow-[inset_0_-1px_0_0_rgba(240,168,104,0.4)]"
             : "hover:bg-fg-primary/[0.02]",
       )}
       aria-label={`${label} — ${beatDur.toFixed(1)} seconds${trimmed ? ", trimmed" : ""}`}
     >
-      {/* Index + transition tag */}
-      <div className="absolute inset-x-2 top-1.5 flex items-center justify-between gap-2">
+      {/* Index + transition tag — selected bars get extra horizontal
+          padding so the text doesn't crowd the ember-highlighted edge. */}
+      <div className={cn(
+        "absolute top-1.5 flex items-center justify-between gap-2",
+        selected ? "inset-x-4" : "inset-x-2",
+      )}>
         <span
           className={cn(
             "font-body text-micro font-medium tabular-nums",
@@ -173,8 +180,12 @@ function TimelineBar({ clip, flex, index, label, moodTint, selected, onSelect, o
         ) : null}
       </div>
 
-      {/* Beat name + duration */}
-      <div className="absolute inset-x-2 bottom-1.5 space-y-0.5 leading-tight">
+      {/* Beat name + duration — same selected-padding treatment so the
+          label sits cleanly inside the highlighted frame. */}
+      <div className={cn(
+        "absolute bottom-1.5 space-y-0.5 leading-tight",
+        selected ? "inset-x-4" : "inset-x-2",
+      )}>
         <div className="truncate font-body text-pill font-medium text-fg-primary">{label}</div>
         <div className="font-mono text-micro tabular-nums text-fg-tertiary">
           {beatDur.toFixed(1)}s {trimmed ? "· trimmed" : ""}

@@ -211,7 +211,6 @@ export function VideoPlayer({
       ref={containerRef}
       tabIndex={0}
       onKeyDown={onKeyDown}
-      data-cursor="hide"
       className={cn(
         "group relative aspect-video overflow-hidden rounded-md bg-black outline-none",
         "shadow-(--shadow-panel)",

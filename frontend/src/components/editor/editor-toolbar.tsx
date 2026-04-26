@@ -61,7 +61,10 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
         </div>
       </ToolbarSection>
 
-      {/* Music bed — text-button toggle + volume slider when on. */}
+      {/* Music bed — text-button toggle + always-visible volume slider
+          when on. Default volume -10dB (~30% perceived) so the bed sits
+          under dialogue without overwhelming. Surface fade-in/out + duck
+          inline below as the music's nested controls. */}
       <ToolbarSection
         eyebrow="Music bed"
         hint={audio ? `${audio.publicId} · ${audio.volume ?? 0}dB` : "off"}
@@ -73,7 +76,7 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               setAudio(
                 audio
                   ? null
-                  : { publicId: DEMO_MUSIC_TRACK, volume: -20, fadeInMs: 800, fadeOutMs: 1200 },
+                  : { publicId: DEMO_MUSIC_TRACK, volume: -10, fadeInMs: 800, fadeOutMs: 1200 },
               )
             }
             className="font-body text-pill font-medium text-fg-secondary transition-colors hover:text-brand-ember"
@@ -81,38 +84,83 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
             {audio ? "Remove" : "Add demo bed"}
           </button>
           {audio ? (
-            <input
-              type="range"
-              min={-40}
-              max={0}
-              step={1}
-              value={audio.volume ?? -20}
-              onChange={(e) => setAudio({ ...audio, volume: Number(e.target.value) })}
-              className="flex-1 accent-brand-ember"
-              aria-label="Music volume"
-            />
+            <>
+              <input
+                type="range"
+                min={-40}
+                max={0}
+                step={1}
+                value={audio.volume ?? -10}
+                onChange={(e) => setAudio({ ...audio, volume: Number(e.target.value) })}
+                className="flex-1 accent-brand-ember"
+                aria-label="Music volume"
+                title="Music bed volume (dB)"
+              />
+              <span className="w-12 text-right font-mono text-caption tabular-nums text-fg-tertiary">
+                {audio.volume ?? -10}dB
+              </span>
+            </>
           ) : null}
         </div>
         {audio ? (
-          <button
-            type="button"
-            onClick={() =>
-              onPatch({
-                duckOriginalAudioDb: decisions.duckOriginalAudioDb == null ? -12 : null,
-              })
-            }
-            className={cn(
-              "mt-2 font-body text-pill transition-colors",
-              decisions.duckOriginalAudioDb != null
-                ? "text-brand-ember hover:text-brand-ember/80"
-                : "text-fg-tertiary hover:text-fg-primary",
-            )}
-          >
-            Duck clip audio:{" "}
-            {decisions.duckOriginalAudioDb != null
-              ? `${decisions.duckOriginalAudioDb}dB`
-              : "off"}
-          </button>
+          <div className="mt-2 space-y-2">
+            {/* Fade in / fade out — exposed as inline range sliders with
+                mono numeric readouts so the user reads them as a real
+                editing decision, not a hidden detail. The agent can
+                propose values via its commit/proposal flow; the user
+                tunes from here when they want to feel it. */}
+            <div className="flex items-center gap-3">
+              <span className="w-14 font-body text-caption text-fg-tertiary">Fade in</span>
+              <input
+                type="range"
+                min={0}
+                max={4000}
+                step={100}
+                value={audio.fadeInMs ?? 0}
+                onChange={(e) => setAudio({ ...audio, fadeInMs: Number(e.target.value) })}
+                className="flex-1 accent-brand-ember"
+                aria-label="Music fade-in milliseconds"
+              />
+              <span className="w-12 text-right font-mono text-caption tabular-nums text-fg-tertiary">
+                {(audio.fadeInMs ?? 0) === 0 ? "off" : `${(audio.fadeInMs ?? 0) / 1000}s`}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="w-14 font-body text-caption text-fg-tertiary">Fade out</span>
+              <input
+                type="range"
+                min={0}
+                max={4000}
+                step={100}
+                value={audio.fadeOutMs ?? 0}
+                onChange={(e) => setAudio({ ...audio, fadeOutMs: Number(e.target.value) })}
+                className="flex-1 accent-brand-ember"
+                aria-label="Music fade-out milliseconds"
+              />
+              <span className="w-12 text-right font-mono text-caption tabular-nums text-fg-tertiary">
+                {(audio.fadeOutMs ?? 0) === 0 ? "off" : `${(audio.fadeOutMs ?? 0) / 1000}s`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                onPatch({
+                  duckOriginalAudioDb: decisions.duckOriginalAudioDb == null ? -12 : null,
+                })
+              }
+              className={cn(
+                "font-body text-pill transition-colors",
+                decisions.duckOriginalAudioDb != null
+                  ? "text-brand-ember hover:text-brand-ember/80"
+                  : "text-fg-tertiary hover:text-fg-primary",
+              )}
+            >
+              Duck clip audio:{" "}
+              {decisions.duckOriginalAudioDb != null
+                ? `${decisions.duckOriginalAudioDb}dB`
+                : "off"}
+            </button>
+          </div>
         ) : null}
       </ToolbarSection>
 
