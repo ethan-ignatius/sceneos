@@ -23,6 +23,14 @@ export interface AgentRequest {
   manifest: Manifest;
   beatId: string;
   userMessage?: string;
+  /**
+   * When true, the agent's tool surface is restricted to `markSufficient`
+   * regardless of how many turns the user has answered. The frontend's
+   * "I have enough — generate" affordance uses this so it produces a real
+   * markSufficient (with beatFacts) instead of skipping the agent entirely
+   * — otherwise the next beat sees no prior facts and continuity breaks.
+   */
+  forceMarkSufficient?: boolean;
 }
 
 export type AgentResponse =

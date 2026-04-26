@@ -7,9 +7,12 @@ into the public AgentResponse shape — the same shape the FastAPI route
 serializes to JSON.
 
 Suggested answers go through dedupe + cap-at-4 here. The schema
-mandates 2-4 suggestions on every question; if the model drops below
-that floor we backfill with two beat-archetype-aware fallbacks so the
-UI's universal pill row always has something to render.
+mandates 2-4 suggestions on every question (min_items=2 enforced by
+Vertex Gemini's tool calling). If the model still drops below the
+floor we surface what it returned — we do NOT fabricate canned chips,
+because mood-bucketed filler ("Darker direction", "Hopeful direction")
+reads as obvious AI nonsense and degrades trust. The right place to
+fix a too-quiet model is the prompt + schema, not code.
 """
 from __future__ import annotations
 
@@ -41,10 +44,13 @@ def _normalize_call_to_result(
 ) -> dict:
     """Convert a raw tool call into the public AgentResponse shape.
 
-    Suggested answers are mandated 2-4 by the schema; if the model drops
-    below the floor we backfill with two beat-archetype-aware nudges so
-    the UI's universal pill row always renders. `openEnded` is honored
-    when explicit; otherwise inferred from suggestion count."""
+    Suggested answers are mandated 2-4 by the schema; we dedupe and cap
+    at 4 here. We do NOT pad below the floor — Vertex's tool schema
+    already enforces min_items=2, and a model that ignores that under
+    load is better surfaced as "no suggestions" (UI shows the input
+    field) than papered over with mood-bucketed filler that reads as
+    obvious AI nonsense. `openEnded` is honored when explicit;
+    otherwise inferred from suggestion count."""
     if name == "askQuestion":
         raw_suggestions = list(args.get("suggestedAnswers") or [])
         seen: set[str] = set()
@@ -60,15 +66,17 @@ def _normalize_call_to_result(
             suggestions.append(text)
             if len(suggestions) >= 4:
                 break
-        # Universal-pill backfill: never let the UI see fewer than 2.
-        # The fallbacks are mood-aware so they don't read as canned filler;
-        # they're invitations the user can click or override by typing.
-        if len(suggestions) < 2:
-            suggestions = _backfill_suggestions(suggestions, beat)
         explicit_open = args.get("openEnded")
-        # Always treat as open-ended — pills are nudges, the input is
-        # the primary affordance regardless of count.
-        open_ended = True if explicit_open is None else bool(explicit_open)
+        # Treat as open-ended whenever count drops below 2 OR the model
+        # explicitly flagged it. The text input always remains the
+        # primary affordance; pills are nudges.
+        open_ended = (
+            True
+            if explicit_open is None
+            else bool(explicit_open)
+        )
+        if len(suggestions) < 2:
+            open_ended = True
         return {
             "kind": "question",
             "question": str(args.get("question", "")),
@@ -95,49 +103,3 @@ def _normalize_call_to_result(
     raise RuntimeError(f"unknown tool {name}")
 
 
-# Mood-bucketed nudges. Picked to imply different movies, not minor
-# variations on the same answer. The agent should rarely fall through
-# to these — they exist so the universal pill row never goes empty
-# even if the model drops below the schema's min_items=2.
-_BACKFILL_BY_MOOD: dict[str, tuple[str, str]] = {
-    "wide-establish": (
-        "Set it at first light, the world hasn't woken up.",
-        "Set it at dusk, that warm ache before night.",
-    ),
-    "intimate-hook": (
-        "Stay tight on the eyes — let me read what they want.",
-        "Pull back so I see the whole room around them.",
-    ),
-    "kinetic-rising": (
-        "Things go wrong in a way they choose, not by accident.",
-        "Things go wrong because someone else makes a move.",
-    ),
-    "tense-climax": (
-        "They commit to it — body language says yes.",
-        "They hesitate — something in them says no.",
-    ),
-    "still-resolve": (
-        "Ends quiet — the new normal is barely different.",
-        "Ends with a held look — they know it changed them.",
-    ),
-    "punchy-sting": (
-        "One iconic image, no text.",
-        "A title card with one line of bite.",
-    ),
-}
-
-
-def _backfill_suggestions(existing: list[str], beat: dict) -> list[str]:
-    """Pad suggestions to 2 with mood-aware nudges. Dedupe-aware."""
-    seen = {s.lower() for s in existing}
-    mood = (beat.get("archetype") or {}).get("mood", "wide-establish")
-    bucket = _BACKFILL_BY_MOOD.get(mood) or _BACKFILL_BY_MOOD["wide-establish"]
-    out = list(existing)
-    for s in bucket:
-        if len(out) >= 2:
-            break
-        if s.lower() in seen:
-            continue
-        seen.add(s.lower())
-        out.append(s)
-    return out

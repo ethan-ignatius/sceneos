@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import threading
 import time
 from typing import Any, AsyncIterator
@@ -38,61 +37,6 @@ from .stub import _stub_agent_turn
 logger = logging.getLogger(__name__)
 
 
-def _continuity_anchors(manifest: dict, beat: dict) -> list[str]:
-    beats = manifest.get("beats") or []
-    idx = next((i for i, b in enumerate(beats) if b.get("beatId") == beat.get("beatId")), 0)
-    anchors: list[str] = []
-    for b in beats[:idx]:
-        for scene in reversed(b.get("scenes") or []):
-            facts = scene.get("beatFacts") or {}
-            for k in ("subject", "action", "setting", "characterDescription", "locationDescription", "voiceLine"):
-                v = (facts.get(k) or "").strip()
-                if v:
-                    anchors.append(v)
-            for t in (scene.get("conversation") or []):
-                if t.get("role") == "user":
-                    c = str(t.get("content") or "").strip()
-                    if c:
-                        anchors.append(c)
-            if anchors:
-                break
-    # Keep only meaningful, short-ish anchors.
-    out: list[str] = []
-    for a in anchors:
-        words = re.findall(r"[a-zA-Z0-9']+", a.lower())
-        if len(words) < 2:
-            continue
-        out.append(" ".join(words[:8]))
-        if len(out) >= 12:
-            break
-    return out
-
-
-def _question_mentions_prior(result: dict, beat: dict, manifest: dict) -> dict:
-    """Force a concrete callback to prior beats for beat 2+ questions."""
-    if result.get("kind") != "question":
-        return result
-    beats = manifest.get("beats") or []
-    idx = next((i for i, b in enumerate(beats) if b.get("beatId") == beat.get("beatId")), 0)
-    if idx <= 0:
-        return result
-    q = str(result.get("question") or "").strip()
-    if not q:
-        return result
-    ql = q.lower()
-    anchors = _continuity_anchors(manifest, beat)
-    if not anchors:
-        return result
-    if any(a and a in ql for a in anchors[:8]):
-        return result
-    # Prefix one concrete anchor so the question cannot be generic.
-    anchor = anchors[0]
-    anchored_q = f"Given {anchor}, {q[0].lower() + q[1:]}" if len(q) > 1 else f"Given {anchor}, {q}"
-    result = dict(result)
-    result["question"] = anchored_q
-    return result
-
-
 # ── Non-streaming entry point ──────────────────────────────────────────────
 
 
@@ -105,6 +49,7 @@ async def run_agent_turn(req: dict) -> dict:
 
     conversation = _collect_conversation(beat, req.get("userMessage"))
     user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
+    force_mark = bool(req.get("forceMarkSufficient"))
 
     client = make_genai_client()
     if client is None:
@@ -116,7 +61,8 @@ async def run_agent_turn(req: dict) -> dict:
         return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
 
     _, config = _build_request_config(
-        beat, manifest, with_thinking=False, user_turn_count=user_turn_count
+        beat, manifest, with_thinking=False, user_turn_count=user_turn_count,
+        force_mark_sufficient=force_mark,
     )
     contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
 
@@ -161,7 +107,7 @@ async def run_agent_turn(req: dict) -> dict:
         if function_call is None:
             raise RuntimeError("Gemini agent did not emit a tool call after cold retry.")
 
-    result = _repair_question_if_redundant(
+    return _repair_question_if_redundant(
         _normalize_call_to_result(
             function_call.name,
             _normalize_args(function_call.args),
@@ -171,7 +117,6 @@ async def run_agent_turn(req: dict) -> dict:
         beat,
         conversation,
     )
-    return _question_mentions_prior(result, beat, manifest)
 
 
 # ── Streaming entry point ──────────────────────────────────────────────────
@@ -213,6 +158,7 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
 
     conversation = _collect_conversation(beat, req.get("userMessage"))
     user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
+    force_mark = bool(req.get("forceMarkSufficient"))
     beat_name = beat.get("beatName", beat_id)
 
     logger.info(
@@ -250,7 +196,8 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         return
 
     _, config = _build_request_config(
-        beat, manifest, with_thinking=True, user_turn_count=user_turn_count
+        beat, manifest, with_thinking=True, user_turn_count=user_turn_count,
+        force_mark_sufficient=force_mark,
     )
     contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
 
@@ -378,7 +325,6 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
                 "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
                 "args": result,
             }
-            result = _question_mentions_prior(result, beat, manifest)
             yield {"type": "result", **result}
             return
 
@@ -403,7 +349,6 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
             "args": result,
         }
-        result = _question_mentions_prior(result, beat, manifest)
         yield {"type": "result", **result}
         return
 
@@ -426,7 +371,6 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
             "args": result,
         }
-        result = _question_mentions_prior(result, beat, manifest)
         yield {"type": "result", **result}
         return
 
@@ -442,5 +386,4 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         yield {"type": "error", "message": f"Failed to normalize tool call: {exc}"}
         return
     result = _repair_question_if_redundant(result, beat, conversation)
-    result = _question_mentions_prior(result, beat, manifest)
     yield {"type": "result", **result}

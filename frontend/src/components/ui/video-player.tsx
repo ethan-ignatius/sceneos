@@ -114,6 +114,11 @@ export function VideoPlayer({
             : code === 3
               ? "This clip can't be decoded in your browser."
               : "Couldn't load this clip.";
+      // Surface the failing src + MediaError in devtools — the only useful
+      // signal when a Cloudinary 404 / wrong-cloud / expired-signed-URL hits
+      // production. The user-facing overlay is intentionally generic.
+      // eslint-disable-next-line no-console
+      console.warn("[video-player] media error", { code, msg, src });
       setLoadError(msg);
       setPlaying(false);
     };

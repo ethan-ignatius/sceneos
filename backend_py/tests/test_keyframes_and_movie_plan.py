@@ -184,16 +184,19 @@ def _fake_beat() -> dict:
     }
 
 
-def test_zero_suggestions_backfills_to_two():
-    """Universal pill row: every question must reach the UI with at least 2
-    suggestions. When the model emits zero, the normalizer backfills with
-    mood-aware nudges. openEnded stays True so the input remains primary."""
+def test_zero_suggestions_passes_through_open_ended():
+    """When the model returns zero suggestions, we DON'T pad with mood-bucketed
+    canned chips — they read as obvious AI filler ("Darker direction",
+    "Hopeful direction") and the user rejected that affordance loudly. The
+    schema's min_items=2 is enforced upstream by Vertex's tool-call layer;
+    if the model still drops below that floor, surface the empty list +
+    openEnded=true so the input is the primary affordance."""
     result = _normalize_call_to_result(
         "askQuestion",
         {"question": "What does she remember about that night?", "reasoning": "rich open prompt", "suggestedAnswers": [], "estimatedRemaining": 1},
         _fake_beat(),
     )
-    assert len(result["suggestedAnswers"]) == 2
+    assert result["suggestedAnswers"] == []
     assert result["openEnded"] is True
 
 
@@ -261,20 +264,15 @@ def test_more_than_four_suggestions_capped():
 
 
 def test_no_filler_padding_with_canned_text():
-    """The old behavior padded to 3 with 'tell me more in your own words'.
-    The user hated that. Backfills must be specific mood-aware nudges
-    that imply different movies — never the canned filler."""
+    """No canned filler under any circumstance — the normalizer must never
+    fabricate suggestion chips, including the previously-supported
+    "tell me more in your own words" pad and the mood-bucketed nudges."""
     result = _normalize_call_to_result(
         "askQuestion",
         {"question": "Q?", "reasoning": "r", "suggestedAnswers": [], "estimatedRemaining": 1},
         _fake_beat(),
     )
-    assert all("tell me more" not in s.lower() for s in result["suggestedAnswers"])
-    # Universal-pill rule: at least 2 nudges always reach the UI.
-    assert len(result["suggestedAnswers"]) == 2
-    # Each backfill must be a real cinematographic option, not placeholder text.
-    for s in result["suggestedAnswers"]:
-        assert len(s) > 10, f"backfill suggestion too short to be a real nudge: {s!r}"
+    assert result["suggestedAnswers"] == []
 
 
 # ── Cross-beat memory ──────────────────────────────────────────────────────

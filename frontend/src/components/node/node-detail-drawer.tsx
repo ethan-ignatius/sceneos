@@ -608,31 +608,60 @@ export function NodeDetailDrawer() {
                 return null;
               }
 
-              const lockIn = () => {
-                const refined = [
-                  beat.archetype.intent,
-                  beat.archetype.directorNotes ?? "",
-                  `Director's notes: ${userAnswers}.`,
-                  `Mood ${beat.archetype.mood}; cinematic, ~${beat.archetype.suggestedDuration}s.`,
-                ]
-                  .filter(Boolean)
-                  .join(" ");
+              const lockIn = async () => {
+                if (!manifest) return;
                 const scene = beat.scenes[0];
-                // Lock-it-in folds the user's answers into a richer
-                // refinedPrompt — same contract as the agent's
-                // markSufficient. Mandatory re-bake: invalidate the
-                // speculative clip + jobs so Roll camera dispatches a
-                // fresh Veo with this prompt, not the decompose draft.
-                updateScene(beat.beatId, scene.sceneId, {
-                  refinedPrompt: refined,
-                  durationSeconds: beat.archetype.suggestedDuration,
-                  speculativeJobId: undefined,
-                  jobId: undefined,
-                  clipPublicId: undefined,
-                  clipUrl: undefined,
-                  lastFrameUrl: undefined,
+                // Force the agent to emit markSufficient now. We must NOT
+                // skip the agent and synthesize a refinedPrompt locally —
+                // doing so leaves scene.beatFacts undefined, which breaks
+                // continuity for every later beat (no shared character /
+                // location anchors to lock against) and forces the
+                // orchestrator down the per-beat-Imagen fallback path
+                // instead of using shared keyframes. Round-tripping
+                // through the agent costs ~2-4s but is the only way to
+                // produce real beatFacts.
+                setGenError(null);
+                appendAgentTurn(beat.beatId, scene.sceneId, {
+                  role: "user",
+                  content: "OK — that's enough. Wrap this beat now.",
+                  timestamp: nowISO(),
                 });
-                updateBeat(beat.beatId, { status: "ready-to-generate" });
+                try {
+                  for await (const ev of api.agentStream({
+                    manifest,
+                    beatId: beat.beatId,
+                    userMessage: "OK — that's enough. Wrap this beat now.",
+                    forceMarkSufficient: true,
+                  })) {
+                    if (cancelRef.current) return;
+                    if (ev.type === "result" && ev.kind === "sufficient") {
+                      updateScene(beat.beatId, scene.sceneId, {
+                        refinedPrompt: ev.refinedPrompt,
+                        durationSeconds: ev.suggestedDuration,
+                        beatFacts: ev.beatFacts,
+                        speculativeJobId: undefined,
+                        jobId: undefined,
+                        clipPublicId: undefined,
+                        clipUrl: undefined,
+                        lastFrameUrl: undefined,
+                      });
+                      appendAgentTurn(beat.beatId, scene.sceneId, {
+                        role: "agent",
+                        content: `Cued. ${ev.sceneSummary}. Call action when ready.`,
+                        timestamp: nowISO(),
+                      });
+                      updateBeat(beat.beatId, { status: "ready-to-generate" });
+                      return;
+                    }
+                    if (ev.type === "error") {
+                      setGenError(ev.message);
+                      return;
+                    }
+                  }
+                } catch (err) {
+                  if (cancelRef.current) return;
+                  setGenError(err instanceof ApiError ? err.message : "Couldn't wrap the beat — try again.");
+                }
               };
               return (
                 <Button
