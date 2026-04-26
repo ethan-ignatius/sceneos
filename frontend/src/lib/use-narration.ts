@@ -43,6 +43,31 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
 let _audio: HTMLAudioElement | null = null;
 const _cache = new Map<string, { text: string; audioSrc: string | null; durationSeconds: number }>();
 
+// Pending moment queue. When a new moment fires while one is already
+// playing or loading, we enqueue instead of preempting — that's why
+// the user kept hearing the director cut off mid-sentence as they
+// navigated through the app. Capped at 2 so a flood of moments
+// doesn't echo back-to-back for minutes; the oldest gets dropped
+// when the cap is exceeded.
+type PendingMoment =
+  | {
+      kind: "moment";
+      moment: NarrationMoment;
+      context: Record<string, unknown>;
+      beatId?: string;
+    }
+  | {
+      kind: "summary";
+      manifest: Manifest;
+      continuityBible?: string;
+    };
+const _queue: PendingMoment[] = [];
+const QUEUE_MAX = 2;
+function _enqueue(p: PendingMoment): void {
+  while (_queue.length >= QUEUE_MAX) _queue.shift();
+  _queue.push(p);
+}
+
 // Shared Web Audio plumbing for the narrator. Routing the
 // HTMLAudioElement through a MediaElementSource → GainNode → destination
 // lets us drive a gain > 1.0, which is what HTMLAudioElement.volume
@@ -274,11 +299,31 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
 
   stop: () => {
     _stopAudio();
+    // Clear the queue too — if the user hits skip mid-line, they
+    // shouldn't immediately get the queued next line as a "surprise"
+    // continuation. Skip means "stop the narrator entirely for now."
+    _queue.length = 0;
     set({ status: "idle", currentText: null, currentMoment: null, currentBeatId: null });
   },
 
   playMoment: async (moment, context, beatId) => {
     if (isAudioMuted()) return;
+
+    // Queue when the director is mid-line. Without this gate the new
+    // call would `_stopAudio()` the playing line and start a fresh
+    // load — the user heard "This is fant—" / "On the canvas—" /
+    // "Beat one—" cutting each other off as they navigated. The
+    // queue lets each moment finish, then the next plays.
+    const liveStatus = get().status;
+    if (liveStatus === "playing" || liveStatus === "loading") {
+      _enqueue({ kind: "moment", moment, context, beatId });
+      return;
+    }
+
+    const setStatusWithDrain = (s: NarrationStatus) => {
+      set({ status: s });
+      if (s === "done" || s === "error") _drainNarrationQueue();
+    };
 
     const key = _cacheKey(moment, beatId);
     const cached = _cache.get(key);
@@ -292,7 +337,7 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
     if (cached && cached.audioSrc) {
       _stopAudio();
       set({ currentText: cached.text, currentMoment: moment, currentBeatId: beatId ?? null });
-      _playAudio(cached.audioSrc, (s) => set({ status: s }));
+      _playAudio(cached.audioSrc, setStatusWithDrain);
       return;
     }
 
@@ -322,19 +367,19 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
           set({ status: "playing" });
           _speakWithBrowserTTS(
             text,
-            () => set({ status: "done" }),
-            () => set({ status: "error" }),
+            () => setStatusWithDrain("done"),
+            () => setStatusWithDrain("error"),
           );
         } else {
-          set({ status: "done" });
+          setStatusWithDrain("done");
         }
         return;
       }
 
-      _playAudio(audioSrc, (s) => set({ status: s }));
+      _playAudio(audioSrc, setStatusWithDrain);
     } catch (err) {
       console.warn(`[narration] ${moment} failed:`, err);
-      set({ status: "error" });
+      setStatusWithDrain("error");
     }
   },
 
@@ -351,15 +396,26 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
   playSummaryNarration: async (manifest, continuityBible) => {
     if (isAudioMuted()) return;
 
+    // Same queue gate as playMoment — summary should never preempt
+    // a beat-level narration that's still finishing.
+    const liveStatus = get().status;
+    if (liveStatus === "playing" || liveStatus === "loading") {
+      _enqueue({ kind: "summary", manifest, continuityBible });
+      return;
+    }
+
+    const setStatusWithDrain = (s: NarrationStatus) => {
+      set({ status: s });
+      if (s === "done" || s === "error") _drainNarrationQueue();
+    };
+
     const key = _cacheKey("summary");
     const cached = _cache.get(key);
 
-    // Only treat the cache as a hit when it has real audio (see the
-    // playMoment comment for the rationale).
     if (cached && cached.audioSrc) {
       _stopAudio();
       set({ currentText: cached.text, currentMoment: "summary", currentBeatId: null });
-      _playAudio(cached.audioSrc, (s) => set({ status: s }));
+      _playAudio(cached.audioSrc, setStatusWithDrain);
       return;
     }
 
@@ -380,21 +436,37 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
           set({ status: "playing" });
           _speakWithBrowserTTS(
             text,
-            () => set({ status: "done" }),
-            () => set({ status: "error" }),
+            () => setStatusWithDrain("done"),
+            () => setStatusWithDrain("error"),
           );
         } else {
-          set({ status: "done" });
+          setStatusWithDrain("done");
         }
         return;
       }
-      _playAudio(audioSrc, (s) => set({ status: s }));
+      _playAudio(audioSrc, setStatusWithDrain);
     } catch (err) {
       console.warn("[narration] summary failed:", err);
-      set({ status: "error" });
+      setStatusWithDrain("error");
     }
   },
 }));
+
+// Drain helper — defined after the store so it can call the same
+// store actions to fire the next queued moment. Slight 200ms gap
+// between consecutive lines so they don't sound mashed together.
+function _drainNarrationQueue(): void {
+  const next = _queue.shift();
+  if (!next) return;
+  window.setTimeout(() => {
+    const store = useNarrationStore.getState();
+    if (next.kind === "moment") {
+      void store.playMoment(next.moment, next.context, next.beatId);
+    } else {
+      void store.playSummaryNarration(next.manifest, next.continuityBible);
+    }
+  }, 200);
+}
 
 /**
  * Convenience hook — thin wrapper that reads the store.
