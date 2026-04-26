@@ -184,17 +184,22 @@ def _fake_beat() -> dict:
     }
 
 
-def test_zero_suggestions_marks_open_ended():
+def test_zero_suggestions_backfills_to_two():
+    """Universal pill row: every question must reach the UI with at least 2
+    suggestions. When the model emits zero, the normalizer backfills with
+    mood-aware nudges. openEnded stays True so the input remains primary."""
     result = _normalize_call_to_result(
         "askQuestion",
         {"question": "What does she remember about that night?", "reasoning": "rich open prompt", "suggestedAnswers": [], "estimatedRemaining": 1},
         _fake_beat(),
     )
-    assert result["suggestedAnswers"] == []
+    assert len(result["suggestedAnswers"]) == 2
     assert result["openEnded"] is True
 
 
 def test_three_suggestions_pass_through():
+    """Three suggestions stay as-is; openEnded defaults True (pills are
+    invitations, the input is still the primary affordance)."""
     result = _normalize_call_to_result(
         "askQuestion",
         {
@@ -206,7 +211,7 @@ def test_three_suggestions_pass_through():
         _fake_beat(),
     )
     assert result["suggestedAnswers"] == ["a", "b", "c"]
-    assert result["openEnded"] is False
+    assert result["openEnded"] is True
 
 
 def test_explicit_open_ended_true_with_two_suggestions():
@@ -255,16 +260,21 @@ def test_more_than_four_suggestions_capped():
     assert result["suggestedAnswers"] == ["a", "b", "c", "d"]
 
 
-def test_no_filler_padding_when_zero_suggestions():
+def test_no_filler_padding_with_canned_text():
     """The old behavior padded to 3 with 'tell me more in your own words'.
-    The user explicitly hated that. Verify it never reappears."""
+    The user hated that. Backfills must be specific mood-aware nudges
+    that imply different movies — never the canned filler."""
     result = _normalize_call_to_result(
         "askQuestion",
         {"question": "Q?", "reasoning": "r", "suggestedAnswers": [], "estimatedRemaining": 1},
         _fake_beat(),
     )
     assert all("tell me more" not in s.lower() for s in result["suggestedAnswers"])
-    assert result["suggestedAnswers"] == []
+    # Universal-pill rule: at least 2 nudges always reach the UI.
+    assert len(result["suggestedAnswers"]) == 2
+    # Each backfill must be a real cinematographic option, not placeholder text.
+    for s in result["suggestedAnswers"]:
+        assert len(s) > 10, f"backfill suggestion too short to be a real nudge: {s!r}"
 
 
 # ── Cross-beat memory ──────────────────────────────────────────────────────
