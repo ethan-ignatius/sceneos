@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Send, Loader2, RotateCcw, Mic, MicOff, ImagePlus, X, Sparkles } from "lucide-react";
+import { Send, Loader2, RotateCcw, Mic, ImagePlus, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
@@ -49,7 +49,17 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const [draft, setDraft] = useState("");
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Live thinking accumulator — populated by /api/agent/stream "thought"
+  // events while the agent composes its next turn. Cleared when the
+  // "result" event arrives (or on unmount). Visible in place of
+  // "Composing the shot." so the 6–8s Vertex Gemini latency reads as
+  // active thinking instead of a frozen UI. NOTE for backend team
+  // (Vishnu, Ethan): per-call latency is real Gemini 2.5 Flash latency
+  // on the trial GCP tier — see backend audit doc. Once latency drops,
+  // this thinking-stream remains useful as a transparency signal.
+  const [streamingThought, setStreamingThought] = useState("");
   const cancelledRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pendingRetryMessage, setPendingRetryMessage] = useState<string | null>(null);
   // Collapse old turns by default — only the last few are visible. The user
@@ -180,6 +190,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   }, [scene.conversation.length]);
 
   // Seed question — fire on first mount when conversation is empty.
+  // Uses /api/agent/stream so the user sees Gemini's thinking tokens
+  // accumulate in real time. The one-shot endpoint (api.agent) returns
+  // in 6–8s on the trial Vertex tier, which read as a hung UI.
   useEffect(() => {
     cancelledRef.current = false;
     if (!manifest || scene.conversation.length > 0) return;
@@ -187,29 +200,42 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     let active = true;
     setInFlight(true);
     setError(null);
+    setStreamingThought("");
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     (async () => {
       try {
-        const res = await api.agent({ manifest, beatId: beat.beatId });
-        if (!active || cancelledRef.current) return;
-        if (res.kind === "question") {
-          appendAgentTurn(beat.beatId, scene.sceneId, {
-            role: "agent",
-            content: res.question,
-            timestamp: nowISO(),
-          });
-          updateBeat(beat.beatId, { status: "questioning" });
-          setLatestSuggestions(res.suggestedAnswers ?? null);
-        } else if (res.kind === "sufficient") {
-          // Edge case: agent considers itself sufficient on first turn.
-          updateScene(beat.beatId, scene.sceneId, {
-            refinedPrompt: res.refinedPrompt,
-            durationSeconds: res.suggestedDuration,
-          });
-          updateBeat(beat.beatId, { status: "ready-to-generate" });
+        for await (const ev of api.agentStream({ manifest, beatId: beat.beatId }, ctrl.signal)) {
+          if (!active || cancelledRef.current) break;
+          if (ev.type === "thought") {
+            setStreamingThought((prev) => prev + ev.chunk);
+          } else if (ev.type === "result") {
+            if (ev.kind === "question") {
+              appendAgentTurn(beat.beatId, scene.sceneId, {
+                role: "agent",
+                content: ev.question,
+                timestamp: nowISO(),
+              });
+              updateBeat(beat.beatId, { status: "questioning" });
+              setLatestSuggestions(ev.suggestedAnswers ?? null);
+            } else if (ev.kind === "sufficient") {
+              // Edge case: agent considers itself sufficient on first turn.
+              updateScene(beat.beatId, scene.sceneId, {
+                refinedPrompt: ev.refinedPrompt,
+                durationSeconds: ev.suggestedDuration,
+              });
+              updateBeat(beat.beatId, { status: "ready-to-generate" });
+            }
+            setStreamingThought("");
+          } else if (ev.type === "error") {
+            setError(ev.message);
+          }
         }
       } catch (err) {
         if (!active || cancelledRef.current) return;
+        // AbortError from intentional unmount → silent. Anything else surfaces.
+        if ((err as Error)?.name === "AbortError") return;
         setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       } finally {
         if (active && !cancelledRef.current) setInFlight(false);
@@ -219,6 +245,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     return () => {
       active = false;
       cancelledRef.current = true;
+      ctrl.abort();
     };
     // beat.beatId is the stable identity for this drawer instance; deps deliberate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,43 +254,56 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // Single source for the user-message → agent-reply round-trip. Used by
   // both the form submit (with optimistic local append) and the Retry
   // button (which doesn't re-append since the user turn is already in state).
+  // Streams via /api/agent/stream so the wait reads as live thinking,
+  // not a frozen loader.
   const callAgent = async (userMessage: string) => {
     if (!manifest) return;
     setInFlight(true);
     setError(null);
+    setStreamingThought("");
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     try {
-      const res = await api.agent({
-        manifest,
-        beatId: beat.beatId,
-        userMessage,
-      });
-      if (cancelledRef.current) return;
-
-      if (res.kind === "question") {
-        appendAgentTurn(beat.beatId, scene.sceneId, {
-          role: "agent",
-          content: res.question,
-          timestamp: nowISO(),
-        });
-        setLatestSuggestions(res.suggestedAnswers ?? null);
-      } else {
-        updateScene(beat.beatId, scene.sceneId, {
-          refinedPrompt: res.refinedPrompt,
-          durationSeconds: res.suggestedDuration,
-        });
-        updateBeat(beat.beatId, { status: "ready-to-generate" });
-        appendAgentTurn(beat.beatId, scene.sceneId, {
-          role: "agent",
-          content: `Cued. ${res.sceneSummary}. Call action when ready.`,
-          timestamp: nowISO(),
-        });
-        // Beat is sufficient — no more questions, drop any stale pills.
-        setLatestSuggestions(null);
+      for await (const ev of api.agentStream(
+        { manifest, beatId: beat.beatId, userMessage },
+        ctrl.signal,
+      )) {
+        if (cancelledRef.current) break;
+        if (ev.type === "thought") {
+          setStreamingThought((prev) => prev + ev.chunk);
+        } else if (ev.type === "result") {
+          if (ev.kind === "question") {
+            appendAgentTurn(beat.beatId, scene.sceneId, {
+              role: "agent",
+              content: ev.question,
+              timestamp: nowISO(),
+            });
+            setLatestSuggestions(ev.suggestedAnswers ?? null);
+          } else {
+            updateScene(beat.beatId, scene.sceneId, {
+              refinedPrompt: ev.refinedPrompt,
+              durationSeconds: ev.suggestedDuration,
+            });
+            updateBeat(beat.beatId, { status: "ready-to-generate" });
+            appendAgentTurn(beat.beatId, scene.sceneId, {
+              role: "agent",
+              content: `Cued. ${ev.sceneSummary}. Call action when ready.`,
+              timestamp: nowISO(),
+            });
+            // Beat is sufficient — no more questions, drop any stale pills.
+            setLatestSuggestions(null);
+          }
+          setPendingRetryMessage(null);
+          setStreamingThought("");
+        } else if (ev.type === "error") {
+          setError(ev.message);
+          setPendingRetryMessage(userMessage);
+        }
       }
-      setPendingRetryMessage(null);
     } catch (err) {
       if (cancelledRef.current) return;
+      if ((err as Error)?.name === "AbortError") return;
       setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       setPendingRetryMessage(userMessage);
     } finally {
@@ -398,15 +438,39 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             </>
           );
         })()}
-        {inFlight && scene.conversation.length === 0 ? (
-          <div
-            role="status"
-            aria-live="polite"
-            className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
-          >
-            <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
-            Composing the shot.
-          </div>
+        {/* Live thinking display — replaces the static "Composing the
+            shot." spinner with the actual Gemini thinking tokens as
+            they stream in. If thinking is empty (cold start, no events
+            yet), fall back to the static line. Once a thought chunk
+            arrives, it appears character-by-character — same animation
+            principle as agent bubbles, but driven by the SSE stream
+            instead of TextSplitter. Italic display Fraunces matches
+            the rest of the agent voice. */}
+        {inFlight ? (
+          streamingThought ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-start gap-2 font-display text-[14px] italic leading-relaxed text-fg-tertiary"
+            >
+              <Loader2
+                size={12}
+                className="mt-1 animate-spin flex-shrink-0"
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
+              <span className="opacity-85">{streamingThought}</span>
+            </div>
+          ) : scene.conversation.length === 0 ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
+            >
+              <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
+              Composing the shot.
+            </div>
+          ) : null
         ) : null}
         {error ? (
           <div
@@ -569,11 +633,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               inFlight && "opacity-40 pointer-events-none",
             )}
           >
-            {speech.listening ? (
-              <MicOff size={14} strokeWidth={1.5} aria-hidden="true" />
-            ) : (
-              <Mic size={14} strokeWidth={1.5} aria-hidden="true" />
-            )}
+            {/* Always Mic — the button container's ember-pulse + ember
+                bg communicates "actively listening." Flipping to MicOff
+                while the mic was actively capturing read as the state
+                being inverted. */}
+            <Mic size={14} strokeWidth={1.5} aria-hidden="true" />
           </button>
         ) : null}
         <Button
