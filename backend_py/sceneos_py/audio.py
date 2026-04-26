@@ -227,7 +227,7 @@ async def synthesize_narration(
                 headers={"xi-api-key": api_key, "accept": "audio/mpeg"},
                 json={
                     "text": text,
-                    "model_id": "eleven_turbo_v2_5",
+                    "model_id": "eleven_flash_v2_5",
                     "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
                 },
             )

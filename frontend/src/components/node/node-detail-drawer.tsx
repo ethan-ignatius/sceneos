@@ -1,6 +1,6 @@
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Clapperboard, ChevronRight } from "lucide-react";
+import { X, Clapperboard, ChevronRight, Volume2 } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
 import { nowISO, sleep } from "@/lib/utils";
+import { useNarration, useNarrationStore } from "@/lib/use-narration";
 import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 const fadeUp = {
@@ -44,6 +45,8 @@ export function NodeDetailDrawer() {
   const updateBeat = useBeatGraphStore((s) => s.updateBeat);
   const updateScene = useBeatGraphStore((s) => s.updateScene);
   const appendAgentTurn = useBeatGraphStore((s) => s.appendAgentTurn);
+
+  const narration = useNarration();
 
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
@@ -138,6 +141,14 @@ export function NodeDetailDrawer() {
             lastFrameUrl: status.lastFrameUrl,
           });
           updateBeat(beatId, { status: "preview" });
+          // Co-director reacts to the finished render
+          const mNow = useBeatGraphStore.getState().manifest;
+          const bNow = mNow?.beats.find((b) => b.beatId === beatId);
+          if (mNow && bNow) {
+            useNarrationStore.getState().playMoment("beat_complete", {
+              beat: bNow, manifest: mNow, masterPrompt: mNow.masterPrompt,
+            }, beatId);
+          }
           return;
         }
         if (status.status === "failed") {
@@ -435,6 +446,18 @@ export function NodeDetailDrawer() {
     return () => window.clearTimeout(t);
   }, [beat, handleGoNext]);
 
+  // Fire-and-forget beat narration when the drawer opens for a new beat.
+  const narrationBeatId = beat?.beatId;
+  useEffect(() => {
+    if (!narrationBeatId || !manifest) return;
+    narration.stop();
+    narration.playBeatNarration(narrationBeatId, manifest);
+    return () => {
+      narration.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narrationBeatId]);
+
   if (!beat) return null;
 
   const status = beat.status;
@@ -504,6 +527,47 @@ export function NodeDetailDrawer() {
             <h2 className="text-balance mt-1.5 font-body text-body-lg font-medium leading-[1.15] text-fg-primary">
               {beat.beatName}
             </h2>
+            <AnimatePresence>
+              {narration.status === "playing" && narration.currentBeatId === beat.beatId && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.3, ease: EASE.outQuart }}
+                  className="mt-2 flex items-center gap-2"
+                >
+                  <Volume2 size={14} className="shrink-0 text-brand-ember" />
+                  <div className="flex items-center gap-[3px]">
+                    {[0, 1, 2, 3].map((i) => (
+                      <motion.span
+                        key={i}
+                        className="inline-block w-[2px] rounded-full bg-brand-ember"
+                        animate={{ height: [3, 10, 3] }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          delay: i * 0.15,
+                          ease: "easeInOut",
+                        }}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {narration.currentText && narration.currentBeatId === beat.beatId && (narration.status === "playing" || narration.status === "done") && (
+                <motion.p
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 0.7, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.4, ease: EASE.outQuart }}
+                  className="mt-1.5 font-body text-body-sm italic leading-snug text-fg-secondary"
+                >
+                  {narration.currentText}
+                </motion.p>
+              )}
+            </AnimatePresence>
           </div>
           <button
             onClick={() => setActiveBeat(null)}
@@ -667,6 +731,11 @@ export function NodeDetailDrawer() {
                         timestamp: nowISO(),
                       });
                       updateBeat(beat.beatId, { status: "ready-to-generate" });
+                      if (manifest) {
+                        useNarrationStore.getState().playMoment("beat_locked", {
+                          beat, manifest, masterPrompt: manifest.masterPrompt,
+                        }, beat.beatId);
+                      }
                       return;
                     }
                     if (ev.type === "error") {

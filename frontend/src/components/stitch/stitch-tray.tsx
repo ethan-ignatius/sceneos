@@ -10,6 +10,8 @@ import {
   Check,
   Play,
   RotateCw,
+  Volume2,
+  SkipForward,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -27,6 +29,7 @@ import {
 import { renderHighlightedUrl } from "@/lib/url-display";
 import { api, ApiError } from "@/lib/api";
 import { playRenderWhoosh } from "@/lib/audio-cues";
+import { useNarration } from "@/lib/use-narration";
 import { SPRING, DURATIONS, EASE } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -69,6 +72,8 @@ export function StitchTray({ onClose }: StitchTrayProps) {
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [justCopied, setJustCopied] = useState(false);
+  const narration = useNarration();
+  const [narrationHeard, setNarrationHeard] = useState(false);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -285,7 +290,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         </section>
       </div>
 
-      {/* Footer — render CTA */}
+      {/* Footer — narration + render CTA */}
       <footer className="space-y-3 border-t border-fg-tertiary/15 px-7 pb-6 pt-5">
         {renderError ? (
           <div
@@ -295,6 +300,105 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             {renderError}
           </div>
         ) : null}
+
+        {/* Narration — "Hear the story" or playing state */}
+        <AnimatePresence>
+          {allReady && !narrationHeard && narration.status === "idle" && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <Button
+                size="lg"
+                variant="ghost"
+                className="w-full justify-center gap-2 border-brand-ember/40 text-fg-primary hover:bg-brand-ember/10 hover:text-brand-ember"
+                onClick={() => manifest && narration.playSummaryNarration(manifest)}
+                aria-label="Hear the narrator tell your story"
+              >
+                <Volume2 size={16} strokeWidth={1.5} aria-hidden="true" />
+                <span className="font-body text-meta font-medium">Hear the story</span>
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {(narration.status === "loading" || narration.status === "playing") && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.3, ease: EASE.outQuart }}
+              className="space-y-3"
+            >
+              {/* Waveform + status */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Volume2 size={14} className="text-brand-ember" />
+                  <div className="flex items-center gap-[3px]">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <motion.span
+                        key={i}
+                        className="inline-block w-[2px] rounded-full bg-brand-ember"
+                        animate={
+                          narration.status === "playing"
+                            ? { height: [3, 12, 3] }
+                            : { height: 3 }
+                        }
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          delay: i * 0.12,
+                          ease: "easeInOut",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span className="font-body text-pill text-fg-tertiary">
+                    {narration.status === "loading" ? "Preparing narration..." : "Narrator"}
+                  </span>
+                </div>
+                <button
+                  onClick={() => {
+                    narration.stop();
+                    setNarrationHeard(true);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-1 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
+                  aria-label="Skip narration"
+                >
+                  <SkipForward size={12} strokeWidth={1.5} />
+                  <span>Skip</span>
+                </button>
+              </div>
+
+              {/* Subtitle text */}
+              {narration.currentText && narration.status === "playing" && (
+                <motion.p
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.85 }}
+                  className="font-body text-body-sm italic leading-relaxed text-fg-secondary"
+                >
+                  {narration.currentText}
+                </motion.p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {narration.status === "done" && !narrationHeard && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onAnimationComplete={() => setNarrationHeard(true)}
+              transition={{ duration: 0.5 }}
+            />
+          )}
+        </AnimatePresence>
+
         <Button
           size="lg"
           variant="primary"

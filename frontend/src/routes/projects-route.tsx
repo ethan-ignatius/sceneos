@@ -1,45 +1,117 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Trash2, Play, Plus } from "lucide-react";
-import { useBeatGraphStore } from "@/stores/beat-graph-store";
+import { ArrowLeft, ArrowUpRight, Trash2, Play, Plus, Cloud, HardDrive } from "lucide-react";
+import { useBeatGraphStore, type ArchivedProject } from "@/stores/beat-graph-store";
 import type { BeatStatus } from "@/types/manifest";
+import { api, type MongoProject } from "@/lib/api";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { SceneOSMark } from "@/components/ui/sceneos-mark";
 
+interface MergedProject {
+  id: string;
+  masterPrompt: string;
+  archivedAt: string;
+  videoType: string;
+  manifest: ArchivedProject["manifest"];
+  editor?: ArchivedProject["editor"];
+  beatStatuses: BeatStatus[];
+  approvedCount: number;
+  totalBeats: number;
+  source: "local" | "mongo" | "both";
+}
+
+function mergeProjects(
+  local: ArchivedProject[],
+  remote: MongoProject[],
+): MergedProject[] {
+  const seen = new Set<string>();
+  const result: MergedProject[] = [];
+  const remoteMap = new Map(remote.map((p) => [p.id, p]));
+
+  for (const lp of local) {
+    seen.add(lp.id);
+    const beats = lp.manifest.beats;
+    result.push({
+      id: lp.id,
+      masterPrompt: lp.masterPrompt,
+      archivedAt: lp.archivedAt,
+      videoType: lp.manifest.videoType,
+      manifest: lp.manifest,
+      editor: lp.editor,
+      beatStatuses: beats.map((b) => b.status),
+      approvedCount: beats.filter((b) => b.status === "approved").length,
+      totalBeats: beats.length,
+      source: remoteMap.has(lp.id) ? "both" : "local",
+    });
+  }
+
+  for (const rp of remote) {
+    if (seen.has(rp.id)) continue;
+    if (!rp.manifest) continue;
+    const beats = (rp.manifest as any).beats || [];
+    result.push({
+      id: rp.id,
+      masterPrompt: rp.masterPrompt,
+      archivedAt: rp.archivedAt || rp.updatedAt,
+      videoType: rp.videoType,
+      manifest: rp.manifest as any,
+      editor: rp.editor as any,
+      beatStatuses: beats.map((b: any) => b.status),
+      approvedCount: beats.filter((b: any) => b.status === "approved").length,
+      totalBeats: beats.length,
+      source: "mongo",
+    });
+  }
+
+  result.sort((a, b) => new Date(b.archivedAt).getTime() - new Date(a.archivedAt).getTime());
+  return result;
+}
+
 /**
- * The reel cabinet. Every project the user has ever started is archived
- * here when they Save & exit (or Make Another from final delivery). Each
- * row resumes the project on /canvas with the manifest restored verbatim,
- * or discards it permanently after a two-step confirmation.
- *
- * Capped at 12 most recent in the store; oldest drop off when the cap is
- * exceeded. The capping happens on archive (in beat-graph-store.reset and
- * resumeProject), so this route never has to truncate — it just renders.
- *
- * Layout sized for 12 max:
- *   12 rows × ~76px = ~912px → overruns a 720p viewport. Header is
- *   sticky-positioned with backdrop-blur so the eyebrow + Back link stay
- *   in place while the list scrolls underneath. No virtualization needed
- *   at this scale.
+ * The reel cabinet. Projects from both localStorage (Zustand) and
+ * MongoDB Atlas, merged and deduplicated.
  */
 export function ProjectsRoute() {
   const navigate = useNavigate();
-  const projects = useBeatGraphStore((s) => s.projects);
+  const localProjects = useBeatGraphStore((s) => s.projects);
   const resumeProject = useBeatGraphStore((s) => s.resumeProject);
   const discardProject = useBeatGraphStore((s) => s.discardProject);
 
-  const handleResume = (id: string) => {
-    resumeProject(id);
+  const [remoteProjects, setRemoteProjects] = useState<MongoProject[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .listProjects()
+      .then(setRemoteProjects)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const merged = mergeProjects(localProjects, remoteProjects);
+
+  const handleResume = (project: MergedProject) => {
+    if (project.source === "mongo") {
+      const store = useBeatGraphStore.getState();
+      const injected: ArchivedProject = {
+        id: project.id,
+        archivedAt: project.archivedAt,
+        masterPrompt: project.masterPrompt,
+        manifest: project.manifest,
+        editor: project.editor,
+      };
+      useBeatGraphStore.setState({
+        projects: [injected, ...store.projects],
+      });
+      resumeProject(project.id);
+    } else {
+      resumeProject(project.id);
+    }
     navigate("/canvas");
   };
 
-  // Two-step delete confirmation. First click arms the row (icon goes
-  // ember + label flips to "Confirm"); second click within 3s actually
-  // discards. Auto-disarms after 3s of inactivity so the user can't
-  // accidentally double-tap and lose work, but they can also cancel
-  // by clicking ANY other row's trash (which re-arms that row instead).
   const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null);
   const armTimerRef = useRef<number | null>(null);
   useEffect(() => {
@@ -50,16 +122,15 @@ export function ProjectsRoute() {
 
   const handleDelete = (id: string) => {
     if (armedDeleteId === id) {
-      // Second click on the same row → actually delete.
       if (armTimerRef.current) {
         window.clearTimeout(armTimerRef.current);
         armTimerRef.current = null;
       }
       setArmedDeleteId(null);
       discardProject(id);
+      setRemoteProjects((prev) => prev.filter((p) => p.id !== id));
       return;
     }
-    // First click → arm this row, disarm any other.
     if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
     setArmedDeleteId(id);
     armTimerRef.current = window.setTimeout(() => {
@@ -70,18 +141,13 @@ export function ProjectsRoute() {
 
   return (
     <main className="film-grain min-h-screen bg-bg-base">
-      {/* Sticky top chrome — backdrop-blur so the list scrolling under it
-          reads as continuous, not abruptly cut off. ● SceneOS brand mark
-          matches the same dot+wordmark pattern landing's footer + final
-          delivery's top chrome use, so the route reads as the same
-          product. The Back link is the secondary affordance. */}
       <header className="sticky top-0 z-20 border-b border-fg-tertiary/12 bg-bg-base/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[64rem] items-center justify-between gap-4 px-6 py-5 md:py-6">
           <div className="flex items-center gap-5">
             <SceneOSMark className="text-fg-tertiary/85" />
             <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
             <div className="font-body text-caption font-medium uppercase tracking-[0.18em] text-fg-tertiary">
-              Projects · <span className="font-mono tabular-nums text-fg-secondary">{projects.length}</span> archived
+              Projects · <span className="font-mono tabular-nums text-fg-secondary">{merged.length}</span> archived
             </div>
           </div>
           <button
@@ -96,9 +162,13 @@ export function ProjectsRoute() {
       </header>
 
       <div className="mx-auto max-w-[64rem] px-6 pb-12 pt-6 md:pt-8">
-        {projects.length === 0 ? (
-          // Empty state with a forward CTA — the back link in the header
-          // gets you out, this gets you started.
+        {loading ? (
+          <div className="border-y border-fg-tertiary/15 py-20 text-center">
+            <div className="font-body text-body-sm font-medium text-fg-secondary">
+              Loading projects…
+            </div>
+          </div>
+        ) : merged.length === 0 ? (
           <div className="border-y border-fg-tertiary/15 py-20 text-center">
             <div className="font-body text-body-sm font-medium text-fg-secondary">
               Nothing archived yet.
@@ -125,10 +195,7 @@ export function ProjectsRoute() {
             }}
             className="divide-y divide-fg-tertiary/12 border-y border-fg-tertiary/12"
           >
-            {projects.map((p) => {
-              const beats = p.manifest.beats;
-              const total = beats.length;
-              const approved = beats.filter((b) => b.status === "approved").length;
+            {merged.map((p) => {
               const date = new Intl.DateTimeFormat("en-US", {
                 month: "short",
                 day: "numeric",
@@ -138,7 +205,7 @@ export function ProjectsRoute() {
                 hour: "numeric",
                 minute: "2-digit",
               }).format(new Date(p.archivedAt));
-              const isComplete = approved === total && total > 0;
+              const isComplete = p.approvedCount === p.totalBeats && p.totalBeats > 0;
               return (
                 <motion.li
                   key={p.id}
@@ -149,14 +216,9 @@ export function ProjectsRoute() {
                   transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
                   className="group relative"
                 >
-                  {/* Whole row is the resume affordance. Buttons inside
-                      stop-propagation so Discard/Delete don't trigger
-                      the row's onClick. ArrowUpRight on the right hand
-                      side appears on hover as a "you're going somewhere"
-                      cue. */}
                   <button
                     type="button"
-                    onClick={() => handleResume(p.id)}
+                    onClick={() => handleResume(p)}
                     aria-label={`Resume ${p.masterPrompt}`}
                     className="grid w-full cursor-pointer grid-cols-[1fr_auto] items-center gap-4 px-3 py-4 text-left transition-colors duration-150 hover:bg-bg-elev-1/40 focus-visible:bg-bg-elev-1/55 focus-visible:outline-none sm:gap-6 sm:px-4"
                   >
@@ -178,34 +240,44 @@ export function ProjectsRoute() {
                         </span>
                         <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
                         <span className="font-mono text-micro uppercase tracking-[0.08em] text-fg-tertiary">
-                          {p.manifest.videoType}
+                          {p.videoType}
                         </span>
                         <span aria-hidden="true" className="text-fg-tertiary/30">·</span>
-                        <BeatProgressStrip
-                          beats={beats.map((b) => b.status)}
-                        />
+                        <BeatProgressStrip beats={p.beatStatuses} />
                         <span
                           className={cn(
                             "font-mono text-micro tabular-nums",
                             isComplete ? "text-brand-ember" : "text-fg-tertiary",
                           )}
                         >
-                          {approved}/{total}
+                          {p.approvedCount}/{p.totalBeats}
                           {isComplete ? " · ready" : ""}
                         </span>
+                        {p.source === "mongo" && (
+                          <span title="Stored in MongoDB Atlas">
+                            <Cloud size={10} strokeWidth={1.5} className="text-brand-ember/60" />
+                          </span>
+                        )}
+                        {p.source === "local" && (
+                          <span title="Local only (browser)">
+                            <HardDrive size={10} strokeWidth={1.5} className="text-fg-tertiary/40" />
+                          </span>
+                        )}
+                        {p.source === "both" && (
+                          <span title="Synced: local + MongoDB Atlas" className="flex items-center gap-0.5">
+                            <HardDrive size={10} strokeWidth={1.5} className="text-fg-tertiary/40" />
+                            <Cloud size={10} strokeWidth={1.5} className="text-brand-ember/60" />
+                          </span>
+                        )}
                       </div>
                     </div>
                   </button>
-                  {/* Row actions — pinned right, sit OUTSIDE the resume
-                      button so clicks don't bubble into the row. Visible
-                      at low opacity by default, full opacity on group
-                      hover so the row stays clean at idle. */}
                   <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 sm:right-4">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleResume(p.id);
+                        handleResume(p);
                       }}
                       className="pointer-events-auto inline-flex cursor-pointer items-center gap-1.5 rounded-full px-2.5 py-1.5 font-body text-pill font-medium text-brand-ember opacity-80 transition-[opacity,color,background-color] duration-200 hover:bg-brand-ember/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-1 focus-visible:ring-offset-bg-base"
                     >
@@ -251,16 +323,6 @@ export function ProjectsRoute() {
   );
 }
 
-/**
- * Per-beat progress strip — one pip per beat. Approved beats glow ember;
- * unapproved are hairline dots. Reads as a tiny progress bar, gives the
- * user a glanceable receipt of how far through the cinematic each
- * archived project actually got.
- *
- * Sits inline in the row's metadata strip so it doesn't take its own
- * row of vertical space; max width caps to ~80px even for a 12-beat
- * project so it doesn't push the date strip into a wrap.
- */
 function BeatProgressStrip({ beats }: { beats: BeatStatus[] }) {
   return (
     <span

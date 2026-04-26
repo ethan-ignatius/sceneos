@@ -12,6 +12,12 @@ import type {
   EditorTurnResponse,
   GenerateRequest,
   GenerateResponse,
+  NarrateBeatRequest,
+  NarrateBeatResponse,
+  NarrateMomentRequest,
+  NarrateMomentResponse,
+  NarrateSummaryRequest,
+  NarrateSummaryResponse,
   OrchestrateRequest,
   OrchestrateResponse,
   ReferenceGenerateRequest,
@@ -461,7 +467,70 @@ export const api = {
       "/api/references/generate",
       { method: "POST", body },
     ),
+
+  // ── Narration (ElevenLabs narrator) ──────────────────────────────────────
+
+  narrateBeat: (body: NarrateBeatRequest) =>
+    request<NarrateBeatRequest, NarrateBeatResponse>("/api/narrate/beat", {
+      method: "POST",
+      body,
+    }),
+
+  narrateSummary: (body: NarrateSummaryRequest) =>
+    request<NarrateSummaryRequest, NarrateSummaryResponse>("/api/narrate/summary", {
+      method: "POST",
+      body,
+    }),
+
+  narrateMoment: (body: NarrateMomentRequest) =>
+    request<NarrateMomentRequest, NarrateMomentResponse>("/api/narrate/moment", {
+      method: "POST",
+      body,
+    }),
+
+  // ── MongoDB-backed project persistence ──────────────────────────────────
+
+  listProjects: () =>
+    request<undefined, MongoProject[]>("/api/projects", { method: "GET" }),
+
+  getProject: (projectId: string) =>
+    request<undefined, MongoProject>(`/api/projects/${encodeURIComponent(projectId)}`, {
+      method: "GET",
+    }),
+
+  saveProject: (body: SaveProjectRequest) =>
+    request<SaveProjectRequest, { ok: boolean; projectId: string }>("/api/projects", {
+      method: "POST",
+      body,
+    }),
+
+  deleteProject: (projectId: string) =>
+    fetch(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" })
+      .then(async (res) => {
+        if (!res.ok) throw new ApiError(res.status, "Delete failed");
+        return (await res.json()) as { ok: boolean; projectId: string };
+      }),
 };
+
+export interface MongoProject {
+  id: string;
+  masterPrompt: string;
+  videoType: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  thumbnailUrl: string | null;
+  manifest: Manifest | null;
+  editor: unknown;
+}
+
+export interface SaveProjectRequest {
+  projectId: string;
+  manifest: Manifest;
+  status?: string;
+  editor?: unknown;
+}
 
 export { ApiError };
 

@@ -10,7 +10,8 @@ import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
 import { SceneOSMark } from "@/components/ui/sceneos-mark";
-import { VIDEO_TYPE_TIERS } from "@/lib/beat-templates";
+import { VIDEO_TYPE_TIERS, pickVideoTypeFromPrompt } from "@/lib/beat-templates";
+import { useNarrationStore } from "@/lib/use-narration";
 
 /**
  * Landing — the hook.
@@ -146,6 +147,12 @@ export function LandingRoute() {
     const submittedVideoType = usePromptStore.getState().videoType;
     initialize({ masterPrompt: trimmed, videoType: submittedVideoType });
 
+    // Co-director reacts to the prompt — fire-and-forget so it plays
+    // during the transition bridge. The narrator's first words.
+    useNarrationStore.getState().playMoment("prompt_reaction", {
+      masterPrompt: trimmed,
+    });
+
     // Fire-and-forget enrichment. Bridge starts immediately; the canvas
     // gets refined per-beat prompts when the API returns. If it 502s, the
     // canvas falls back to the template defaults — nothing blocks.
@@ -166,6 +173,16 @@ export function LandingRoute() {
         .then((res) => {
           applyDecomposition(res.clips, res.continuityBible);
           setDecomposeStatus("success");
+
+          // Co-director introduces the beat structure
+          const m1 = useBeatGraphStore.getState().manifest;
+          if (m1) {
+            useNarrationStore.getState().playMoment("decompose_intro", {
+              manifest: m1,
+              masterPrompt: trimmed,
+            });
+          }
+
           // ── CONCURRENT PRE-BAKE of every beat ───────────────────
           // The moment decompose returns, fire /api/generate for ALL
           // beats in parallel. While the user walks the canvas and

@@ -189,12 +189,19 @@ async def session_start(body: dict | None = None):
     aspect_ratio = body.get("aspectRatio") or "16:9"
 
     try:
-        return await session_service.start_session(
+        result = await session_service.start_session(
             mode=raw_mode,  # type: ignore[arg-type]
             master_prompt_override=body.get("masterPromptOverride"),
             prompt_id=body.get("promptId"),
             aspect_ratio=aspect_ratio,
         )
+        # Persist the new project to MongoDB (fire-and-forget).
+        manifest = result.get("manifest")
+        pid = result.get("projectId")
+        if pid and manifest:
+            from . import db
+            db.fire_and_forget(db.upsert_project(pid, manifest=manifest, status="active"))
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -673,13 +680,26 @@ async def references_generate(body: dict):
         }
 
     try:
-        return await vi.generate_reference(
+        ref_result = await vi.generate_reference(
             kind=kind,
             description=description,
             project_id=body.get("projectId"),
             beat_id=body.get("beatId"),
             aspect_ratio=body.get("aspectRatio") or vi.DEFAULT_ASPECT_RATIO,
         )
+        # Persist to MongoDB
+        pid = body.get("projectId")
+        if pid:
+            from . import db
+            db.fire_and_forget(db.insert_character_or_frame({
+                "project_id": pid,
+                "beat_id": body.get("beatId"),
+                "type": f"{kind}_ref",
+                "description": description,
+                "image_url": ref_result.get("imageUrl"),
+                "provider": "imagen",
+            }))
+        return ref_result
     except Exception as exc:
         logger.exception("[references/generate] failed")
         raise HTTPException(
@@ -1110,6 +1130,81 @@ async def stitch(body: dict):
     }
 
 
+# ── /api/narrate/* — ElevenLabs narrator (Gemini script + TTS) ──────────────
+
+
+@app.post("/api/narrate/beat")
+async def narrate_beat_route(body: dict):
+    """Per-beat narration: Gemini writes a short script, ElevenLabs speaks it."""
+    from . import narration
+
+    beat_id = body.get("beatId")
+    manifest = body.get("manifest")
+    if not beat_id or not manifest:
+        raise HTTPException(status_code=400, detail="beatId and manifest are required")
+    beat = next((b for b in manifest.get("beats", []) if b["beatId"] == beat_id), None)
+    if not beat:
+        raise HTTPException(status_code=400, detail=f"beatId {beat_id} not found in manifest")
+
+    try:
+        result = await narration.narrate_beat(
+            beat, manifest, continuity_bible=body.get("continuityBible"),
+        )
+    except Exception as exc:
+        logger.exception("[narrate/beat] failed")
+        raise HTTPException(status_code=502, detail={"error": "Beat narration failed", "details": str(exc)}) from exc
+
+    if not result:
+        return {"text": None, "audioBase64": None, "durationSeconds": 0}
+    return result
+
+
+@app.post("/api/narrate/summary")
+async def narrate_summary_route(body: dict):
+    """Full story narration: Gemini script + ElevenLabs TTS + Cloudinary upload."""
+    from . import narration
+
+    manifest = body.get("manifest")
+    if not manifest:
+        raise HTTPException(status_code=400, detail="manifest is required")
+
+    try:
+        result = await narration.narrate_summary(
+            manifest, continuity_bible=body.get("continuityBible"),
+        )
+    except Exception as exc:
+        logger.exception("[narrate/summary] failed")
+        raise HTTPException(status_code=502, detail={"error": "Summary narration failed", "details": str(exc)}) from exc
+
+    if not result:
+        return {"text": None, "audioUrl": None, "publicId": None, "durationSeconds": 0}
+    return result
+
+
+@app.post("/api/narrate/moment")
+async def narrate_moment_route(body: dict):
+    """Generalized co-director narration for any moment in the experience."""
+    from . import narration
+
+    moment = body.get("moment")
+    if not moment:
+        raise HTTPException(status_code=400, detail="moment is required")
+
+    context = body.get("context", {})
+    try:
+        result = await narration.narrate_moment(moment, context)
+    except Exception as exc:
+        logger.exception("[narrate/moment] %s failed", moment)
+        raise HTTPException(
+            status_code=502,
+            detail={"error": f"Narration moment '{moment}' failed", "details": str(exc)},
+        ) from exc
+
+    if not result:
+        return {"text": None, "audioBase64": None, "durationSeconds": 0}
+    return result
+
+
 # ── /api/editor/* — Stage 7 agentic editor ─────────────────────────────────
 
 
@@ -1348,3 +1443,75 @@ async def cutos_import(body: dict):
         "editUrl": data.get("editUrl") or f"{base_url}/projects/{project_id}",
     }
 
+
+# ── /api/projects — MongoDB-backed project persistence ─────────────────────
+
+
+@app.get("/api/projects")
+async def projects_list():
+    """List all persisted projects, newest first."""
+    from . import db
+    rows = await db.list_projects(limit=50)
+    return [
+        {
+            "id": row["_id"],
+            "masterPrompt": row.get("master_prompt", ""),
+            "videoType": row.get("video_type", ""),
+            "status": row.get("status", "active"),
+            "createdAt": row.get("created_at"),
+            "updatedAt": row.get("updated_at"),
+            "archivedAt": row.get("archived_at"),
+            "thumbnailUrl": row.get("thumbnail_url"),
+            "manifest": row.get("manifest"),
+            "editor": row.get("editor"),
+        }
+        for row in rows
+    ]
+
+
+@app.get("/api/projects/{project_id}")
+async def projects_get(project_id: str):
+    """Get a single project by ID."""
+    from . import db
+    row = await db.get_project(project_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "id": row["_id"],
+        "masterPrompt": row.get("master_prompt", ""),
+        "videoType": row.get("video_type", ""),
+        "status": row.get("status", "active"),
+        "createdAt": row.get("created_at"),
+        "updatedAt": row.get("updated_at"),
+        "archivedAt": row.get("archived_at"),
+        "thumbnailUrl": row.get("thumbnail_url"),
+        "manifest": row.get("manifest"),
+        "editor": row.get("editor"),
+    }
+
+
+@app.post("/api/projects")
+async def projects_save(body: dict):
+    """Save or update a project. Body: { projectId, manifest, status?, editor? }"""
+    from . import db
+    manifest = body.get("manifest")
+    project_id = body.get("projectId") or (manifest or {}).get("projectId")
+    if not project_id or not manifest:
+        raise HTTPException(status_code=400, detail="projectId and manifest are required")
+    await db.upsert_project(
+        project_id,
+        manifest=manifest,
+        status=body.get("status", "archived"),
+        editor=body.get("editor"),
+    )
+    return {"ok": True, "projectId": project_id}
+
+
+@app.delete("/api/projects/{project_id}")
+async def projects_delete(project_id: str):
+    """Delete a project permanently."""
+    from . import db
+    deleted = await db.delete_project(project_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Project not found or already deleted")
+    return {"ok": True, "projectId": project_id}

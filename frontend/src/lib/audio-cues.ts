@@ -39,7 +39,7 @@ function getCtx(): AudioContext | null {
 export function isAudioMuted(): boolean {
   if (typeof window === "undefined") return true;
   const v = window.localStorage.getItem(STORAGE_KEY);
-  return v === null ? true : v === "true";
+  return v === "true";
 }
 
 export function setAudioMuted(muted: boolean): void {

@@ -43,6 +43,11 @@ def _has_higgsfield_creds() -> bool:
     return bool(os.getenv("HIGGSFIELD_API_KEY"))
 
 
+def _has_mongo_creds() -> bool:
+    """True if a MongoDB connection string is configured."""
+    return bool(os.getenv("MONGODB_URI"))
+
+
 def mock_mode() -> bool:
     """
     Determine whether the backend should run in MOCK_MODE.

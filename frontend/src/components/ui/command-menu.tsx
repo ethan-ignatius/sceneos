@@ -78,8 +78,9 @@ export function CommandMenu() {
   };
 
   const toggleMute = () => {
-    setAudioMuted(!isAudioMuted());
-    toast.success(isAudioMuted() ? "Sound on set." : "Quiet on set.");
+    const nowMuted = !isAudioMuted();
+    setAudioMuted(nowMuted);
+    toast.success(nowMuted ? "Quiet on set." : "Sound on set.");
     close();
   };
 
