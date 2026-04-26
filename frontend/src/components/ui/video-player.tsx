@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause } from "lucide-react";
+import { Play, Pause, RotateCcw, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 
@@ -44,6 +44,18 @@ export function VideoPlayer({
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number>(suggestedDurationSeconds ?? 0);
+  // Load-error state. Surfaces a "Couldn't load this clip" overlay with a
+  // Retry that re-runs v.load() — recovers from transient Cloudinary 404s
+  // (CDN propagation lag), expired/rotated public_ids on resumed projects,
+  // or a network blip. The MediaError code goes into the diagnostic line
+  // so we can tell decode failures apart from network failures.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Set when autoplay is attempted but blocked by browser policy. The
+  // play overlay stays visible and the user clicks to start playback.
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  // Reload key — bumped to force the effect to re-run + clear error state
+  // without changing the src prop.
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     const v = videoRef.current;
