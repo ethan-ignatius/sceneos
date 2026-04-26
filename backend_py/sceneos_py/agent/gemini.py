@@ -119,7 +119,7 @@ async def run_agent_turn(req: dict) -> dict:
             stub = _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
             if prose.strip():
                 stub["question"] = prose.strip()
-            return _question_mentions_prior(stub, beat, manifest)
+            return stub
 
     return _repair_question_if_redundant(
         _normalize_call_to_result(
