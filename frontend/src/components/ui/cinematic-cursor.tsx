@@ -20,6 +20,11 @@ export function CinematicCursor() {
   const ringX = useRef(0);
   const ringY = useRef(0);
   const hoverRef = useRef(false);
+  // Distinct from hover: true when over a text-editable surface (input,
+  // textarea, contentEditable). Cinematic ring + dot both fade to 0 here so
+  // the native I-beam and blinking caret read uninterrupted — typing into
+  // an input shouldn't have a giant ember halo over the caret.
+  const textHoverRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -34,11 +39,19 @@ export function CinematicCursor() {
     const onMove = (e: PointerEvent) => {
       targetX.current = e.clientX;
       targetY.current = e.clientY;
-      // Detect interactive ancestor for the hover state.
       const t = e.target as HTMLElement | null;
-      hoverRef.current = !!t?.closest(
-        "button, a, [role='button'], [role='slider'], [data-cursor='hover'], input, textarea, select",
+      // Text-editable surfaces — fade the cursor entirely so the native
+      // caret + I-beam carry the affordance.
+      textHoverRef.current = !!t?.closest(
+        "input, textarea, [contenteditable='true']",
       );
+      // Hover for ring expansion — buttons/links only. Inputs are excluded
+      // here because they're handled by textHoverRef above.
+      hoverRef.current =
+        !textHoverRef.current &&
+        !!t?.closest(
+          "button, a, [role='button'], [role='slider'], [data-cursor='hover'], select",
+        );
     };
 
     const onLeave = () => {
@@ -46,6 +59,7 @@ export function CinematicCursor() {
       targetX.current = -100;
       targetY.current = -100;
       hoverRef.current = false;
+      textHoverRef.current = false;
     };
 
     window.addEventListener("pointermove", onMove);
@@ -61,19 +75,22 @@ export function CinematicCursor() {
 
       const dot = dotRef.current;
       const ring = ringRef.current;
+      const overText = textHoverRef.current;
       if (dot) {
         dot.style.transform = `translate3d(${dotX.current}px, ${dotY.current}px, 0) translate(-50%, -50%)`;
-        dot.style.opacity = hoverRef.current ? "0" : "1";
+        // Hide dot over buttons (ring takes over) AND over text inputs
+        // (native caret takes over).
+        dot.style.opacity = hoverRef.current || overText ? "0" : "1";
       }
       if (ring) {
         // Ring is rendered at its full hover size (56×56) and scaled DOWN
-        // for the idle state. This avoids upscaling a 24×24 raster to 56px
-        // on hover, which made the border look chunky / pixelated. Native
-        // hover render = crisp; downscale on idle is forgiving.
+        // for the idle state. Over text-editable surfaces the ring also
+        // fades to 0 so the OS I-beam + blinking caret read clean.
         const scale = hoverRef.current ? 1 : 0.43;
         const fill = hoverRef.current ? "1" : "0";
         ring.style.transform = `translate3d(${ringX.current}px, ${ringY.current}px, 0) translate(-50%, -50%) scale(${scale})`;
         ring.style.setProperty("--ring-fill", fill);
+        ring.style.opacity = overText ? "0" : "1";
       }
       raf = requestAnimationFrame(tick);
     };
@@ -92,15 +109,19 @@ export function CinematicCursor() {
       <div
         ref={ringRef}
         aria-hidden="true"
-        className="cinematic-cursor-ring pointer-events-none fixed left-0 top-0 z-[90] h-6 w-6 rounded-full"
+        // Base size = the HOVER size (56px). The frame loop scales DOWN to
+        // 0.43 for idle (≈24px effective). Rendering at base-hover means
+        // the 1px border rasterizes natively at 56px and stays crisp on
+        // hover; downscaling for idle is more forgiving than upscaling.
+        className="cinematic-cursor-ring pointer-events-none fixed left-0 top-0 z-[90] h-14 w-14 rounded-full"
         style={{
           // The fill swap on hover state — inner bg fades to ember.
           background:
             "radial-gradient(circle, rgba(240,168,104,calc(var(--ring-fill, 0) * 0.85)) 0%, transparent 70%)",
           border: "1px solid rgba(240, 168, 104, 0.55)",
           mixBlendMode: "difference",
-          willChange: "transform",
-          transition: "background 200ms cubic-bezier(0.25,1,0.5,1)",
+          willChange: "transform, opacity",
+          transition: "background 200ms cubic-bezier(0.25,1,0.5,1), opacity 180ms ease-out",
         }}
       />
       <div

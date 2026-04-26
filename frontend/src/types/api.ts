@@ -238,6 +238,24 @@ export interface EditorApplyResponse {
 export interface EditorInitResponse extends EditorApplyResponse {}
 
 /**
+ * SSE events streamed by POST /api/editor/stream. Same envelope as the
+ * main agent stream — discriminator is `type`. The `result` event mirrors
+ * the EditorTurnResponse shape so consumers can apply identical logic
+ * regardless of streaming vs one-shot endpoint.
+ */
+export type EditorStreamEvent =
+  | { type: "ready" }
+  | { type: "thought"; chunk: string }
+  | { type: "text"; chunk: string }
+  | { type: "tool_call"; name: string; args: Record<string, unknown> }
+  | ({ type: "result" } & (
+      | { kind: "propose"; decisions: EditDecisions; rationale: string; suggestedFollowups: string[] }
+      | { kind: "commit"; decisions: EditDecisions; rationale: string; summary: string }
+    ))
+  | { type: "error"; message: string }
+  | { type: "done" };
+
+/**
  * POST /api/decompose
  *
  * One-shot LLM call that turns the master prompt into a Higgsfield-ready

@@ -187,7 +187,10 @@ export function NodeDetailDrawer() {
       // its own rounded corners). Desktop: a free-floating right panel
       // with margin from every viewport edge, rounded-2xl, soft shadow.
       // No more edge-to-edge "stuck" feel.
-      className="fixed inset-x-3 bottom-3 z-40 flex max-h-[85svh] w-auto flex-col rounded-2xl border border-fg-tertiary/15 bg-[#14110f]/[0.92] backdrop-blur-2xl shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)] md:absolute md:inset-x-auto md:bottom-4 md:right-4 md:top-20 md:max-h-none md:w-[34rem] md:max-w-[calc(100vw-2rem)]"
+      // select-text reverses the canvas main's select-none so users can
+      // copy agent messages / refined prompts. The chrome above doesn't
+      // need to be copyable; the drawer's content does.
+      className="fixed inset-x-3 bottom-3 z-40 flex max-h-[85svh] w-auto select-text flex-col rounded-2xl border border-fg-tertiary/15 bg-[#14110f]/[0.92] backdrop-blur-2xl shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)] md:absolute md:inset-x-auto md:bottom-4 md:right-4 md:top-20 md:max-h-none md:w-[34rem] md:max-w-[calc(100vw-2rem)]"
     >
       <motion.div
         initial="hidden"
