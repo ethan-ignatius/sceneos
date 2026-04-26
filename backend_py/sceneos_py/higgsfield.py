@@ -249,7 +249,24 @@ async def _poll_status(request_id: str) -> dict:
 
 async def generate(params: dict) -> dict:
     """Submit a Higgsfield generation. The mode (text-to-video, image-to-video,
-    or Soul) is picked from the params shape inside `_build_payload`."""
+    or Soul) is picked from the params shape inside `_build_payload`.
+
+    Pre-flight: the legacy `dop/standard` endpoint REQUIRES `image_url`
+    (it's I2V-only). If we'd dispatch with no seed image and no refs, the
+    server 422s every time. Raise locally before the network call so the
+    cascade falls through to Vertex Veo (which supports T2V) without
+    burning a round-trip per beat — speculative kickoffs at session
+    start used to log five 422s before the agent had a chance to land
+    character + location descriptions.
+    """
+    if _is_legacy():
+        refs = params.get("referenceImageUrls") or []
+        seed_image = params.get("startImageUrl") or (refs[0] if isinstance(refs, list) and refs else None)
+        if not seed_image:
+            raise ValueError(
+                "higgsfield legacy I2V requires image_url; "
+                "no seed available — defer to Vertex Veo via cascade"
+            )
     payload = _build_payload(params)
     body = await _post_generate(payload)
     gen_id = _generation_id(body)

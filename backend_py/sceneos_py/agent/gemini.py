@@ -98,7 +98,7 @@ async def run_agent_turn(req: dict) -> dict:
     )
     if function_call is None:
         # Gemini occasionally emits MALFORMED_FUNCTION_CALL under load.
-        # One colder retry, then raise — there is no second-LLM fallback.
+        # One colder retry, then stub fallback — never crash with 502.
         response = await asyncio.to_thread(lambda: _call_sync(0.25))
         candidates = getattr(response, "candidates", None) or []
         parts = getattr(candidates[0].content, "parts", None) if candidates else []
@@ -107,7 +107,19 @@ async def run_agent_turn(req: dict) -> dict:
             None,
         )
         if function_call is None:
-            raise RuntimeError("Gemini agent did not emit a tool call after cold retry.")
+            logger.warning(
+                "[agent] Gemini did not emit a tool call after cold retry for beat=%s — returning stub question",
+                beat.get("beatName", req["beatId"]),
+            )
+            prose = ""
+            for p in (parts or []):
+                t = getattr(p, "text", None)
+                if t:
+                    prose += t
+            stub = _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
+            if prose.strip():
+                stub["question"] = prose.strip()
+            return _question_mentions_prior(stub, beat, manifest)
 
     return _repair_question_if_redundant(
         _normalize_call_to_result(

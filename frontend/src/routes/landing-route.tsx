@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Mic } from "lucide-react";
+import { ArrowUp, Mic, FolderClock } from "lucide-react";
 import { toast } from "sonner";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -9,7 +9,9 @@ import { api, ApiError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
+import { SceneOSMark } from "@/components/ui/sceneos-mark";
 import { VIDEO_TYPE_TIERS, pickVideoTypeFromPrompt } from "@/lib/beat-templates";
+import { useNarrationStore } from "@/lib/use-narration";
 
 /**
  * Landing — the hook.
@@ -54,43 +56,30 @@ export function LandingRoute() {
   // a second call early-returns; the state mirror disables the buttons.
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
-  // True the moment the user clicks a tier chip; from then on, verbosity
-  // never overrides their choice. Without this lock, typing more would
-  // silently bump them up a tier and the chip selection would feel haunted.
-  const [videoTypeUserPicked, setVideoTypeUserPicked] = useState(false);
 
-  // Auto-pick the video tier from prompt verbosity until the user makes
-  // an explicit choice. Empty / very short prompt → Trailer (3 beats);
-  // medium → Short film (5); long → Movie (8).
-  useEffect(() => {
-    if (videoTypeUserPicked) return;
-    const next = pickVideoTypeFromPrompt(draft);
-    if (next !== videoType) setVideoType(next);
-  }, [draft, videoTypeUserPicked, videoType, setVideoType]);
+  // Verbosity-driven auto-pick was removed: typing a long prompt would
+  // silently bump the user to Movie (8 beats) even when they had picked
+  // Trailer, which felt haunted. The chip selection is now strictly
+  // user-driven; verbosity does not override their choice. Default
+  // remains the shortest tier ("Trailer", 3 beats) — set in the
+  // prompt-store init.
 
-  // Voice — Web Speech API. Auto-starts on mount so the user can speak
-  // their idea without reaching for the mic button. The button then
-  // serves as a MUTE control — only mouse action needed is to silence
-  // it. Falls back gracefully if unsupported (Firefox).
+  // Voice — Web Speech API. Mic is OFF by default on landing — user
+  // explicitly clicks the mic button to opt in. Auto-starting it the
+  // moment a stranger lands on the page reads as invasive (the browser
+  // flashes a red recording indicator before the user has even decided
+  // they want to talk). Click-to-start respects them.
   //
-  // onSettle fires after 3s of silence (set in the hook) — at that
-  // point the form auto-submits, so the user never has to reach for
-  // the keyboard or click Send. submitRef is kept fresh so onSettle
-  // sees the latest closure (it runs from inside a hook timer).
+  // Once listening, onSettle (2s of silence) auto-submits — so the
+  // experience is still hands-free after the user opts in. submitRef
+  // is kept fresh so onSettle calls into the latest closure (it runs
+  // from inside a hook timer).
   const submitRef = useRef<((text: string) => void) | null>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
     silenceMs: 2000,
     onSettle: (text) => submitRef.current?.(text),
   });
-  const autoStartedMicRef = useRef(false);
-  useEffect(() => {
-    if (autoStartedMicRef.current) return;
-    if (!speech.supported) return;
-    if (speech.listening) return;
-    autoStartedMicRef.current = true;
-    speech.start();
-  }, [speech.supported, speech.listening, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) setDraft(speech.transcript);
   }, [speech.listening, speech.transcript]);
@@ -158,6 +147,12 @@ export function LandingRoute() {
     const submittedVideoType = usePromptStore.getState().videoType;
     initialize({ masterPrompt: trimmed, videoType: submittedVideoType });
 
+    // Co-director reacts to the prompt — fire-and-forget so it plays
+    // during the transition bridge. The narrator's first words.
+    useNarrationStore.getState().playMoment("prompt_reaction", {
+      masterPrompt: trimmed,
+    });
+
     // Fire-and-forget enrichment. Bridge starts immediately; the canvas
     // gets refined per-beat prompts when the API returns. If it 502s, the
     // canvas falls back to the template defaults — nothing blocks.
@@ -178,6 +173,16 @@ export function LandingRoute() {
         .then((res) => {
           applyDecomposition(res.clips, res.continuityBible);
           setDecomposeStatus("success");
+
+          // Co-director introduces the beat structure
+          const m1 = useBeatGraphStore.getState().manifest;
+          if (m1) {
+            useNarrationStore.getState().playMoment("decompose_intro", {
+              manifest: m1,
+              masterPrompt: trimmed,
+            });
+          }
+
           // ── CONCURRENT PRE-BAKE of every beat ───────────────────
           // The moment decompose returns, fire /api/generate for ALL
           // beats in parallel. While the user walks the canvas and
@@ -288,7 +293,41 @@ export function LandingRoute() {
           }}
         />
 
-        {/* Content — single centered composition. No nav. No corners. No chrome. */}
+        {/* Bottom-left wordmark — small, quiet, mirrors the same ●-dot
+            register that final-delivery uses in its top chrome so the
+            brand reads as the same product across every surface. Sits
+            in the footer area where it doesn't compete with the
+            headline composition. */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.6 }}
+          className="absolute bottom-4 left-4 z-20 text-fg-tertiary/85 md:bottom-6 md:left-6"
+        >
+          <SceneOSMark />
+        </motion.div>
+
+        {/* Top-right Projects affordance — always reachable from landing.
+            Subdued by default (caption-track register), lifts to fg-primary
+            on hover. Mirrors the same chrome pattern canvas/editor/final
+            already use, so the button looks the same everywhere it appears. */}
+        <motion.button
+          type="button"
+          onClick={() => navigate("/projects")}
+          aria-label="Open projects archive"
+          title="Projects"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.6 }}
+          className="group absolute right-4 top-4 z-20 inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base md:right-6 md:top-5"
+        >
+          <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
+          <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+            Projects
+          </span>
+        </motion.button>
+
+        {/* Content — single centered composition. */}
         <section className="relative z-10 flex min-h-[100svh] flex-col items-center justify-center px-6 py-16 sm:px-10">
           {/* Headline. One line, no wrap. Cap reduced from 9rem→6.5rem so
               it never overshoots the viewport vertically and the "Direct a
@@ -486,10 +525,7 @@ export function LandingRoute() {
                       type="button"
                       role="radio"
                       aria-checked={active}
-                      onClick={() => {
-                        setVideoType(tier.id);
-                        setVideoTypeUserPicked(true);
-                      }}
+                      onClick={() => setVideoType(tier.id)}
                       className={cn(
                         "group cursor-pointer px-2 py-1 font-body text-caption transition-colors duration-200",
                         "focus-visible:outline-none focus-visible:text-brand-ember",

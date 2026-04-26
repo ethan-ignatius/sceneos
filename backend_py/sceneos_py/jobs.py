@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import Any, Literal
 
+from . import db as _db
 
 JobStage = Literal["t2i_running", "i2v_running", "succeeded", "failed", "running"]
 OrchestrateStatus = Literal["queued", "running", "submitted", "succeeded", "failed"]
@@ -32,9 +33,26 @@ class Job:
 JOBS: dict[str, Job] = {}
 
 
+def _job_to_mongo(job: Job) -> dict:
+    return {
+        "project_id": job.project_id,
+        "beat_id": job.beat_id,
+        "scene_id": job.scene_id,
+        "provider": job.provider,
+        "stage": job.stage,
+        "clip_prompt": job.clip_prompt,
+        "image_url": job.image_url,
+        "video_url": job.video_url,
+        "cloudinary_url": job.cloudinary_url,
+        "cloudinary_public_id": job.cloudinary_public_id,
+        "error": job.error,
+    }
+
+
 def put(job: Job) -> Job:
     job.updated_at = datetime.now(UTC).isoformat()
     JOBS[job.job_id] = job
+    _db.fire_and_forget(_db.upsert_generation(job.job_id, _job_to_mongo(job)))
     return job
 
 
@@ -66,9 +84,22 @@ class OrchestrateJob:
 ORCH_JOBS: dict[str, OrchestrateJob] = {}
 
 
+def _orch_to_mongo(job: OrchestrateJob) -> dict:
+    return {
+        "project_id": job.project_id,
+        "beat_id": job.beat_id,
+        "scene_id": job.scene_id,
+        "provider": job.provider,
+        "stage": job.stage,
+        "status": job.status,
+        "error": job.error,
+    }
+
+
 def put_orchestrate(job: OrchestrateJob) -> OrchestrateJob:
     job.updated_at = datetime.now(UTC).isoformat()
     ORCH_JOBS[job.job_id] = job
+    _db.fire_and_forget(_db.upsert_generation(job.job_id, _orch_to_mongo(job)))
     return job
 
 
@@ -109,4 +140,5 @@ def update_orchestrate(
     if job.status in {"succeeded", "failed"}:
         job.finished_at = datetime.now(UTC).isoformat()
     job.updated_at = datetime.now(UTC).isoformat()
+    _db.fire_and_forget(_db.upsert_generation(job.job_id, _orch_to_mongo(job)))
     return job

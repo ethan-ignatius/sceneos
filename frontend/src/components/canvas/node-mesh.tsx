@@ -182,7 +182,10 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
     // past the camera's safety radius — read as "planet goes hollow."
     // Approved boost dropped (was 1.12); the ember haze + ✓ checkmark on
     // the label already signal completion, no need to inflate the geometry.
-    const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.025 : 1;
+    // Planet body breath kept very quiet — ±1.2% over ~7s. Anything
+    // larger reads as the planet "wobbling" alongside the emissive pulse
+    // and compounds the flicker complaint.
+    const breath = !reducedMotion && !isApproved ? 1 + Math.sin(t * 0.9) * 0.012 : 1;
     const hoverBoost = hover ? 1.07 : 1;
     // Active boost 1.04 → 1.18: makes the targeted planet unmistakably
     // bigger, so the user knows which one is being referred to even at a
@@ -282,22 +285,23 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
     //                planets all breathing in slightly different phases
     //                read as "the canvas is humming," not "they're all
     //                strobing in unison."
-    // Pulses softened across the board after Mac/Retina users flagged
-    // the canvas as "flickering too crazy." High-DPI displays render
-    // emissive ramps with much less interpolation than 1x panels, so
-    // the same delta reads as a stutter. Halved amplitudes + slightly
-    // longer periods keep the visual signal without the strobe.
-    //   ready:     was ±0.18 / 1.6s → ±0.09 / 2.0s
-    //   generating:was ±0.12 / 1.0s → ±0.06 / 1.6s (the worst offender)
-    //   approved:  was ±0.06 / 4.2s → ±0.04 / 5.0s (already gentle, just trimmed)
+    // Pulses softened across the board after users flagged the canvas as
+    // "flickering too crazy." On any display, an emissive delta over 0.05
+    // reads as a stutter rather than a breath. Halved (again) and slowed:
+    //   ready:     ±0.04 over 2.6s — gentle anticipation, not strobing
+    //   generating:±0.03 over 2.2s — present without flicker (was the worst)
+    //   approved:  ±0.02 over 6.0s — barely perceptible heartbeat
+    // The baseEmissive levels still carry the status hierarchy on their
+    // own (approved=0.32, generating=0.18, ready=0.14) so a planet still
+    // reads as "alive vs idle" without the pulse doing the heavy lifting.
     const readyPulse = isReady && !reducedMotion
-      ? Math.sin((t * Math.PI * 2) / 2.0) * 0.09 + 0.09
+      ? Math.sin((t * Math.PI * 2) / 2.6) * 0.04 + 0.04
       : 0;
     const genPulse = isGenerating && !reducedMotion
-      ? Math.sin((t * Math.PI * 2) / 1.6) * 0.06 + 0.06
+      ? Math.sin((t * Math.PI * 2) / 2.2) * 0.03 + 0.03
       : 0;
     const approvedPulse = isApproved && !reducedMotion
-      ? Math.sin((t * Math.PI * 2) / 5.0 + introIndex) * 0.04
+      ? Math.sin((t * Math.PI * 2) / 6.0 + introIndex) * 0.02
       : 0;
     if (materialRef.current) {
       // Lerp toward target so a status flip never snaps emissive in one frame.
@@ -345,16 +349,18 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       baseOpacity *= emissiveFactor;
       // Approved planets get a slow halo breath synced with the
       // emissive heartbeat, phase-offset by introIndex so 5 approved
-      // beats don't pulse in lockstep.
+      // beats don't pulse in lockstep. Halved again — the halo's
+      // already-bright baseline carries the signal; the breath should
+      // be barely perceptible, not visible flicker.
       const approvedHaloPulse = isApproved && !reducedMotion
-        ? Math.sin((t * Math.PI * 2) / 4.2 + introIndex) * 0.04
+        ? Math.sin((t * Math.PI * 2) / 6.0 + introIndex) * 0.02
         : 0;
       // Halo pulses match the trimmed emissive cadences above so the
-      // body and atmosphere breathe in sync — a smaller envelope, a
-      // slower period.
+      // body and atmosphere breathe in sync — a smaller envelope and a
+      // slower period than before.
       const pulse =
-        (isReady && !reducedMotion ? Math.sin((t * Math.PI * 2) / 2.0) * 0.015 + 0.015 : 0) +
-        (isGenerating && !reducedMotion ? Math.sin((t * Math.PI * 2) / 1.6) * 0.012 + 0.012 : 0) +
+        (isReady && !reducedMotion ? Math.sin((t * Math.PI * 2) / 2.6) * 0.008 + 0.008 : 0) +
+        (isGenerating && !reducedMotion ? Math.sin((t * Math.PI * 2) / 2.2) * 0.006 + 0.006 : 0) +
         approvedHaloPulse;
       // Multiply by introEase so the halo fades in along with the
       // geometry's grow-in.
@@ -728,12 +734,13 @@ function GuidedTargetOverlay({
       return;
     }
     const t = clock.elapsedTime;
-    // 1.4s pulse cycle. Opacity 0.18 → 0.55 reads as a soft heartbeat;
-    // scale ±5% gives the ring a "breathing" diameter without crowding
-    // the existing atmosphere shell.
-    const omega = (Math.PI * 2) / 1.4;
-    const opacityPulse = Math.sin(t * omega) * 0.18 + 0.36;
-    const scalePulse = 1 + Math.sin(t * omega) * 0.05;
+    // 2.6s pulse cycle (was 1.4s) with ±0.08 opacity (was ±0.18) and
+    // ±2% scale (was ±5%). The original cycle compounded with the
+    // emissive + atmosphere pulses and read as canvas-wide flicker.
+    // Slower + smaller still signals "active here," doesn't strobe.
+    const omega = (Math.PI * 2) / 2.6;
+    const opacityPulse = Math.sin(t * omega) * 0.08 + 0.32;
+    const scalePulse = 1 + Math.sin(t * omega) * 0.02;
     if (ringMatRef.current) ringMatRef.current.opacity = opacityPulse;
     if (ringGroupRef.current) ringGroupRef.current.scale.setScalar(scalePulse);
   });

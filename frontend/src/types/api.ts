@@ -441,3 +441,52 @@ export interface ReferenceGenerateRequest {
 }
 
 export type ReferenceGenerateResponse = ProjectRef;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Narration (ElevenLabs narrator)
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface NarrateBeatRequest {
+  beatId: string;
+  manifest: Manifest;
+  continuityBible?: string;
+}
+
+export interface NarrateBeatResponse {
+  text: string | null;
+  audioBase64: string | null;
+  durationSeconds: number;
+}
+
+export interface NarrateSummaryRequest {
+  manifest: Manifest;
+  continuityBible?: string;
+}
+
+export interface NarrateSummaryResponse {
+  text: string | null;
+  audioUrl: string | null;
+  publicId: string | null;
+  durationSeconds: number;
+}
+
+export type NarrationMoment =
+  | "prompt_reaction"
+  | "decompose_intro"
+  | "beat_intro"
+  | "beat_locked"
+  | "beat_complete"
+  | "summary";
+
+export interface NarrateMomentRequest {
+  moment: NarrationMoment;
+  context: Record<string, unknown>;
+}
+
+export interface NarrateMomentResponse {
+  text: string | null;
+  audioBase64: string | null;
+  audioUrl?: string | null;
+  publicId?: string | null;
+  durationSeconds: number;
+}

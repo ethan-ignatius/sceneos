@@ -70,6 +70,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // the user turn so the conversation flows hands-free. submitVoiceRef
   // is the bridge between the hook's timer and the latest submit closure.
   const submitVoiceRef = useRef<((text: string) => void) | null>(null);
+  // Auto-grow + scroll for long answers. Textarea starts at one row,
+  // expands to fit content up to ~5 rows, then becomes an internal
+  // scroller. Rolled here (instead of `field-sizing: content`) so it
+  // works across older Safari + Firefox the user might demo on.
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
     silenceMs: 2000,
@@ -83,14 +88,58 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // We deliberately don't restart after the user explicitly stops it
   // — that would defeat the mute affordance.
   const autoStartedRef = useRef(false);
+  // Tracks whether the user explicitly muted via the mic button. The
+  // re-arm effect respects this — auto-restart only kicks in when the
+  // user has NOT chosen to mute. Reset when they unmute.
+  const userMutedRef = useRef(false);
   useEffect(() => {
     if (autoStartedRef.current) return;
     if (!speech.supported) return;
     if (speech.listening) return;
     if (inFlight) return;
+    // Only auto-start while the beat is actively waiting for answers.
+    // Re-opening a drawer for a beat that's past questioning (ready-to-generate,
+    // generating, preview, approved) must not resurface the mic.
+    if (beat.status !== "pending" && beat.status !== "questioning") return;
     autoStartedRef.current = true;
     speech.start();
-  }, [speech.supported, speech.listening, speech, inFlight]);
+  }, [speech.supported, speech.listening, speech, inFlight, beat.status]);
+
+  // Re-arm the mic after each agent turn so the conversation stays
+  // hands-free across the full questionnaire. Triggered when:
+  //   - The beat is still in `questioning` (the agent hasn't committed),
+  //   - A new turn lands (conversation length grew), AND
+  //   - The latest turn is the agent (we just got a question), AND
+  //   - The agent is no longer composing (inFlight = false), AND
+  //   - The user hasn't muted, AND
+  //   - The mic isn't already listening.
+  // Once status flips past `questioning` (markSufficient → ready-to-generate
+  // → generating), the conversation is over and the mic must NOT come back
+  // — even if a stray turn is appended (the "Cued..." closing line, or a
+  // retry-after-error). Otherwise the mic resurfaces during Roll camera and
+  // the user starts speaking into a closed conversation.
+  useEffect(() => {
+    if (!speech.supported) return;
+    if (userMutedRef.current) return;
+    if (speech.listening) return;
+    if (inFlight) return;
+    if (beat.status !== "questioning") return;
+    const turns = scene.conversation;
+    if (turns.length === 0) return;
+    const last = turns[turns.length - 1];
+    if (last.role !== "agent") return;
+    speech.start();
+  }, [speech, scene.conversation, inFlight, beat.status]);
+
+  // Hard stop: once the beat moves past questioning (markSufficient,
+  // generating, preview, approved), kill any live listening session.
+  // Without this, a mic that was open at the moment of commit keeps
+  // capturing audio while Roll camera fires — and on orchestrate error
+  // the user sees the mic glow as if the agent were still asking.
+  useEffect(() => {
+    if (beat.status === "pending" || beat.status === "questioning") return;
+    if (speech.listening) speech.stop();
+  }, [beat.status, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) {
       setDraft(speech.transcript);
@@ -122,7 +171,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const toggleVoice = () => {
     if (speech.listening) {
       speech.stop();
+      // User explicitly muted — block the re-arm effect from
+      // resurrecting the mic on the next agent turn.
+      userMutedRef.current = true;
     } else {
+      userMutedRef.current = false;
       speech.start();
     }
   };
@@ -377,6 +430,17 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     submitVoiceRef.current = (text: string) => void submit(text);
   });
 
+  // Keep textarea height synced with draft. After submit clears draft
+  // the field would otherwise stay tall — explicitly reset to one row.
+  // Voice transcripts and suggestion-pill clicks update `draft` outside
+  // the textarea's onChange path, so this also covers those.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [draft]);
+
   const retry = async () => {
     if (!pendingRetryMessage || inFlight) return;
     await callAgent(pendingRetryMessage);
@@ -562,12 +626,36 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           form sits on a single horizontal baseline. Voice + Send only;
           we removed the image-attach affordance because the user should
           never need to hand the director reference frames — the prompt
-          + conversation is enough. */}
-      <form onSubmit={submit} className="mt-3 flex items-center gap-2 border-t border-fg-tertiary/30 pt-3">
-        <input
+          + conversation is enough.
+
+          Hidden once the agent commits — the conversation is over and any
+          further turn would be appended into a closed scene. The drawer's
+          own footer takes over (Roll camera / Next beat). */}
+      {(beat.status === "pending" || beat.status === "questioning") ? (
+      <form onSubmit={submit} className="mt-3 flex items-end gap-2 border-t border-fg-tertiary/30 pt-3">
+        <textarea
+          ref={inputRef}
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            const el = e.currentTarget;
+            // Auto-grow: reset to natural height, then expand to fit
+            // content. CSS max-height clamps; overflow-y handles the
+            // scroll when the user keeps typing past the cap.
+            el.style.height = "auto";
+            el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+          }}
+          onKeyDown={(e) => {
+            // Enter submits, Shift+Enter inserts newline. Matches the
+            // editor agent panel's behavior — typing rhythm stays the
+            // same across the two surfaces.
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (draft.trim() && !inFlight) void submit(draft);
+            }
+          }}
           disabled={inFlight}
+          rows={1}
           placeholder={
             inFlight
               ? "On comms."
@@ -575,7 +663,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 ? "Listening…"
                 : "Direct, or speak it."
           }
-          className="h-9 flex-1 bg-transparent px-1 font-body text-sm leading-none text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
+          className="min-h-9 max-h-[132px] flex-1 resize-none overflow-y-auto bg-transparent px-1 py-2 font-body text-sm leading-snug text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
         />
         {speech.supported ? (
           <button
@@ -617,6 +705,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           Send
         </Button>
       </form>
+      ) : null}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { ProjectsRoute } from "@/routes/projects-route";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
+import { NarrationBar } from "@/components/narration/narration-bar";
 import { useLenis } from "@/lib/use-lenis";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
       {/* Mounted outside <Routes> so they survive route navigation. */}
       <CinematicCursor />
       <CommandMenuMount />
+      <NarrationBar />
     </AppErrorBoundary>
   );
 }

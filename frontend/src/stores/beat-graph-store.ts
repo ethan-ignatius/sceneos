@@ -4,6 +4,7 @@ import type { Manifest, Beat, Scene, AgentTurn, VideoType } from "@/types/manife
 import type { DecomposedClip, EditDecisions } from "@/types/api";
 import { buildInitialBeats } from "@/lib/beat-templates";
 import { uuid, nowISO } from "@/lib/utils";
+import { api } from "@/lib/api";
 
 /** Conversation entries the editor session keeps separately from the per-beat questionnaire. */
 export interface EditorTurn {
@@ -342,6 +343,14 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         // the projects list (so it doesn't appear twice), and capped.
         // Editor slice is also archived alongside the manifest so the
         // current project's mid-edit state survives a hop into another.
+        if (state.manifest) {
+          api.saveProject({
+            projectId: state.manifest.projectId,
+            manifest: state.manifest,
+            status: "archived",
+            editor: state.editor.decisions ? state.editor : undefined,
+          }).catch(() => {});
+        }
         const archivedHead = state.manifest
           ? [
               {
@@ -369,14 +378,25 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         });
       },
 
-      discardProject: (projectId) =>
-        set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) })),
+      discardProject: (projectId) => {
+        api.deleteProject(projectId).catch(() => {});
+        set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) }));
+      },
 
       reset: () => {
         const state = get();
         // Snapshot the active manifest into the archive before clearing.
         // No-op when there's nothing to archive (e.g., reset() called twice
         // in a row, or called on an already-empty session).
+        if (state.manifest) {
+          // Fire-and-forget: persist to MongoDB alongside local archive.
+          api.saveProject({
+            projectId: state.manifest.projectId,
+            manifest: state.manifest,
+            status: "archived",
+            editor: state.editor.decisions ? state.editor : undefined,
+          }).catch(() => {});
+        }
         const projects = state.manifest
           ? [
               {

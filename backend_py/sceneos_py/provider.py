@@ -126,14 +126,25 @@ async def dispatch_with_fallback(
     The caller MUST use the RETURNED provider name (not
     active_provider_name()) when encoding the jobId so /api/status routes
     to the right tier.
+
+    On total cascade failure (every tier raised), a RuntimeError is raised
+    whose message includes a per-tier breakdown — so the frontend's 502
+    detail surfaces "Higgsfield: 422 ... | Vertex: quota ... | cached: ..."
+    instead of an opaque single error.
     """
+    import logging
+    log = logging.getLogger(__name__)
+
     primary, primary_impl = get_provider()
+    cascade_errors: list[str] = []
     try:
         result = await primary_impl.generate(params)
         return primary, result, None, None
     except Exception as primary_exc:
+        log.warning("[provider] primary=%s failed: %s", primary, primary_exc)
+        cascade_errors.append(f"{primary}: {primary_exc}")
         if primary == "cached":
-            raise
+            raise RuntimeError(f"cached provider failed: {primary_exc}") from primary_exc
 
         # Sibling tier: try the OTHER real provider before falling back to
         # cached. Higgsfield ↔ Vertex; the rest go straight to cached.
@@ -150,13 +161,21 @@ async def dispatch_with_fallback(
             try:
                 result = await get_named_provider(sibling).generate(params)
                 return sibling, result, primary, str(primary_exc)
-            except Exception:
-                pass  # fall through to cached
+            except Exception as sib_exc:
+                log.warning("[provider] sibling=%s failed: %s", sibling, sib_exc)
+                cascade_errors.append(f"{sibling}: {sib_exc}")
 
+        # Cached fallback — must always succeed for live-demo safety.
+        # If even cached blows up, raise with the FULL cascade trace so
+        # the operator can see every tier's reason at once.
         try:
             result = await get_named_provider("cached").generate(params)
-        except Exception:
-            raise primary_exc
+        except Exception as cached_exc:
+            log.error("[provider] cached fallback failed: %s", cached_exc)
+            cascade_errors.append(f"cached: {cached_exc}")
+            raise RuntimeError(
+                "All providers failed: " + " | ".join(cascade_errors)
+            ) from primary_exc
         return "cached", result, primary, str(primary_exc)
 
 

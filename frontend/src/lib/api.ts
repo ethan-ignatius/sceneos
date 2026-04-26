@@ -12,6 +12,12 @@ import type {
   EditorTurnResponse,
   GenerateRequest,
   GenerateResponse,
+  NarrateBeatRequest,
+  NarrateBeatResponse,
+  NarrateMomentRequest,
+  NarrateMomentResponse,
+  NarrateSummaryRequest,
+  NarrateSummaryResponse,
   OrchestrateRequest,
   OrchestrateResponse,
   ReferenceGenerateRequest,
@@ -26,6 +32,15 @@ import type {
   CutOSImportResponse,
 } from "@/types/api";
 import type { Manifest } from "@/types/manifest";
+import {
+  isDemoMode,
+  getDemoFixtureId,
+  registerDemoJob,
+  getDemoJob,
+  resolveJobStage,
+  sleep,
+} from "./demo-mode";
+import { DEMO_FIXTURES } from "./demo-fixtures";
 
 /**
  * API origin. In dev, default is same-origin (empty) so requests go through
@@ -95,6 +110,166 @@ export function formatDirectorReachabilityError(err: unknown): string {
   return "Couldn't reach the director.";
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Demo helpers — keep all the canned-response logic in one place so the
+// real-mode code paths below stay readable. These run only when
+// isDemoMode() is true (set via VITE_DEMO_MODE=1 or `?demo=1` on URL).
+// ────────────────────────────────────────────────────────────────────────
+
+function demoFixture() {
+  return DEMO_FIXTURES[getDemoFixtureId()];
+}
+
+/**
+ * Map a manifest beatId to a fixture beat by index. The manifest's
+ * beat IDs are random UUIDs from buildInitialBeats(), so the demo
+ * fixture can't pre-know them — but the request payload always
+ * carries the beats in canvas order, so positional mapping is
+ * deterministic.
+ */
+function fixtureBeatForId(beatId: string, orderedBeatIds: string[]) {
+  const fx = demoFixture();
+  const idx = orderedBeatIds.indexOf(beatId);
+  // Wrap if the manifest has more beats than the fixture (e.g. demo=short3
+  // but the user picked Movie/8-beat). Better than throwing and breaking
+  // the demo flow on a wrong tier pick.
+  return fx.beats[idx >= 0 ? idx % fx.beats.length : 0];
+}
+
+async function demoDecompose(body: DecomposeRequest): Promise<DecomposeResponse> {
+  await sleep(1500);
+  const fx = demoFixture();
+  return {
+    clips: body.beats.map((b, i) => {
+      const fb = fx.beats[i % fx.beats.length];
+      return {
+        beatId: b.beatId,
+        sceneSummary: fb.refinedSummary,
+        refinedPrompt: fb.refinedPrompt,
+      };
+    }),
+    continuityBible: fx.continuityBible,
+  };
+}
+
+async function demoAgent(body: AgentRequest): Promise<AgentResponse> {
+  await sleep(800);
+  const orderedIds = body.manifest.beats.map((b) => b.beatId);
+  const fb = fixtureBeatForId(body.beatId, orderedIds);
+  const beat = body.manifest.beats.find((b) => b.beatId === body.beatId);
+  const turns = beat?.scenes[0]?.conversation.length ?? 0;
+  // First call (empty conversation) → seed question. Subsequent calls
+  // walk the user toward sufficient on the second user message.
+  if (!body.userMessage || turns === 0) {
+    return {
+      kind: "question",
+      question: fb.firstQuestion,
+      reasoning: "Establishing the emotional register for this beat.",
+      estimatedRemaining: 1,
+      suggestedAnswers: fb.suggestedAnswers,
+    };
+  }
+  // After one user reply, the agent flips to sufficient — the demo
+  // doesn't need a multi-turn back-and-forth eating stage time.
+  return {
+    kind: "sufficient",
+    refinedPrompt: fb.refinedPrompt,
+    sceneSummary: fb.refinedSummary,
+    suggestedDuration: fb.durationSeconds,
+  };
+}
+
+async function* demoAgentStream(
+  body: AgentRequest,
+): AsyncGenerator<AgentStreamEvent, void, unknown> {
+  yield { type: "ready" };
+  // Three thought tokens — feels like Gemini's stream cadence.
+  await sleep(400);
+  yield { type: "thought", chunk: "Reading the conversation so far…" };
+  await sleep(500);
+  yield { type: "thought", chunk: "Mapping the user's intent to the beat archetype…" };
+  await sleep(500);
+  yield { type: "thought", chunk: "Composing the next move…" };
+  await sleep(400);
+  const result = await demoAgent(body);
+  if (result.kind === "question") {
+    yield {
+      type: "result",
+      kind: "question",
+      question: result.question,
+      reasoning: result.reasoning,
+      estimatedRemaining: result.estimatedRemaining,
+      suggestedAnswers: result.suggestedAnswers,
+    };
+  } else {
+    yield {
+      type: "result",
+      kind: "sufficient",
+      refinedPrompt: result.refinedPrompt,
+      sceneSummary: result.sceneSummary,
+      suggestedDuration: result.suggestedDuration,
+    };
+  }
+  yield { type: "done" };
+}
+
+async function demoGenerate(body: GenerateRequest): Promise<GenerateResponse> {
+  await sleep(400);
+  // Pull the manifest from the store at dispatch time so we know the
+  // canvas order without relying on the request to carry it.
+  const { useBeatGraphStore } = await import("@/stores/beat-graph-store");
+  const m = useBeatGraphStore.getState().manifest;
+  const orderedIds = m?.beats.map((b) => b.beatId) ?? [body.beatId];
+  const fb = fixtureBeatForId(body.beatId, orderedIds);
+  const jobId = `demo-${body.beatId}-${Date.now()}`;
+  registerDemoJob(jobId, {
+    startedAtMs: Date.now(),
+    clipPublicId: fb.clipPublicId,
+    clipUrl: fb.clipUrl,
+    lastFrameUrl: fb.lastFrameUrl,
+  });
+  return {
+    jobId,
+    provider: "vertex",
+    pollAfterMs: 1000,
+  };
+}
+
+async function demoStatus(jobId: string): Promise<StatusResponse> {
+  await sleep(180);
+  const job = getDemoJob(jobId);
+  if (!job) {
+    return { jobId, status: "failed", error: "Unknown demo jobId — already cleared." };
+  }
+  const stage = resolveJobStage(job);
+  const base: StatusResponse = {
+    jobId,
+    status: stage.status,
+    stage: stage.stage,
+    pollAfterMs: 800,
+    provider: "vertex",
+    startedAt: new Date(job.startedAtMs).toISOString(),
+  };
+  if (stage.status === "succeeded") {
+    base.clipPublicId = job.clipPublicId;
+    base.clipUrl = job.clipUrl;
+    base.lastFrameUrl = job.lastFrameUrl;
+  }
+  return base;
+}
+
+async function demoStitchUrl(): Promise<StitchResponse> {
+  await sleep(1200);
+  const fx = demoFixture();
+  const totalDuration = fx.beats.reduce((s, b) => s + b.durationSeconds, 0);
+  return {
+    finalUrl: fx.masterCutUrl,
+    thumbnailUrl: fx.masterCutUrl.replace(/\.mp4$/, ".jpg"),
+    durationSeconds: totalDuration,
+    audioPublicId: fx.audioPublicId,
+  };
+}
+
 /**
  * Stream `/api/agent/stream` SSE events. Yields parsed event objects.
  *
@@ -108,6 +283,10 @@ async function* agentStream(
   body: AgentRequest,
   signal?: AbortSignal,
 ): AsyncGenerator<AgentStreamEvent, void, unknown> {
+  if (isDemoMode()) {
+    yield* demoAgentStream(body);
+    return;
+  }
   const res = await fetch(`${BASE_URL}/api/agent/stream`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -199,23 +378,33 @@ export const api = {
    * sees live thought tokens.
    */
   agent: (body: AgentRequest, signal?: AbortSignal) =>
-    request<AgentRequest, AgentResponse>("/api/agent", { method: "POST", body, signal }),
+    isDemoMode()
+      ? demoAgent(body)
+      : request<AgentRequest, AgentResponse>("/api/agent", { method: "POST", body, signal }),
 
   agentStream,
 
   decompose: (body: DecomposeRequest) =>
-    request<DecomposeRequest, DecomposeResponse>("/api/decompose", { method: "POST", body }),
+    isDemoMode()
+      ? demoDecompose(body)
+      : request<DecomposeRequest, DecomposeResponse>("/api/decompose", { method: "POST", body }),
 
   generate: (body: GenerateRequest) =>
-    request<GenerateRequest, GenerateResponse>("/api/generate", { method: "POST", body }),
+    isDemoMode()
+      ? demoGenerate(body)
+      : request<GenerateRequest, GenerateResponse>("/api/generate", { method: "POST", body }),
 
   status: (jobId: string) =>
-    request<undefined, StatusResponse>(`/api/status/${encodeURIComponent(jobId)}`, {
-      method: "GET",
-    }),
+    isDemoMode()
+      ? demoStatus(jobId)
+      : request<undefined, StatusResponse>(`/api/status/${encodeURIComponent(jobId)}`, {
+          method: "GET",
+        }),
 
   stitchUrl: (body: StitchRequest) =>
-    request<StitchRequest, StitchResponse>("/api/stitch/url", { method: "POST", body }),
+    isDemoMode()
+      ? demoStitchUrl()
+      : request<StitchRequest, StitchResponse>("/api/stitch/url", { method: "POST", body }),
 
   cutosImport: (body: CutOSImportRequest) =>
     request<CutOSImportRequest, CutOSImportResponse>("/api/cutos/import", {
@@ -278,7 +467,70 @@ export const api = {
       "/api/references/generate",
       { method: "POST", body },
     ),
+
+  // ── Narration (ElevenLabs narrator) ──────────────────────────────────────
+
+  narrateBeat: (body: NarrateBeatRequest) =>
+    request<NarrateBeatRequest, NarrateBeatResponse>("/api/narrate/beat", {
+      method: "POST",
+      body,
+    }),
+
+  narrateSummary: (body: NarrateSummaryRequest) =>
+    request<NarrateSummaryRequest, NarrateSummaryResponse>("/api/narrate/summary", {
+      method: "POST",
+      body,
+    }),
+
+  narrateMoment: (body: NarrateMomentRequest) =>
+    request<NarrateMomentRequest, NarrateMomentResponse>("/api/narrate/moment", {
+      method: "POST",
+      body,
+    }),
+
+  // ── MongoDB-backed project persistence ──────────────────────────────────
+
+  listProjects: () =>
+    request<undefined, MongoProject[]>("/api/projects", { method: "GET" }),
+
+  getProject: (projectId: string) =>
+    request<undefined, MongoProject>(`/api/projects/${encodeURIComponent(projectId)}`, {
+      method: "GET",
+    }),
+
+  saveProject: (body: SaveProjectRequest) =>
+    request<SaveProjectRequest, { ok: boolean; projectId: string }>("/api/projects", {
+      method: "POST",
+      body,
+    }),
+
+  deleteProject: (projectId: string) =>
+    fetch(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" })
+      .then(async (res) => {
+        if (!res.ok) throw new ApiError(res.status, "Delete failed");
+        return (await res.json()) as { ok: boolean; projectId: string };
+      }),
 };
+
+export interface MongoProject {
+  id: string;
+  masterPrompt: string;
+  videoType: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  thumbnailUrl: string | null;
+  manifest: Manifest | null;
+  editor: unknown;
+}
+
+export interface SaveProjectRequest {
+  projectId: string;
+  manifest: Manifest;
+  status?: string;
+  editor?: unknown;
+}
 
 export { ApiError };
 

@@ -42,6 +42,7 @@ import logging
 import time
 from typing import Any
 
+from . import db as _db
 from . import vertex_imagen
 from .continuity import merge_beat_facts_for_continuity
 from .motion_presets import pick_motion_preset
@@ -472,4 +473,39 @@ async def run_beat_pipeline(
         response["observability"]["seedSource"],
         timings_ms,
     )
+
+    # ── Persist character/location refs and seed frame to MongoDB ────────
+    _project_id = manifest.get("projectId")
+    if _project_id:
+        if _ref_is_real(character_ref):
+            _db.fire_and_forget(_db.insert_character_or_frame({
+                "project_id": _project_id,
+                "beat_id": beat_id,
+                "scene_id": scene_id,
+                "type": "character_ref",
+                "description": beat_facts.get("characterDescription", ""),
+                "image_url": character_ref.get("imageUrl"),
+                "provider": character_ref.get("provider", "imagen"),
+            }))
+        if _ref_is_real(location_ref):
+            _db.fire_and_forget(_db.insert_character_or_frame({
+                "project_id": _project_id,
+                "beat_id": beat_id,
+                "scene_id": scene_id,
+                "type": "location_ref",
+                "description": beat_facts.get("locationDescription", ""),
+                "image_url": location_ref.get("imageUrl"),
+                "provider": location_ref.get("provider", "imagen"),
+            }))
+        if seed_image_url and chain:
+            _db.fire_and_forget(_db.insert_character_or_frame({
+                "project_id": _project_id,
+                "beat_id": beat_id,
+                "scene_id": scene_id,
+                "type": "last_frame",
+                "description": "Frame chaining seed from previous beat",
+                "image_url": seed_image_url,
+                "provider": "frame_chain",
+            }))
+
     return response

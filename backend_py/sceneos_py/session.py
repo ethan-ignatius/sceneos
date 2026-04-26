@@ -51,6 +51,45 @@ logger = logging.getLogger(__name__)
 SessionMode = Literal["demo", "normal"]
 
 
+async def _generate_keyframes_safe(
+    *,
+    project_id: str,
+    character_description: str | None,
+    location_description: str | None,
+    aspect_ratio: str = "16:9",
+) -> dict:
+    """Resilient wrapper around vertex_imagen.generate_project_keyframes.
+
+    Two guard rails:
+      1. If GENERATION_PROVIDER=higgsfield, skip Imagen entirely. Higgsfield
+         owns its own image surface (higgsfield_soul) and pulling in Imagen
+         is just an extra dep that can quota-exhaust without warning. The
+         orchestrator's per-beat path falls through to higgsfield_soul refs
+         cleanly when keyframes are empty.
+      2. If Imagen fails (quota, safety, network), log + return empty
+         keyframes instead of bubbling up. The session keeps booting and
+         orchestrator falls through to no-seed Veo, which is degraded but
+         not broken.
+    """
+    from .provider import active_provider_name
+    if active_provider_name() == "higgsfield":
+        return {"character": [], "location": []}
+    from . import vertex_imagen
+    try:
+        return await vertex_imagen.generate_project_keyframes(
+            project_id=project_id,
+            character_description=character_description,
+            location_description=location_description,
+            aspect_ratio=aspect_ratio,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[session] keyframe gen failed (project=%s); continuing without refs: %s",
+            project_id, exc,
+        )
+        return {"character": [], "location": []}
+
+
 # Hard ceiling on the speculative-kickoff phase of /api/session/start. Demo
 # mode fans out 7 video submissions in parallel; in real mode each
 # submission is a Veo predictLongRunning call (~3-10s each, so ~10s aggregate
@@ -406,11 +445,10 @@ async def kickoff_speculative_pipelines(
             results[beat["beatId"]] = job
         return results, project_refs, project_keyframes
 
-    # Real mode: keyframes first, then beats. Multi-keyframe gen runs the
-    # 6 Imagen calls (3 character + 3 location) in parallel, typically
+    # Real mode: keyframes first, then beats. Multi-keyframe gen runs 6
+    # Imagen calls (3 character + 3 location) in parallel, typically
     # ~10-15s end-to-end. Beats then fan out concurrently.
-    from . import vertex_imagen
-    project_keyframes = await vertex_imagen.generate_project_keyframes(
+    project_keyframes = await _generate_keyframes_safe(
         project_id=project_id,
         character_description=character_desc,
         location_description=location_desc,
@@ -702,8 +740,7 @@ async def ensure_project_keyframes(
             return None
         if mock_mode():
             return _mock_project_keyframes(character_description, location_description)
-        from . import vertex_imagen
-        keyframes = await vertex_imagen.generate_project_keyframes(
+        keyframes = await _generate_keyframes_safe(
             project_id=project_id,
             character_description=character_description,
             location_description=location_description,
@@ -730,8 +767,7 @@ async def ensure_project_keyframes(
     if mock_mode():
         keyframes = _mock_project_keyframes(character_description, location_description)
     else:
-        from . import vertex_imagen
-        keyframes = await vertex_imagen.generate_project_keyframes(
+        keyframes = await _generate_keyframes_safe(
             project_id=project_id,
             character_description=character_description,
             location_description=location_description,

@@ -48,50 +48,28 @@ const FRAG = /* glsl */ `
 
   uniform float time;
   uniform float fresnelOpacity;
-  uniform float scanlineSize;
   uniform float fresnelAmount;
-  uniform float signalSpeed;
   uniform float hologramBrightness;
   uniform float hologramOpacity;
   uniform vec3 hologramColor;
 
-  float flicker(float amt, float t) {
-    return clamp(fract(cos(t) * 43758.5453123), amt, 1.0);
-  }
-  float random(in float a, in float b) {
-    return fract((cos(dot(vec2(a, b), vec2(12.9898, 78.233))) * 43758.5453));
-  }
-
   void main() {
-    vec2 vCoords = vPos.xy / vPos.w;
-    vCoords = vCoords * 0.5 + 0.5;
-    vec2 myUV = fract(vCoords);
-
+    // Scanline math + per-frame random flicker were removed — on a 3D
+    // planet they read as moving bright bars across the body (CRT
+    // artifact register), not as a holographic "active" signal. The
+    // fresnel rim alone carries the active-state intent cleanly: a
+    // soft ember halo that picks out the silhouette without strobing.
     vec4 holo = vec4(hologramColor, mix(hologramBrightness, vUv.y, 0.5));
-
-    // Scanlines
-    float scanlines = 10.0;
-    scanlines += 20.0 * sin(time * signalSpeed * 20.8 - myUV.y * 60.0 * scanlineSize);
-    scanlines *= smoothstep(1.3 * cos(time * signalSpeed + myUV.y * scanlineSize), 0.78, 0.9);
-    scanlines *= max(0.25, sin(time * signalSpeed) * 1.0);
-
-    // Color noise
-    float r = random(vUv.x, vUv.y);
-    float b = random(vUv.y * 0.9, vUv.y * 0.2);
-
-    holo += vec4(r * scanlines, b * scanlines, r, 1.0) / 84.0;
     vec4 scanlineMix = mix(vec4(0.0), holo, holo.a);
 
-    // Fresnel
+    // Fresnel rim — the only "active" signal we keep. View-direction
+    // dot product gates the glow to the silhouette edge so the body
+    // stays readable through the overlay.
     vec3 viewDirectionW = normalize(cameraPosition - vPositionW);
     float fresnelEffect = dot(viewDirectionW, vNormalW) * (1.6 - fresnelOpacity / 2.0);
     fresnelEffect = clamp(fresnelAmount - fresnelEffect, 0.0, fresnelOpacity);
 
-    // Blink-on-fresnel-only
-    float blinkValue = 0.6 - signalSpeed;
-    float blink = flicker(blinkValue, time * signalSpeed * 0.02);
-
-    vec3 finalColor = scanlineMix.rgb + fresnelEffect * blink;
+    vec3 finalColor = scanlineMix.rgb + fresnelEffect;
     gl_FragColor = vec4(finalColor, hologramOpacity);
   }
 `;

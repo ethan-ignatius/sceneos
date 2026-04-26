@@ -1,6 +1,6 @@
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Clapperboard, ChevronRight } from "lucide-react";
+import { X, Clapperboard, ChevronRight, Volume2 } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
 import { nowISO, sleep } from "@/lib/utils";
+import { useNarration, useNarrationStore } from "@/lib/use-narration";
 import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 const fadeUp = {
@@ -44,6 +45,8 @@ export function NodeDetailDrawer() {
   const updateBeat = useBeatGraphStore((s) => s.updateBeat);
   const updateScene = useBeatGraphStore((s) => s.updateScene);
   const appendAgentTurn = useBeatGraphStore((s) => s.appendAgentTurn);
+
+  const narration = useNarration();
 
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
@@ -138,6 +141,14 @@ export function NodeDetailDrawer() {
             lastFrameUrl: status.lastFrameUrl,
           });
           updateBeat(beatId, { status: "preview" });
+          // Co-director reacts to the finished render
+          const mNow = useBeatGraphStore.getState().manifest;
+          const bNow = mNow?.beats.find((b) => b.beatId === beatId);
+          if (mNow && bNow) {
+            useNarrationStore.getState().playMoment("beat_complete", {
+              beat: bNow, manifest: mNow, masterPrompt: mNow.masterPrompt,
+            }, beatId);
+          }
           return;
         }
         if (status.status === "failed") {
@@ -337,12 +348,28 @@ export function NodeDetailDrawer() {
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
-      const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+      // Prefer the backend's structured detail.error/details over the
+      // generic ApiError.message ("API /api/orchestrate/... failed: 502").
+      // The 502 detail body carries the cascade's real failure reason —
+      // surfacing it lets the user see "Imagen quota exhausted" etc.
+      // instead of an opaque 502.
+      let msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+      if (err instanceof ApiError && err.details && typeof err.details === "object") {
+        const d = err.details as { detail?: { error?: string; details?: string } };
+        const inner = d.detail?.error;
+        const detail = d.detail?.details;
+        if (inner) msg = detail ? `${inner} — ${detail}` : inner;
+      }
       if (isContentPolicyError(msg)) {
         handleContentPolicyRecovery(beat.beatId, scene.sceneId);
       } else {
         setGenError(msg);
         updateBeat(beat.beatId, { status: "ready-to-generate" });
+        // Auto-roll guard stays set — re-firing in a tight loop on the
+        // same error would just hammer the backend. The user reclaims
+        // the retry by clicking Roll camera (manual intent) OR by closing
+        // and re-opening the drawer (the ref resets on remount and the
+        // ready-to-generate effect auto-fires "Composing the camera.").
       }
     }
   }, [beat, manifest, updateBeat, updateScene, pollUntilDone, handleContentPolicyRecovery]);
@@ -385,6 +412,51 @@ export function NodeDetailDrawer() {
     // ever want this effect to re-attach once per (beatId, jobId) pair.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [beatId, sceneId, persistedJobId, isGeneratingStatus]);
+
+  // Auto-roll-camera — when the agent commits (status flips to
+  // "ready-to-generate" with a refinedPrompt set), automatically fire
+  // handleGenerate() instead of waiting for the user to click "Roll
+  // camera." The manual button stays as the override (e.g. after a
+  // regenerate). Fires once per (beatId, sceneId) so a re-mount with
+  // the same status doesn't re-dispatch.
+  const autoRolledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!beat || beat.status !== "ready-to-generate") return;
+    if (!beat.scenes[0]?.refinedPrompt) return;
+    const key = `${beat.beatId}::${beat.scenes[0].sceneId}`;
+    if (autoRolledRef.current === key) return;
+    autoRolledRef.current = key;
+    void handleGenerate();
+  }, [beat, handleGenerate]);
+
+  // Auto-advance — when the beat is approved (auto-approve in
+  // ClipPreview just fired), wait a beat (1.6s — long enough for the
+  // user to register the approval) then advance to the next pending
+  // beat OR open the stitch tray on the last one. Manual "Next beat"
+  // button still exists as an override during the wait window.
+  const autoAdvancedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!beat || beat.status !== "approved") return;
+    const key = beat.beatId;
+    if (autoAdvancedRef.current === key) return;
+    autoAdvancedRef.current = key;
+    const t = window.setTimeout(() => {
+      handleGoNext();
+    }, 1600);
+    return () => window.clearTimeout(t);
+  }, [beat, handleGoNext]);
+
+  // Fire-and-forget beat narration when the drawer opens for a new beat.
+  const narrationBeatId = beat?.beatId;
+  useEffect(() => {
+    if (!narrationBeatId || !manifest) return;
+    narration.stop();
+    narration.playBeatNarration(narrationBeatId, manifest);
+    return () => {
+      narration.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narrationBeatId]);
 
   if (!beat) return null;
 
@@ -455,6 +527,47 @@ export function NodeDetailDrawer() {
             <h2 className="text-balance mt-1.5 font-body text-body-lg font-medium leading-[1.15] text-fg-primary">
               {beat.beatName}
             </h2>
+            <AnimatePresence>
+              {narration.status === "playing" && narration.currentBeatId === beat.beatId && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.3, ease: EASE.outQuart }}
+                  className="mt-2 flex items-center gap-2"
+                >
+                  <Volume2 size={14} className="shrink-0 text-brand-ember" />
+                  <div className="flex items-center gap-[3px]">
+                    {[0, 1, 2, 3].map((i) => (
+                      <motion.span
+                        key={i}
+                        className="inline-block w-[2px] rounded-full bg-brand-ember"
+                        animate={{ height: [3, 10, 3] }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          delay: i * 0.15,
+                          ease: "easeInOut",
+                        }}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {narration.currentText && narration.currentBeatId === beat.beatId && (narration.status === "playing" || narration.status === "done") && (
+                <motion.p
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 0.7, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.4, ease: EASE.outQuart }}
+                  className="mt-1.5 font-body text-body-sm italic leading-snug text-fg-secondary"
+                >
+                  {narration.currentText}
+                </motion.p>
+              )}
+            </AnimatePresence>
           </div>
           <button
             onClick={() => setActiveBeat(null)}
@@ -618,6 +731,11 @@ export function NodeDetailDrawer() {
                         timestamp: nowISO(),
                       });
                       updateBeat(beat.beatId, { status: "ready-to-generate" });
+                      if (manifest) {
+                        useNarrationStore.getState().playMoment("beat_locked", {
+                          beat, manifest, masterPrompt: manifest.masterPrompt,
+                        }, beat.beatId);
+                      }
                       return;
                     }
                     if (ev.type === "error") {
