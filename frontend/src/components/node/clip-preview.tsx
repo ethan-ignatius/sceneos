@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useEffect, useRef } from "react";
-import { Check, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,21 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   const regenerateScene = useBeatGraphStore((s) => s.regenerateScene);
   const isApproved = beat.status === "approved" || scene.approved;
 
+  // Auto-approve on preview — the user shouldn't have to click "Approve
+  // scene" when the clip lands. Regenerate stays as the override. Fires
+  // once per (beatId, sceneId, isApproved=false) transition; a per-mount
+  // ref guard prevents double-fire on remount.
+  const autoApprovedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isApproved) return;
+    if (beat.status !== "preview") return;
+    const key = `${beat.beatId}::${scene.sceneId}`;
+    if (autoApprovedRef.current === key) return;
+    autoApprovedRef.current = key;
+    approveScene(beat.beatId, scene.sceneId);
+    playApproveChime();
+  }, [isApproved, beat.status, beat.beatId, scene.sceneId, approveScene]);
+
   // Mood-graded Cloudinary URL when a publicId exists. The real backend
   // always emits a publicId on success — null = an actual no-clip state,
   // which the empty render below handles.
@@ -51,12 +66,6 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       </div>
     );
   }
-
-  const handleApprove = () => {
-    if (isApproved) return;
-    approveScene(beat.beatId, scene.sceneId);
-    playApproveChime();
-  };
 
   const handleRegenerate = () => {
     regenerateScene(beat.beatId, scene.sceneId);
@@ -108,28 +117,19 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
         </p>
       </motion.div>
 
+      {/* Approve button removed — auto-approve fires the moment the clip
+          lands. Regenerate is the only manual override the user needs. */}
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="mt-auto flex gap-2 border-t border-fg-tertiary/30 pt-4"
+        className="mt-auto flex justify-end border-t border-fg-tertiary/30 pt-4"
       >
-        <Button
-          variant="primary"
-          size="lg"
-          className="flex-1"
-          onClick={handleApprove}
-          disabled={isApproved}
-        >
-          <Check size={16} strokeWidth={1.5} aria-hidden="true" />
-          {isApproved ? "Approved" : "Approve scene"}
-        </Button>
         <Button
           variant="ghost"
           size="lg"
-          className="btn--edge-underline basis-1/4"
+          className="btn--edge-underline"
           onClick={handleRegenerate}
-          disabled={isApproved}
-          title="Regenerate"
+          title="Regenerate this beat"
         >
           <RotateCcw size={16} strokeWidth={1.5} aria-hidden="true" />
           Regenerate

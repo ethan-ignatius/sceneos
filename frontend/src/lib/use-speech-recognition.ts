@@ -34,8 +34,10 @@ interface UseSpeechRecognitionOptions {
    * Silence threshold in MILLISECONDS. After this much no-new-result
    * silence we stop listening and fire `onSettle(transcript)`. The
    * browser's native onend fires the moment the user pauses for ~0.5s
-   * — too eager. With a 3000ms grace the user can think mid-sentence.
-   * Default 3000.
+   * — too eager. 2000ms is the sweet spot — long enough to think
+   * mid-sentence, short enough that the auto-submit doesn't feel laggy
+   * after the user has actually finished talking.
+   * Default 2000.
    */
   silenceMs?: number;
   /**
@@ -47,7 +49,7 @@ interface UseSpeechRecognitionOptions {
 }
 
 export function useSpeechRecognition(opts: UseSpeechRecognitionOptions = {}) {
-  const { lang = "en-US", silenceMs = 3000, onSettle } = opts;
+  const { lang = "en-US", silenceMs = 2000, onSettle } = opts;
   const recRef = useRef<SpeechRecognitionInstance | null>(null);
   const silenceTimerRef = useRef<number | null>(null);
   const transcriptRef = useRef<string>("");

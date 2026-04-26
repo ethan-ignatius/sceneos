@@ -72,7 +72,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const submitVoiceRef = useRef<((text: string) => void) | null>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
-    silenceMs: 3000,
+    silenceMs: 2000,
     onSettle: (text) => submitVoiceRef.current?.(text),
   });
   // Auto-start once when the engine reports support AND the agent is

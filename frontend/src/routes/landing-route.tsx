@@ -80,7 +80,7 @@ export function LandingRoute() {
   const submitRef = useRef<((text: string) => void) | null>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
-    silenceMs: 3000,
+    silenceMs: 2000,
     onSettle: (text) => submitRef.current?.(text),
   });
   const autoStartedMicRef = useRef(false);
