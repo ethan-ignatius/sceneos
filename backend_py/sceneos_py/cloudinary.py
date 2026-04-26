@@ -160,10 +160,17 @@ def _static_caption_overlay(text: str) -> str | None:
     spans the whole clip's duration). For the timeline-anchored editor path
     see `_caption_overlay(text, start_at, duration, position)` further down.
 
-    Visual: lower-third position, warm cream text with a soft black stroke
-    for legibility on any clip. Font: Arial — ships on every Cloudinary
-    cloud out of the box. Custom fonts require uploading a TTF first which
-    we don't want as a hackathon dependency.
+    Visual: lower-third position, pure white text with a thin black stroke.
+    Font: Arial bold at 52pt, ships on every Cloudinary cloud (no TTF upload).
+
+    Caption legibility rules learned the hard way:
+      - WHITE (`co_white`), not cream. Cream + a thick stroke produces a
+        gray fringe on the letter edges that reads as muddy on dark frames.
+      - Outline 2px (`e_outline:2:000000`), not 4px. A 4px stroke at 60pt
+        bleeds adjacent letters into each other — looks like the text is
+        overlapping itself. 2px is enough for a sea of sea-spray + storm.
+      - Font 52pt, not 60pt. 60pt at 1080p is too dense for the lower-third
+        and forces line-wrap on dialogue captions; 52pt fits tight cleanly.
 
     URL-syntax note (load-bearing): Cloudinary's text-overlay positioning
     (`g_<gravity>`, `x_`, `y_`) MUST live in the `fl_layer_apply` segment,
@@ -180,8 +187,8 @@ def _static_caption_overlay(text: str) -> str | None:
     # Segment 1 — declare the text layer (font, color, stroke).
     # Segment 2 — apply the layer with positioning (gravity + offset).
     return (
-        f"l_text:Arial_60_bold:{encoded},co_rgb:F4F1E8,e_outline:4:000000"
-        f"/fl_layer_apply,g_south,y_120"
+        f"l_text:Arial_52_bold:{encoded},co_white,e_outline:2:000000"
+        f"/fl_layer_apply,g_south,y_140"
     )
 
 
@@ -292,10 +299,10 @@ def _caption_overlay(text: str, start_at: float, duration: float, position: str 
     A single caption overlay timed to a specific window in the spliced timeline.
 
     `g_<position>` controls anchor (south = bottom-center, north = top-center).
-    `y_120` lifts off the absolute edge so the text sits in the lower-third
-    safe zone (broadcast convention). Arial is one of Cloudinary's built-in
-    fonts — no TTF upload required, ships on every cloud. e_outline gives a
-    4px black stroke so the text is legible over any frame.
+    `y_140` lifts off the absolute edge so the text sits in the lower-third
+    safe zone (broadcast convention). Arial bold 48pt with a 2px black
+    outline on pure white reads cleanly on every frame without smushing
+    adjacent letters together (which is what 4px did at 56pt).
 
     URL-syntax note (load-bearing): Cloudinary's text-overlay positioning
     (`g_*`, `x_`, `y_`) MUST be in the `fl_layer_apply` segment alongside
@@ -304,8 +311,8 @@ def _caption_overlay(text: str, start_at: float, duration: float, position: str 
     """
     safe = _escape_caption(text)
     return (
-        f"l_text:Arial_56_bold:{safe},co_rgb:F4F1E8,e_outline:4:000000"
-        f"/fl_layer_apply,g_{position},y_120,"
+        f"l_text:Arial_48_bold:{safe},co_white,e_outline:2:000000"
+        f"/fl_layer_apply,g_{position},y_140,"
         f"so_{round(start_at, 2)},du_{round(duration, 2)}"
     )
 
@@ -497,23 +504,65 @@ def sign_upload(folder: str = "sceneos/user-media") -> dict:
 
 
 async def upload_video_from_url(remote_url: str, public_id: str) -> dict:
+    """Upload a video to Cloudinary by URL or data URI.
+
+    The data-URI path is used by `vertex_veo._persist` to forward Veo's
+    base64 response. A 1080p / 8s Veo 3.1 clip after base64 inflation can
+    exceed 25 MB — that's a multi-second TLS upload, and 7 in parallel
+    against a single Cloudinary endpoint will sometimes hit transient
+    connection-reset / EOF errors. We:
+      - Bump the timeout to 300s so a slow upload doesn't get cut.
+      - Retry a small number of times on transport errors and 5xx, with
+        backoff. 4xx (bad request, auth, public_id collision) is NOT
+        retried — those are deterministic and won't get better.
+    """
     cloud, api_key, api_secret = _cloudinary_creds()
     if not api_key or not api_secret or not cloud:
         raise RuntimeError("missing Cloudinary credentials (set CLOUDINARY_URL or the three explicit vars)")
     url = f"https://api.cloudinary.com/v1_1/{cloud}/video/upload"
-    async with httpx.AsyncClient(timeout=120) as client:
-        res = await client.post(
-            url,
-            data={"file": remote_url, "public_id": public_id, "overwrite": "true"},
-            auth=(api_key, api_secret),
-        )
-        res.raise_for_status()
-    body = res.json()
-    return {
-        "publicId": body["public_id"],
-        "url": body.get("secure_url"),
-        "durationSeconds": body.get("duration", 0),
-    }
+
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                res = await client.post(
+                    url,
+                    data={"file": remote_url, "public_id": public_id, "overwrite": "true"},
+                    auth=(api_key, api_secret),
+                )
+            if res.status_code >= 500:
+                last_exc = RuntimeError(
+                    f"Cloudinary {res.status_code} (attempt {attempt + 1}/3): {res.text[:300]}"
+                )
+                await _httpx_backoff(attempt)
+                continue
+            res.raise_for_status()
+            body = res.json()
+            return {
+                "publicId": body["public_id"],
+                "url": body.get("secure_url"),
+                "durationSeconds": body.get("duration", 0),
+            }
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            # Catches the full transient family: RemoteProtocolError, ReadError,
+            # WriteError, ConnectError, PoolTimeout, ReadTimeout, WriteTimeout,
+            # ConnectTimeout. We've actually observed WriteTimeout in the
+            # 7-clip parallel rebake — that's what surfaces as `persist
+            # error: WriteTimeout('')` in the Veo job log.
+            last_exc = exc
+            await _httpx_backoff(attempt)
+            continue
+    raise RuntimeError(
+        f"Cloudinary video upload exhausted retries (public_id={public_id}): {last_exc!r}"
+    )
+
+
+async def _httpx_backoff(attempt: int) -> None:
+    """Exponential backoff with a small jitter — 1.5s, 3s, 6s."""
+    import asyncio as _asyncio
+    import random as _random
+    delay = 1.5 * (2 ** attempt) + _random.uniform(0, 0.5)
+    await _asyncio.sleep(delay)
 
 
 async def upload_audio_from_bytes(content: bytes, public_id: str, mime: str = "audio/mpeg") -> dict:

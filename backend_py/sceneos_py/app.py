@@ -883,7 +883,7 @@ def cached_lighthouse():
         "durationSeconds": round(total_duration, 1),
         "beats": beats_payload,
         "bake": {
-            "videoModel": "veo-3.0-generate-001",
+            "videoModel": "veo-3.1-generate-001",
             "musicModel": "lyria-002",
             "resolution": "1920x1080",
             "captions": True,

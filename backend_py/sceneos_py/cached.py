@@ -26,85 +26,103 @@ class _Clip:
         self.duration_seconds = duration_seconds
 
 
-# ── lighthouse-ship demo (baked 2026-04-25, project 8dbb956c76a7) ──────────
-# 7 beats, all Veo 3 1080p with native dialogue + ambient + SFX. Total runtime
-# 48.08 seconds. Music bed: sceneos/8dbb956c76a7/audio/music (Lyria 2 piano +
-# strings). Stitched URL: see STATE.md.
+# ── lighthouse-ship demo (baked 2026-04-25, project lighthouse31) ──────────
+# 7 beats, ALL Veo 3.1 GA (`veo-3.1-generate-001`, released Nov 17 2025) at
+# 1080p with native synced audio (dialogue + ambient + SFX). Same shared
+# Imagen 3 character + location refs reused as the I2V seed for every beat
+# — that's where character consistency comes from (the keeper's face stays
+# the SAME person across all 7 beats, not seven similar people, which was
+# the single biggest "no flow" complaint about the Veo 3 bake).
+#
+# Total runtime: 48 seconds. Music bed reused from the prior bake (Lyria 2
+# piano + strings, ducked to -28 dB so dialogue stays primary).
 _LIGHTHOUSE_CLOUD = "https://res.cloudinary.com/dghelx0al/video/upload"
 
 LIGHTHOUSE_SHIP_CLIPS: dict[str, _Clip] = {
     "story.hook": _Clip(
-        "sceneos/8dbb956c76a7/beat-1/beat-1-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-1/beat-1-scene-1.mp4",
-        6,
+        "sceneos/lighthouse31/beat-1/beat-1-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-1/beat-1-scene-1.mp4",
+        5,
     ),
     "story.exposition": _Clip(
-        "sceneos/8dbb956c76a7/beat-2/beat-2-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-2/beat-2-scene-1.mp4",
-        6,
+        "sceneos/lighthouse31/beat-2/beat-2-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-2/beat-2-scene-1.mp4",
+        8,
     ),
     "story.inciting": _Clip(
-        "sceneos/8dbb956c76a7/beat-3/beat-3-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-3/beat-3-scene-1.mp4",
+        "sceneos/lighthouse31/beat-3/beat-3-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-3/beat-3-scene-1.mp4",
         6,
     ),
     "story.rising": _Clip(
-        "sceneos/8dbb956c76a7/beat-4/beat-4-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-4/beat-4-scene-1.mp4",
-        8,
+        "sceneos/lighthouse31/beat-4/beat-4-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-4/beat-4-scene-1.mp4",
+        10,
     ),
     "story.climax": _Clip(
-        "sceneos/8dbb956c76a7/beat-5/beat-5-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-5/beat-5-scene-1.mp4",
+        "sceneos/lighthouse31/beat-5/beat-5-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-5/beat-5-scene-1.mp4",
         8,
     ),
     "story.falling": _Clip(
-        "sceneos/8dbb956c76a7/beat-6/beat-6-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-6/beat-6-scene-1.mp4",
+        "sceneos/lighthouse31/beat-6/beat-6-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-6/beat-6-scene-1.mp4",
         6,
     ),
     "story.resolution": _Clip(
-        "sceneos/8dbb956c76a7/beat-7/beat-7-scene-1",
-        f"{_LIGHTHOUSE_CLOUD}/sceneos/8dbb956c76a7/beat-7/beat-7-scene-1.mp4",
-        6,
+        "sceneos/lighthouse31/beat-7/beat-7-scene-1",
+        f"{_LIGHTHOUSE_CLOUD}/sceneos/lighthouse31/beat-7/beat-7-scene-1.mp4",
+        5,
     ),
 }
 
+# Music bed reused from the original bake. The Lyria 2 piano-and-strings
+# piece works regardless of which Veo generation produced the visuals.
 LIGHTHOUSE_SHIP_AUDIO_PUBLIC_ID = "sceneos/8dbb956c76a7/audio/music"
 
 # Pre-built stitched URL — captions + music ducked at -28dB.
 #
-# URL-syntax note: text-overlay positioning (`g_south`, `y_120`) lives in the
-# `fl_layer_apply` segment, NOT the `l_text:` opener. Inline positioning
-# silently centers the caption mid-frame — that's the bug the first lighthouse
-# bake shipped with (text covered the keeper's chest the whole time).
+# URL-syntax notes (both load-bearing):
+#   1. Text-overlay positioning (`g_south`, `y_140`) lives in the
+#      `fl_layer_apply` segment, NOT the `l_text:` opener. Inline positioning
+#      silently centers the caption mid-frame — that bug shipped with the
+#      first lighthouse bake (text covering the keeper's chest for 6s).
+#   2. Caption styling: WHITE (`co_white`), not cream + 4px-stroke. Cream
+#      with a heavy stroke renders as muddy gray on dark frames AND bleeds
+#      adjacent letters into each other (what users described as "letters
+#      overlap and look gray"). Pure white + 2px stroke at 52pt is sharp.
+#   3. `fl_splice` lives in the `l_video:` opener segment, NOT the
+#      `fl_layer_apply` closer — otherwise Cloudinary silently drops every
+#      overlay clip and renders only the base, producing a 6s "cut" instead
+#      of a 48s one. Already fixed and pinned by tests; included here as a
+#      reminder when copy-pasting future bakes.
 LIGHTHOUSE_SHIP_FINAL_URL = (
     f"{_LIGHTHOUSE_CLOUD}/c_fill,w_1920,h_1080"
-    "/l_text:Arial_60_bold:Cape%20Disappointment%20Light.%20November%201957.,"
-    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
-    "/l_video:sceneos:8dbb956c76a7:beat-2:beat-2-scene-1,fl_splice"
+    "/l_text:Arial_52_bold:Cape%20Disappointment%20Light.%20November%201957.,"
+    "co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140"
+    "/l_video:sceneos:lighthouse31:beat-2:beat-2-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080/fl_layer_apply"
-    "/l_video:sceneos:8dbb956c76a7:beat-3:beat-3-scene-1,fl_splice"
+    "/l_video:sceneos:lighthouse31:beat-3:beat-3-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080"
-    "/l_text:Arial_60_bold:23%3A42%20hours.,"
-    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
+    "/l_text:Arial_52_bold:23%3A42%20hours.,"
+    "co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140"
     "/fl_layer_apply"
-    "/l_video:sceneos:8dbb956c76a7:beat-4:beat-4-scene-1,fl_splice"
+    "/l_video:sceneos:lighthouse31:beat-4:beat-4-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080/fl_layer_apply"
-    "/l_video:sceneos:8dbb956c76a7:beat-5:beat-5-scene-1,fl_splice"
+    "/l_video:sceneos:lighthouse31:beat-5:beat-5-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080"
-    "/l_text:Arial_60_bold:The%20Astoria.%20Lost%3A%20October%2031%20%201922.,"
-    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
+    "/l_text:Arial_52_bold:The%20Astoria.%20Lost%3A%20October%2031%20%201922.,"
+    "co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140"
     "/fl_layer_apply"
-    "/l_video:sceneos:8dbb956c76a7:beat-6:beat-6-scene-1,fl_splice"
+    "/l_video:sceneos:lighthouse31:beat-6:beat-6-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080/fl_layer_apply"
-    "/l_video:sceneos:8dbb956c76a7:beat-7:beat-7-scene-1,fl_splice"
+    "/l_video:sceneos:lighthouse31:beat-7:beat-7-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080"
-    "/l_text:Arial_60_bold:From%20Logbook%2041.,"
-    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
+    "/l_text:Arial_52_bold:From%20Logbook%2041.,"
+    "co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140"
     "/fl_layer_apply"
     "/l_audio:sceneos:8dbb956c76a7:audio:music,e_volume:-28/fl_layer_apply"
-    "/sceneos/8dbb956c76a7/beat-1/beat-1-scene-1.mp4"
+    "/sceneos/lighthouse31/beat-1/beat-1-scene-1.mp4"
 )
 
 

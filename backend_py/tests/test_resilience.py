@@ -9,15 +9,20 @@ Tests for the round-4 resilience + real-mode-boot work:
   provider's submission raises, and surfaces the failure reason.
 * `GET /api/session/{projectId}` returns the cached manifest +
   speculative jobs for a known projectId, 404 for an unknown one.
+* `cloudinary.upload_video_from_url` retries WriteTimeout/ReadTimeout
+  (the actual failure mode of 7-way parallel data-URI uploads at
+  1080p Veo 3.1 size) and gives up cleanly on a 4xx.
 """
 from __future__ import annotations
 
 import asyncio
 import os
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from sceneos_py import cloudinary as cloudinary_mod
 from sceneos_py import config as config_mod
 from sceneos_py import provider as provider_mod
 from sceneos_py.app import app
@@ -165,3 +170,137 @@ def test_session_get_unknown_project_returns_404(monkeypatch):
     client = TestClient(app)
     res = client.get("/api/session/does-not-exist")
     assert res.status_code == 404
+
+
+# ---------- upload retry tests ----------------------------------------------
+#
+# Pin the new transport-error retry behavior in `cloudinary.upload_video_from_url`.
+# This was added because the 7-way parallel re-bake of the lighthouse demo
+# (Veo 3.1, 1080p, ~25 MB base64 each) reliably hit `httpx.WriteTimeout('')`
+# uploading data URIs to Cloudinary. The fix retries on the full transport-
+# error family with backoff, but still hard-fails fast on a 4xx so we never
+# waste minutes retrying a permanently-bad public_id or auth.
+
+class _FakeResponse:
+    def __init__(self, status: int = 200, body: dict | None = None, text: str = ""):
+        self.status_code = status
+        self._body = body or {
+            "public_id": "sceneos/demo/clip",
+            "secure_url": "https://res.cloudinary.com/demo/video/upload/clip.mp4",
+            "duration": 6,
+        }
+        self.text = text or "ok"
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError(f"{self.status_code}", request=None, response=self)  # type: ignore[arg-type]
+
+
+def _patch_cloudinary_creds(monkeypatch):
+    monkeypatch.setattr(
+        cloudinary_mod,
+        "_cloudinary_creds",
+        lambda: ("cloud", "key", "secret"),
+    )
+    # Skip real backoff so the test runs in milliseconds, not seconds.
+    monkeypatch.setattr(cloudinary_mod, "_httpx_backoff", lambda _attempt: asyncio.sleep(0))
+
+
+def test_upload_video_retries_on_write_timeout_then_succeeds(monkeypatch):
+    """The exact production failure mode: WriteTimeout on attempt 1, success on
+    attempt 2. Old code raised — new code returns the second response."""
+    _patch_cloudinary_creds(monkeypatch)
+
+    calls = {"n": 0}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise httpx.WriteTimeout("")
+            return _FakeResponse()
+
+    monkeypatch.setattr(cloudinary_mod.httpx, "AsyncClient", _Client)
+
+    result = asyncio.run(
+        cloudinary_mod.upload_video_from_url("data:video/mp4;base64,AAA=", "sceneos/demo/clip")
+    )
+    assert calls["n"] == 2
+    assert result["publicId"] == "sceneos/demo/clip"
+
+
+def test_upload_video_retries_on_5xx_then_gives_up(monkeypatch):
+    """Three 5xx responses → exhausts retries, raises a clean error that
+    surfaces both the public_id and the upstream body. We must NOT silently
+    swallow this."""
+    _patch_cloudinary_creds(monkeypatch)
+
+    calls = {"n": 0}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            calls["n"] += 1
+            return _FakeResponse(status=503, text="Cloudinary overloaded")
+
+    monkeypatch.setattr(cloudinary_mod.httpx, "AsyncClient", _Client)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(
+            cloudinary_mod.upload_video_from_url("data:video/mp4;base64,AAA=", "sceneos/demo/clip")
+        )
+    assert calls["n"] == 3
+    msg = str(exc_info.value)
+    assert "exhausted retries" in msg
+    assert "sceneos/demo/clip" in msg
+
+
+def test_upload_video_does_not_retry_on_4xx(monkeypatch):
+    """A 401 / 400 / 422 is deterministic — bad creds, malformed payload,
+    public_id collision. Retrying just wastes 7-13 seconds per failure
+    inside the 7-way bake. Must fail fast."""
+    _patch_cloudinary_creds(monkeypatch)
+
+    calls = {"n": 0}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            calls["n"] += 1
+            return _FakeResponse(status=401, text="Invalid Cloudinary signature")
+
+    monkeypatch.setattr(cloudinary_mod.httpx, "AsyncClient", _Client)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(
+            cloudinary_mod.upload_video_from_url("data:video/mp4;base64,AAA=", "sceneos/demo/clip")
+        )
+    assert calls["n"] == 1, "must NOT retry a 4xx"
