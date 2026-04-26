@@ -55,6 +55,13 @@ LEGACY_I2V_MODEL = "higgsfield-ai/dop/standard"
 DEFAULT_DURATION = 5
 DEFAULT_RESOLUTION = "720p"
 DEFAULT_ASPECT_RATIO = "16:9"
+# Legacy platform's dop endpoint requires a motion preset UUID. "Arc Left"
+# is a cinematic camera arc that reads as deliberate without overpowering
+# the subject — a sane default. Override per-beat via params["motionsId"]
+# if the orchestrator wants a specific one (e.g. mood-aware mapping).
+DEFAULT_MOTIONS_ID = "c5881721-05b1-47d9-94d6-0203863114e1"
+DEFAULT_MOTIONS_STRENGTH = 0.7
+DEFAULT_LEGACY_MODEL = "dop-lite"  # cheapest tier; flip to dop-preview for fidelity
 
 
 def _is_legacy() -> bool:
@@ -96,64 +103,97 @@ def _generation_id(body: dict) -> str | None:
 
 
 def _media_url(body: dict) -> str | None:
-    """Pull a video URL out of any of the documented response shapes."""
-    # Public API shape: { result: { video_url: "..." } } or { video_url: "..." }
-    for key in ("video_url", "media_url", "output_url", "result_url", "url"):
+    """Pull a media URL out of any documented response shape.
+
+    Verified live shapes:
+      - Legacy platform Soul T2I: {"images": [{"url": "..."}]}
+      - Legacy platform I2V:      {"video":  {"url": "..."}}    ← singular object, not videos[]
+      - Public higgsfieldapi.com: {"video_url": "..."} or {"result": {"video_url": "..."}}
+      - Pixazo / Segmind reseller:{"output": {"media_url": ["..."]}}
+    """
+    # Singular wrapper objects — legacy I2V returns `video: {url: ...}`.
+    for key in ("video", "image", "result", "output"):
+        wrapper = body.get(key)
+        if isinstance(wrapper, dict):
+            for url_key in ("url", "video_url", "media_url", "image_url", "asset_url"):
+                v = wrapper.get(url_key)
+                if isinstance(v, str) and v:
+                    return v
+            # Pixazo: output.media_url can be an array.
+            media = wrapper.get("media_url")
+            if isinstance(media, list) and media and isinstance(media[0], str):
+                return media[0]
+
+    # Array wrappers — legacy T2I returns `images: [{url: ...}]`.
+    for key in ("images", "videos", "media", "assets", "outputs"):
+        arr = body.get(key)
+        if isinstance(arr, list) and arr:
+            first = arr[0]
+            if isinstance(first, dict):
+                for url_key in ("url", "video_url", "media_url", "asset_url"):
+                    v = first.get(url_key)
+                    if isinstance(v, str) and v:
+                        return v
+            elif isinstance(first, str):
+                return first
+
+    # Top-level scalars (public API).
+    for key in ("video_url", "media_url", "output_url", "result_url", "url", "image_url"):
         v = body.get(key)
         if isinstance(v, str) and v:
             return v
-    # Pixazo/Segmind: { output: { media_url: ["..."] } }
-    output = body.get("output")
-    if isinstance(output, dict):
-        media = output.get("media_url")
-        if isinstance(media, list) and media:
-            first = media[0]
-            return first if isinstance(first, str) else None
-        for key in ("video_url", "url"):
-            v = output.get(key)
-            if isinstance(v, str) and v:
-                return v
-    # Some shapes nest under result.
-    result = body.get("result")
-    if isinstance(result, dict):
-        for key in ("video_url", "media_url", "url"):
-            v = result.get(key)
-            if isinstance(v, str) and v:
-                return v
+
     return None
 
 
 def _build_payload(params: dict) -> dict:
-    """Compose the request body the public API expects.
+    """Compose the request body for whichever endpoint is active.
 
-    Mode is auto-detected by what fields we send:
-      - reference_image_urls present → Soul mode (character+location consistency)
-      - image_url present (and no refs) → image-to-video
-      - prompt only → text-to-video
+    Public higgsfieldapi.com supports Soul mode (multi-reference). Legacy
+    platform.higgsfield.ai's dop endpoint is single-image-only, so when
+    refs[] has multiple URLs we pick the FIRST as the seed (typically the
+    character ref) and the rest carry through as prompt context only.
     """
+    import random
     clip_prompt = params.get("clipPrompt") or {}
     refined = params.get("refinedPrompt") or ""
     motion_prompt = clip_prompt.get("motionPrompt") or refined or ""
+    duration = int(clip_prompt.get("durationSeconds") or params.get("durationSeconds") or DEFAULT_DURATION)
 
-    payload: dict = {
-        "prompt": (motion_prompt or refined)[:1000],
-        "duration": int(clip_prompt.get("durationSeconds") or params.get("durationSeconds") or DEFAULT_DURATION),
-        "resolution": clip_prompt.get("resolution") or DEFAULT_RESOLUTION,
-        "aspect_ratio": clip_prompt.get("aspectRatio") or DEFAULT_ASPECT_RATIO,
-    }
-
-    # Reference image URLs win over a single seed (Soul mode > image-to-video).
-    # Cap at 5 — that's the API ceiling.
     refs = params.get("referenceImageUrls") or []
     if isinstance(refs, list):
         refs = [u for u in refs if isinstance(u, str) and u][:5]
-    if refs:
-        payload["reference_image_urls"] = refs
-    else:
-        seed = params.get("startImageUrl")
-        if isinstance(seed, str) and seed:
-            payload["image_url"] = seed
+    seed_image = params.get("startImageUrl") or (refs[0] if refs else None)
 
+    if _is_legacy():
+        # platform.higgsfield.ai/higgsfield-ai/dop/standard — single-image
+        # I2V with a motion preset. Validated live: this is the shape that
+        # 200's. Fields not on the schema (duration, resolution, etc.) are
+        # rejected with 422.
+        payload: dict = {
+            "model": params.get("higgsfieldModel") or DEFAULT_LEGACY_MODEL,
+            "prompt": (motion_prompt or refined)[:1000],
+            "seed": params.get("seed") or random.randint(1, 1_000_000),
+            "motions_id": params.get("motionsId") or DEFAULT_MOTIONS_ID,
+            "motions_strength": params.get("motionsStrength") or DEFAULT_MOTIONS_STRENGTH,
+            "enhance_prompt": True,
+        }
+        if seed_image:
+            payload["image_url"] = seed_image
+        return payload
+
+    # Public higgsfieldapi.com /generate — auto-detects mode from fields.
+    payload = {
+        "prompt": (motion_prompt or refined)[:1000],
+        "duration": duration,
+        "resolution": clip_prompt.get("resolution") or DEFAULT_RESOLUTION,
+        "aspect_ratio": clip_prompt.get("aspectRatio") or DEFAULT_ASPECT_RATIO,
+    }
+    if refs:
+        # Soul mode — public API only. Multi-reference identity anchor.
+        payload["reference_image_urls"] = refs
+    elif seed_image:
+        payload["image_url"] = seed_image
     return payload
 
 
