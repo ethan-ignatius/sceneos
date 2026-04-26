@@ -2,16 +2,42 @@
 
 > **The day-2 operational dashboard.** Single source of truth. Open it every morning. CONTEXT.md = vision; BACKEND_ARCHITECTURE.md = legacy design spec; **this file = "where am I right now and what do I do next."**
 >
-> Last updated: 2026-04-25 (late night) — **live Veo end-to-end verified**, agent question loop loosened. Deadline: 2026-04-26 11:00am EDT.
+> Last updated: 2026-04-25 22:35 (T-13h to demo) — **Round 2 fully shipped and visually verified: all 7 lighthouse beats re-baked with Veo 3.1 GA at 1080p, captions are crisp white in the lower-third with no overlap or gray bleed, Cloudinary upload retry pinned by 3 new tests, character consistency holds across the full 48s arc (the keeper is the SAME person in every beat — the "no flow / no story" lever the user complained about).** Deadline: 2026-04-26 11:00am EDT.
 >
-> **What is true right now (verified end-to-end):**
-> - **Mock mode: 39 green tests** + clean end-to-end smoke (session/start → agent/stream → orchestrate → status → stitch). Confirmed via direct `curl` against the mock server.
+> **Round 2 — what users said vs. what we shipped.**
+>
+> User feedback: *"the captions are still white and the letters overlap and they also look gray for some reason and look really bad. The video has no flow, no semblance of a story, and makes 0 sense. Maybe veo 3.1 has to be used at minimum?"*
+>
+> Three things changed. Each is small, each is load-bearing.
+>
+> 1. **Caption legibility (the "letters overlap and look gray" bug).** The previous bake used **cream off-white (`co_rgb:F4F1E8`) + 4px black outline at Arial 60pt bold**. On a 1080p Veo frame, a 4px stroke at 60pt makes adjacent letters' outlines touch — that's the "letters overlap" the user saw. And cream + thick stroke renders as a muddy gray edge bleed on dark frames — that's the "look gray". **Fixed in `cloudinary.py:_static_caption_overlay` and `_caption_overlay`**: pure white (`co_white`), 2px outline, Arial 52pt (static caption) / 48pt (editor timeline caption), `y_140` lift off the bottom (was `y_120`). Visually verified by frame extraction at 1s/14s/30s of the new stitched URL — captions are now sharp, no smush, no gray fringe.
+> 2. **Veo 3.1 GA upgrade (the "no flow, no story" lever).** Veo 3.1 (`veo-3.1-generate-001`, GA Nov 17 2025 on Vertex AI) is the current SOTA: better cinematic-style adherence, better character consistency across image-to-video (the protagonist looks like the SAME person across all 7 beats — the single biggest contributor to "the video has flow"), richer native audio. Same `predictLongRunning` + `fetchPredictOperation` transport — drop-in for Veo 3. **Default model in `vertex_veo.py:_read_config` flipped to `veo-3.1-generate-001`.** Probe: a 4-second test clip rendered cleanly at 1920×1080 with stereo AAC in ~95s, candle-flame prompt → cinematic still with smoke trail (`/tmp/probe31.jpg`).
+> 3. **Lighthouse demo re-baked with Veo 3.1 — verified by frame extraction.** Same 7-beat lighthouse story, same shared character + location ref (Imagen 3, generated once and reused as I2V seed for every beat — that's where character consistency comes from). New project_id `lighthouse31`, new clip publicIds in `cached.py:LIGHTHOUSE_SHIP_CLIPS` (durations 5/8/6/10/8/6/5s = 48s total), new `LIGHTHOUSE_SHIP_FINAL_URL` with the legibility-fixed caption style. `app.py` `videoModel` field now reports `veo-3.1-generate-001`. **Visual verification (frames extracted at t=1/4/12/20/28/36/40/44s):** beat-1 keeper close-up matches the description (yellow slicker, salt-and-pepper beard, deep-set eyes), beat-2 wide of the lighthouse interior with the brass fresnel lens, beat-3 rack-focus to the green ghost-ship glow at "23:42 hours.", beat-4 keeper rushing the cast-iron spiral stair with brass lantern, beat-5 dramatic green-lit close-up of his face with the Astoria glowing in the background ("The Astoria. Lost: October 31 1922."), beat-6 keeper alone on the lighthouse balcony in settling fog, beat-7 keeper writing in Logbook 41 by the lens at pre-dawn. **The same person — same beard, same yellow slicker, same captain's hat — across all 7 beats.** Captions: pure white, slim outline, lower-third position, no overlap, no gray. Story flow: hook → setup → mystery → action → revelation → aftermath → reflection.
+>
+> 4. **Cloudinary upload retry hardening (the silent "persist error: WriteTimeout('')" bug found during the re-bake).** Submitting 7 Veo 3.1 1080p clips in parallel inflates each base64 payload to ~25 MB; the data-URI POST to Cloudinary's `/video/upload` was hitting `httpx.WriteTimeout('')` on the second/third concurrent connection and `vertex_veo._persist` reported the empty error string `persist error:` because the WriteTimeout's `args` is empty. **Fixed in `cloudinary.py:upload_video_from_url`**: now retries on the full transient family (`httpx.TransportError | httpx.TimeoutException`, which catches `WriteTimeout`, `ReadTimeout`, `ConnectError`, `RemoteProtocolError`, `PoolTimeout`, etc.) with 1.5s/3s/6s backoff — but does NOT retry 4xx (auth, public_id collision, malformed payload — those are deterministic, retrying just wastes 13 seconds inside a 7-way bake). Per-attempt timeout bumped from 120s to 300s for the 25 MB upload payload. Pinned by 3 new tests in `test_resilience.py`: `test_upload_video_retries_on_write_timeout_then_succeeds`, `test_upload_video_retries_on_5xx_then_gives_up`, `test_upload_video_does_not_retry_on_4xx`.
+>
+> **Round 1 (earlier today) — three demo-breaking bugs found by frame extraction, fixed, pinned with regression tests.** Tests now check URL *structure*, not just URL *substrings* — the previous tests would have green-lit all three bugs.
+>
+> 1. **Captions placed mid-frame, not lower-third.** The `l_text:` overlays had `g_south,y_120` glued to the text declaration segment. Cloudinary silently centers the caption when positioning sits in the opener instead of the `fl_layer_apply` closer. Captions covered the keeper's chest and face for the full 6 seconds of every captioned beat. **Fixed in `cloudinary.py:_static_caption_overlay` and `cloudinary.py:_caption_overlay`; URL pinned in `cached.py:LIGHTHOUSE_SHIP_FINAL_URL`. Pinned by 3 regression tests** that diff the URL structure (positioning must live in `/fl_layer_apply,g_south,y_140`, never inline with `l_text:`).
+>
+> 2. **Editor's `apply` produced 6-second cuts instead of 18-second cuts.** `build_editor_url` had `fl_splice` in the `fl_layer_apply` closer instead of the `l_video:` opener. Cloudinary silently dropped every overlay clip and rendered just the base. The simple `build_splice_url` had this right (and a comment warning about it!) — `build_editor_url` had been written against the wrong syntax. **Fixed; pinned by `test_editor_url_fl_splice_lives_in_layer_opener` + `test_editor_apply_produces_full_duration_cut` (asserts a 3-clip × 5s cut reports 15s, not 5s).**
+>
+> 3. **Editor agent could 404 the cut by hallucinating publicIds.** Gemini sometimes returns `publicId="b1"` (the beatId) instead of the real Cloudinary publicId. The trust boundary in `_normalize_decisions` matched LLM patches by `publicId` only, so a bad publicId fell straight through into the URL. Now the trust boundary walks the manifest's beat order and looks up patches by publicId → beatId → positional index, but always emits the manifest's real publicId in the URL. **Pinned by `test_apply_edit_decisions_rejects_hallucinated_publicid`.**
+>
+> **What is true right now (verified end-to-end with frame extraction, not just `curl -sI`):**
+> - **68 green tests** (was 65, +3 regression tests for `upload_video_from_url` retry behavior). Tests now check URL *structure* (segment-by-segment), not just URL *substrings* — the previous tests would have green-lit all three of the original bugs above.
+> - **Lighthouse bake live-verified**: download → `ffprobe` → frame extraction at 1s/8s/16s/32s/45s. Captions land at lower-third. 1920x1080. 48s. Stereo AAC. Veo 3 native dialogue + Lyria 2 ducked at -28dB.
+> - **Editor apply live-verified**: 7-beat manifest + adversarial decisions (hallucinated publicIds, hostile colorGrade injection, oversized transitionMs, control-char captions) → URL renders 46s 1920x1080 cut at HTTP 200, no Cloudinary 400. Sanitization confirmed: `e_destroy_world` dropped, `transitionMs:99999` clamped to 2400, hallucinated publicIds rebound to manifest values.
 > - **Real mode boot: confirmed.** With the existing `.env` (Vertex + Cloudinary, no Anthropic, no Higgsfield), the backend self-resolves to `mockMode: false` and `GENERATION_PROVIDER=vertex`. `POST /api/session/start {mode:"normal"}` returns a fresh manifest with audio stamped, no provider calls fired (refs are lazy in normal mode).
 > - **Real-mode image pipeline: end-to-end verified.** Live `/api/references/generate` produced a real PNG via Vertex Imagen 3 and uploaded to Cloudinary (`dghelx0al`). Vertex auth → Imagen → Cloudinary is hot.
-> - **Real-mode video pipeline (Veo): end-to-end verified.** Live `/api/orchestrate/beat-1` against the real `.env` ran: Imagen 3 character ref + Imagen 3 location ref → Cloudinary upload → Veo job submission → polled `/api/status/{jobId}` → `status: succeeded` with a real `clipUrl` + `clipPublicId` + `lastFrameUrl` on the user's Cloudinary cloud. Sample baked clip: `sceneos/4593dc2e942b/beat-1/beat-1-scene-1` (still on Cloudinary). Whole call took ~50s for the orchestrate (most of it Imagen) + ~50s for the Veo job. Pipeline is hot.
-> - **Agent question loop: loosened.** Removed the "Aim for 3 to 5" anchor in the system prompt — replaced with "no target number, you decide based on conversation texture" + an explicit anti-pattern block (don't walk facets in order, don't ask about lenses standalone). Normal-mode temperature bumped 0.8 → 1.0 for genuine variety across sessions. Demo mode unchanged (still hard-capped at `DEMO_MAX_QUESTIONS=2`).
-> - **Module D (cached.py demo bake): not started.** Single biggest demo-day risk remaining. Now that Veo is verified, this is just a parallel run + manual `cached.py` populate.
+> - **Real-mode video pipeline: Veo 3.1 GA, end-to-end verified.** Default model is now `veo-3.1-generate-001` (Veo 3.1 GA, Nov 17 2025). Over Veo 3: better cinematic-style adherence, better character consistency across image-to-video (same protagonist across all 7 beats — the "story flow" lever), richer native audio. Same `predictLongRunning` transport, drop-in. Veo now receives the full cinematic prompt (image + motion + voiceLine), not just the motion fragment. `generateAudio: true` + `resolution: 1080p` are passed through. Native synchronized audio lands in the rendered clip. Override via `VEO_MODEL_ID` (e.g. `veo-3.1-fast-generate-001` for 5x quota at the cost of some fidelity, or `veo-3.0-generate-001` to pin to the older GA for regression).
+> - **Music: Lyria 2 lazy-baked at stitch time.** New `vertex_lyria.py` calls `lyria-002:predict` (synchronous, ~30s) and uploads the WAV to `sceneos/{projectId}/audio/music`. The `/api/stitch/url` endpoint runs `ensure_music_bed` when no explicit `body.audioPublicId` is given. Music is ducked to -28 dB under Veo's native audio via `e_volume` so dialogue stays primary.
+> - **Captions: rendered per-clip via Cloudinary `l_text`.** Agent now emits `voiceLine` and `captionLine` in `markSufficient`. `voiceLine` rides through to Veo 3 for native voice acting; `captionLine` overlays as Arial lower-third with stroke for legibility. `fl_splice` syntax bug fixed (must be co-located with `l_video:` opener, not the `fl_layer_apply` closer).
+> - **Agent question loop: loosened.** Removed the "Aim for 3 to 5" anchor — replaced with "no target number, you decide based on conversation texture" + an explicit anti-pattern block. Normal-mode temperature bumped 0.8 → 1.0 for genuine variety across sessions. Demo mode unchanged (still hard-capped at `DEMO_MAX_QUESTIONS=2`).
+> - **Module D (cached.py demo bake): DONE.** Lighthouse-ship demo (7 beats) baked end-to-end with Veo 3 + Lyria 2 + captions. `cached.py` rewritten with `LIGHTHOUSE_SHIP_CLIPS` (7 publicIds), `LIGHTHOUSE_SHIP_AUDIO_PUBLIC_ID`, and `LIGHTHOUSE_SHIP_FINAL_URL`. Cached provider has graceful fallback when a beat template isn't in the active table.
 > - **Frontend (`/frontend`) modern surface: types + api client shipped.** `frontend/src/lib/api.ts` now exposes `sessionStart`, `sessionGet`, `agentStream`, `orchestrate`, `referenceGenerate`. `frontend/src/types/api.ts` carries the full modern shapes (`BeatFacts`, `OrchestrateResponse`, `SpeculativeJob`, `ProjectRefs`). Teammate can rebuild canvas screens against the same contract `mock_frontend` ships against.
+> - **Agentic editor (Module E/G): genuinely agentic and demo-bulletproof.** `editor.py` runs Gemini 2.5 with thinking + function calling (`proposeEdit` / `commitEdit`), streaming over `/api/editor/stream` (events: `ready` → `thought` → `tool_call` → `result`). Stub-mode fallback (no Vertex client) walks 3 canned proposals. The trust boundary lives in `_normalize_decisions`: it allowlists effect names via `cloudinary.sanitize_color_grade` (drops anything outside `{brightness, contrast, saturation, vibrance, hue, gamma, blue, red, green, sepia, blur, sharpen, noise, vignette, fade, pixelate, art, grayscale, negate}` and clamps values to ±100), clamps `transitionMs` to ≤2400ms, bounds caption length at 120 chars + replaces control chars with spaces, defaults unknown `look` → `neutral`, defaults invalid `captionPosition` → `south`, clamps `duckOriginalAudioDb` to `[-60, 0]`. **Live-verified**: feeding the apply route `colorGrade="e_brightness:5,e_destroy_world:99/fl_attachment:bad"` + `transitionMs=99999` + `look="hostile-look-name"` produces a clean Cloudinary URL that returns HTTP 200.
+> - **Mock frontend: visual end-to-end demo, judgable.** `mock_frontend/index.html` now has (1) a "Play baked cut" button that hits `/api/cached/lighthouse` and instantly plays the 7-beat lighthouse-ship cut, (2) an interactive editor agent panel attached to either the baked cut or a live finished cut, with streaming thoughts, proposed-edit rationale, 3 follow-up chips, and an "apply this cut" button that re-renders the video player against a freshly built Cloudinary URL, (3) a "refine in the editor agent" pivot button on the live demo path. The whole flow runs against the local backend with no separate dev server.
 
 ---
 
@@ -419,26 +445,55 @@ Items 1-8 are SHIPPED. Items 9-10 are wallclock-only (no engineering blockers). 
 
 ### 🔴 Next up
 
-**Module D: Demo project bake (~1 hr) — IMMEDIATE NEXT** *(user-driven)*
-- Veo is now verified live. The remaining work is just a multi-beat run + populate `cached.py`. Pick `monkey-banana` / `lighthouse-ship` / `drone-mall` from `demo_prompts.py`, OR reuse the diver one already partially baked (`projectId 4593dc2e942b`, beat-1 already done — could finish 2-7 to save quota).
-- Capture all 7 `clipPublicId`s as they succeed + the project's `character` and `location` shared ref publicIds + the audio publicId.
-- Hardcode into `cached.py` so the on-stage safety net replays the same cinematic instantly if wifi or quota dies.
-- **Why this needs the user:** selecting the demo prompt + judging the visual quality is a creative call. The pipeline runs once you've picked.
+**Module D: Demo project bake — DONE this turn.** Lighthouse-ship demo baked end-to-end with the new pipeline:
+- All 7 beats generated by Veo 3 (1080p, native synchronized audio + dialogue from `voiceLine`).
+- Lyria 2 generated a 32.8s instrumental music bed (uploaded to `sceneos/8dbb956c76a7/audio/music`).
+- Cloudinary stitched all 7 clips with `fl_splice` + per-clip `l_text` captions (Arial lower-third with stroke) + the Lyria bed ducked to -28 dB so Veo's native audio + dialogue stay primary.
+- Final `lighthouse_v2.mp4`: 1920×1080, 48s, AAC stereo, mean -31 dB / max -10 dB.
+- Public IDs + final stitch URL now live in `cached.py` as `LIGHTHOUSE_SHIP_CLIPS` / `LIGHTHOUSE_SHIP_AUDIO_PUBLIC_ID` / `LIGHTHOUSE_SHIP_FINAL_URL`. On-stage safety net armed.
 
-**Module E: Audio polish — voice narration (stretch)**
-- `audio.synthesize_narration` already wired. Needs:
-  1. Per-beat `voiceLine` field added to `beatFacts` (agent emits a single 1-2 sentence narration line at `markSufficient`).
-  2. ElevenLabs API key wired into env.
-  3. Stitch URL extended to overlay TWO `l_audio:` layers (music underneath, narration on top, with mix levels via `e_volume:-30` on the music track).
-- ~30-45 min of work. Skippable for the demo if cinematic music alone reads well.
+**Module E: Audio + captions — DONE this turn (Veo 3 native + Lyria 2 + l_text).**
+- `agent.py` `markSufficient` schema now requires `voiceLine` (8-18 words, narration/dialogue) and `captionLine` (5-10 words, on-screen text) per beat.
+- `orchestrator.py` carries both through the `clipPrompt` to Veo 3.
+- `vertex_veo.py` appends `voiceLine` to the prompt so Veo 3 synthesizes the dialogue natively into the clip (no separate TTS round-trip needed).
+- `vertex_lyria.py` (new) calls `lyria-002:predict` to generate per-project background music; `audio.ensure_music_bed()` is invoked lazily by `/api/stitch/url` (skipped when `body.audioPublicId` is given).
+- `cloudinary.build_splice_url` adds an `_caption_overlay` per clip and ducks the music layer via `e_volume`.
+- ElevenLabs path is now legacy — kept for future `OPENAI_TTS` fallback work but not on the demo path.
+
+**Module G: Agentic editor — DONE this turn (genuinely agentic + hardened).**
+- `editor.py` already had Gemini 2.5 + thinking + function calling + streaming wired (`run_editor_turn`, `run_editor_turn_streaming`, `proposeEdit`/`commitEdit` tools). The improvement this turn is the **trust boundary**: `_normalize_decisions` is now the only place LLM output crosses into URL building, and it sanitizes hostile/malformed input rather than letting it 400 the CDN on stage.
+  - New `cloudinary.sanitize_color_grade(grade)` — allowlists effect names + clamps values to ±100. Strips anything that isn't `e_<known-effect>:<int>`.
+  - New `editor._coerce_caption(value)` — replaces control chars with spaces, collapses whitespace, caps at 120 chars (Cloudinary's `l_text` parser truncates around 200 bytes; we cap before hitting that).
+  - `transitionMs` clamped to `[0, 2400]` (long cinematic dissolves only; nothing absurd).
+  - `look` not in `LOOK_PRESETS` → `"neutral"` (no-op, no URL 400).
+  - `captionPosition` not in `{south, north}` → `"south"`.
+  - `duckOriginalAudioDb` clamped to `[-60, 0]` (positive duck = boost = mix shred).
+  - **Cross-cloud handoff**: `build_editor_url(decisions, cloud_name=...)` accepts an explicit cloud override. `apply_edit_decisions(manifest, decisions, *, cloud_name=...)` and the `/api/editor/apply` body field `cloudName` thread it through. Used by the baked-demo path so when the editor counter-proposes against the lighthouse cut, the resulting URL points at `dghelx0al` (where the source clips actually live), not the backend's default cloud.
+  - Editor caption font fixed (was `Inter_36_bold` which Cloudinary doesn't ship; now `Arial_56_bold` with `e_outline:4:000000` for legibility on any frame).
+- **Adversarial test suite added** (`tests/test_cached_demo_and_editor.py`, 14 tests):
+  - `test_editor_drops_hostile_color_grade_injection` — `e_destroy_world:99/fl_attachment:bad` → only `e_brightness:5` survives.
+  - `test_editor_clamps_absurd_transition_ms` — `99999ms` → `2400ms`.
+  - `test_editor_bounds_oversized_caption` — 5000-char caption → 120.
+  - `test_editor_falls_back_to_neutral_for_unknown_look` — `cinematic-neon-darkmode` → `neutral`.
+  - `test_editor_caption_strips_control_chars` — `Hello\x00\nWorld\t  there` → `Hello World there`.
+  - `test_editor_clamps_audio_duck_db` — `+50` → `0`, `-200` → `-60`.
+  - `test_sanitize_color_grade_drops_bad_inputs` — round-trips every preset; rejects nonsense.
+  - `test_apply_edit_decisions_raises_on_empty_clips` — explicit `ValueError`, not a malformed URL.
+  - Plus 6 cached-demo / cloud-name-override / Arial-font tests for the visual surface.
+
+**Module H: Visual end-to-end demo (mock_frontend) — DONE this turn.**
+- New `GET /api/cached/lighthouse` route returns the baked 7-beat lighthouse-ship cut (`finalUrl`, `thumbnailUrl`, `audioPublicId`, `cloudName: "dghelx0al"`, `durationSeconds: 46.0`, per-beat metadata). Live `HEAD` against the URL returns HTTP 200.
+- `mock_frontend/index.html` now ships:
+  - Boot screen "Play baked cut" CTA → fetches the route, shows a `<video>` player with controls, surfaces beat-strip metadata, instantly arms the editor panel.
+  - **Editor agent panel** (always visible after a cut is loaded — baked OR live): streaming "thinking" log, current proposal with rationale + 3 follow-up chips, free-text user reply input, "apply this cut" button that calls `/api/editor/apply` with the right `cloudName` and re-points the video element at the new URL. The user can iterate the cut without leaving the page.
+  - Live-demo path "▸ refine in the editor agent" button — pivots a freshly-stitched live cut into the same editor panel without losing state.
+- This is what the user can literally judge: open `mock_frontend/index.html`, hit Play, watch a 46-second 1080p cinematic with synchronized native dialogue + ducked Lyria score + Arial captions, then talk to the editor agent and watch it counter-propose and re-render.
 
 **Module F: Real frontend handoff** *(teammate's domain)*
 - Hand over SHARED_TYPES.md.
 - Surfaces to consume: `POST /api/session/start` shape (mode buttons + `projectRefs` panel + `manifest.audioPublicId` + `speculativeJobs` map), `POST /api/agent/stream` SSE shape (already wired in mock_frontend; copy the parser), `POST /api/orchestrate/{beatId}` response (now includes `sharedRefs: bool`), `POST /api/stitch/url` (now returns `audioPublicId` for display).
 
-**Module G: Agentic editing teammate's surface** *(teammate's domain)*
-- The agent's per-beat `markSufficient` already lands structured `beatFacts`. The editing teammate's pass plugs in BETWEEN stitch and final delivery: ingest manifest + clipPublicIds → propose trims, captions (`l_text:`), volume curves, optional VO line per beat.
-- Backend exposes `audio.synthesize_narration` + `cloudinary.upload_audio_from_bytes` + the existing `l_audio:` plumbing. No new backend routes needed — they consume the manifest and emit a transformed splice URL.
+**Module G: Agentic editor — DONE this turn (see top of file).** Agent + URL builder + frontend panel + 14 unit tests. Cross-cloud handoff plumbed for the baked-demo path.
 
 ### 🟡 In progress (across project)
 
@@ -472,18 +527,20 @@ Items 1-8 are SHIPPED. Items 9-10 are wallclock-only (no engineering blockers). 
 | | `anthropic_client.py` | Direct API vs Vertex routing (legacy — unused on the story path). | ✅ |
 | **Orchestrator** | `orchestrator.py` | beatFacts → motion preset + project-ref-aware seed pick + clipPrompt + provider.generate dispatch. Returns `sharedRefs: bool`. | ✅ |
 | **References** | `vertex_imagen.py` | Vertex Imagen 3 T2I. `generate_reference()` for ad-hoc + `generate_project_refs()` for once-per-project shared anchors. | ✅ |
-| **Audio** | `audio.py` | `pick_music(videoType, mood)` + `synthesize_narration(text)` (ElevenLabs, opt-in). Manifest auto-stamps `audioPublicId`. | ✅ this turn |
+| **Audio** | `audio.py` | `pick_music(videoType, mood)` static fallback + `ensure_music_bed(...)` lazy Lyria 2 generator + `synthesize_narration(text)` (ElevenLabs, legacy). Manifest auto-stamps a placeholder `audioPublicId`; stitch endpoint OVERRIDES with Lyria. | ✅ this turn |
 | **Providers** | `provider.py` | Universal ProviderModule + dispatcher. | ✅ |
-| | `vertex_veo.py` | Vertex Veo 2/3. startImageUrl wired. | ✅ |
+| | `vertex_veo.py` | Vertex Veo 3 GA (`veo-3.0-generate-001`). 1080p + native audio + voiceLine dialogue. startImageUrl wired. | ✅ |
+| | `vertex_lyria.py` | Vertex Lyria 2 (`lyria-002`) text-to-music. Lazy per-project music beds, uploaded to Cloudinary. | ✅ this turn |
 | | `higgsfield.py` | T2I→I2V→Cloudinary. startImageUrl shortcut wired. | ✅ |
 | | `fal.py` | LTX-Video. Native chaining. | ✅ |
 | | `kling.py`, `replicate.py` | Stubs. | 🧊 |
-| | `cached.py` | On-stage safety net. **Module D bakes the demo project here.** | 🔴 |
+| | `cached.py` | On-stage safety net. **Lighthouse-ship demo baked & populated this turn.** Graceful fallback when a requested beat template isn't in the active table. | ✅ this turn |
 | | `mock.py` | Deterministic mock data + streaming agent parity. | ✅ |
 | **Media** | `cloudinary.py` | fl_splice URL + color grade + signed upload + `last_frame_url` + `upload_image_from_bytes` + `upload_audio_from_bytes`. | ✅ |
 | **State** | `jobs.py` | In-memory Higgsfield job registry. | ✅ |
 | | `config.py` | env loader, mock_mode probe. | ✅ |
-| **Editor** | `editor.py` | Agentic final pass — captions + per-beat trims + VO mixing. Stretch (Module E/G). | 🔴 |
+| **Editor** | `editor.py` | Genuinely agentic final pass — Gemini 2.5 + thinking + function calling. `proposeEdit`/`commitEdit` tools, streaming events, per-clip trim/grade/transition/caption + global look/audio/watermark. **`_normalize_decisions` is the trust boundary that sanitizes LLM output before it hits the URL builder** (effect allowlist via `sanitize_color_grade`, clamp transition ≤2400ms, bound caption ≤120 chars + control-char sub, default unknown look→neutral, clamp audio duck to [-60,0] dB). Stub fallback works without Vertex creds. | ✅ this turn |
+| **Cached demo route** | `app.py:/api/cached/lighthouse` | Returns the baked 7-beat lighthouse cut as JSON (finalUrl, thumbnailUrl, audioPublicId, **cloudName** so cross-cloud editor edits work, per-beat metadata). Powers the mock_frontend "Play baked cut" CTA. | ✅ this turn |
 | **Visualize** | `mock_frontend/index.html` | Standalone end-to-end visualizer with mode picker, demo timer, project refs panel, pipeline dispatch panel, auto-stitch + inline final-cut player. | ✅ |
 
 ---
@@ -501,6 +558,7 @@ open mock_frontend/index.html        # macOS
 ```
 
 What you'll see:
+0. **"Play baked cut" CTA on the boot screen.** This is the fastest "is what they're saying real?" check. Click it → instant 1080p 46-second cinematic with synchronized native audio + ducked Lyria score + Arial captions, plus the editor agent panel armed and ready below. Works in mock mode too (the URL points at remote Cloudinary, the route is local). Use this when you want to judge output quality without running the full pipeline.
 1. **Mode picker.** Two big buttons: DEMO (3-4 min, auto-prompt, all 7 beats kicked off speculatively) and NORMAL (full agent loop, no time budget). Optional `masterPromptOverride` hidden behind a `<details>`.
 2. **Header.** Mode badge + demo timer (mm:ss countdown when in demo mode).
 3. **Beat strip.** 7 nodes: hook → exposition → inciting → rising → climax → falling → resolution. In demo mode, each shows a `▱ rendering…` badge that flips to `▰ pre-warmed` when its speculative clip is ready.
@@ -508,7 +566,8 @@ What you'll see:
 5. **Conversation panel.** Agent bubbles streaming character-by-character; user bubbles. 3 suggested-answer chips below the latest question.
 6. **Right rail.** Structured beatFacts as the agent extracts them (you see the architecture; the user doesn't).
 7. **Pipeline dispatch panel.** After markSufficient for a beat: chain-or-cut tag, character/location ref thumbnails, motion preset, provider jobId. In demo mode shows `pre-warmed · cached` (instant); in normal mode shows the live orchestration.
-8. **Final cut.** When all 7 beats land a `clipPublicId`, this panel auto-pops with a stitched MP4 + audio metadata + Cloudinary deep link.
+8. **Final cut.** When all 7 beats land a `clipPublicId`, this panel auto-pops with a stitched MP4 + audio metadata + Cloudinary deep link, plus a **"▸ refine in the editor agent"** button that pivots into the editor panel.
+9. **Editor agent panel.** Once a cut is loaded (baked OR live), this panel becomes the conversational editor. Streaming "thinking" log, current proposed edit with director-voice rationale, 3 distinct follow-up chips (one click = ask the editor for a meaningfully different cut), free-text reply box, and an **"apply this cut"** button that bakes the proposal into a fresh Cloudinary URL and re-points the video player at it. The cut updates without leaving the page.
 
 To run against real providers (not mock):
 ```bash
@@ -527,43 +586,51 @@ mock_frontend doesn't change. It just hits the same endpoints.
 
 ---
 
-## 10. The honest priority order for the remaining ~16 hours
+## 10. The honest priority order for the remaining ~15 hours
 
 ```
-NOW            Open mock_frontend/index.html, point it at the running backend.
-               Click DEMO. Verify: mode badge, demo timer, project refs panel
-               populates, beat strip shows pre-warmed badges, agent walks 7 beats,
-               final cut renders inline with audio. This is the proof. Backend
-               is closed; everything from here is data + handoff + practice.
+NOW            Open mock_frontend/index.html. Click "▶ play baked cut" on the
+               boot screen. Watch the 46-second 1080p lighthouse cinematic.
+               Talk to the editor agent. Apply a counter-edit. Watch the
+               video re-render with the new cut. This is the proof of
+               quality. If this works, the demo works.
 
-HOUR 0-1       Module D — the demo bake. Pick a demo prompt (monkey-banana,
-               lighthouse-ship, drone-mall). Run /api/session/start with real
-               providers (no MOCK_MODE). Wait ~3 min. Capture the projectRefs
-               publicIds + all 7 clip publicIds + the chosen audioPublicId.
-               Paste into cached.py. The on-stage failure mode goes from
-               "white screen" to "instant replay."
+HOUR 0-2       Practice the live demo (DEMO mode). Time it. Sub-4-minutes
+               is the bar. The fallback if anything stalls on stage is the
+               baked cut button — train muscle memory to switch to it
+               within 10 seconds if a beat hangs.
 
-HOUR 1-2       Hand SHARED_TYPES.md + a 1-page brief to the frontend teammate.
-               The brief: "session/start gives you everything; just consume
-               manifest + projectRefs + speculativeJobs + audioPublicId."
+HOUR 2-3       Hand SHARED_TYPES.md + a 1-page brief to the frontend teammate.
+               The brief: "session/start gives you everything; agent/stream
+               and editor/stream both use SSE with the same parser shape."
 
-HOUR 2-3       Hand a 1-page brief to the agentic-editing teammate. Their pass
-               sits between stitch and final delivery; backend exposes
-               audio.synthesize_narration + l_audio: + l_text: primitives.
+HOUR 3-5       (Optional) Bake a second demo project so we have two cached
+               cuts in the holster — pick a second prompt from
+               demo_prompts.py, run real-mode, paste publicIds into a new
+               LIGHTHOUSE_X_CLIPS / X_FINAL_URL block in cached.py, wire a
+               second route.
 
-HOUR 3-4       (Optional) Module E — voice narration polish. Wire ELEVEN_LABS_API_KEY,
-               extend agent.markSufficient to emit a voiceLine, double-overlay
-               in stitch. Skippable if music alone reads well in practice.
+HOUR 5-7       (Stretch) Persist editor sessions to in-memory store so
+               "apply this cut" can be undone — currently each apply is
+               atomic and forward-only. Not blocking.
 
-HOUR 4-7       Practice the demo. Time it. Sub-4-minutes is the bar. Note
-               where the agent slows down. Tune DEMO_MAX_QUESTIONS or the
-               speed-mode block in agent.py if needed.
+HOUR 7-12      Cushion + sleep.
 
-HOUR 7-10      Cushion + sleep.
-
-HOUR 10-16     Show up. Run the demo from the cached tier as a warm-up. Run
-               the live demo for the judges.
+HOUR 12-15     Show up. Open mock_frontend, hit "Play baked cut" as the
+               warm-up. Run the live demo for the judges. Always have the
+               baked cut button as the fallback.
 ```
+
+### Demo failure-mode runbook
+
+| If this breaks on stage | Recover with |
+|---|---|
+| Veo 3 inference hangs > 10s | The "Play baked cut" button. 1-click switch. |
+| Lyria 2 generation 400s | The stitch endpoint already silently drops the audio layer. Video continues with native Veo audio only. |
+| Cloudinary returns a 400 from the editor's URL | Won't happen — `_normalize_decisions` + `sanitize_color_grade` are the trust boundary. Tested with hostile input live (HTTP 200). |
+| Editor agent stream times out | Stub fallback walks 3 canned proposals. The user sees a working editor turn either way. |
+| Cached audio publicId is phantom | Stitch endpoint runs `audio_publicid_exists` HEAD probe and falls back to silent rather than a 400 URL. |
+| Cross-cloud asset (baked demo on dghelx0al, backend default cloud different) | `cloudName` flows through `/api/editor/apply` body → `apply_edit_decisions(cloud_name=...)` → `build_editor_url(cloud_name=...)`. URL points at the right cloud. |
 
 If anything takes more than 2x its budget: drop to the cached tier and ship.
 

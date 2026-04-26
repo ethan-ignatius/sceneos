@@ -42,12 +42,20 @@ from .cloudinary import (
     build_thumbnail_url,
     color_grade_for,
     edit_decisions_total_duration,
+    sanitize_color_grade,
 )
 from .genai_client import default_gemini_model_for, make_genai_client
 
 
 THINKING_BUDGET = 1024
 DEFAULT_TRANSITION_MS = 240
+# Cloudinary's e_fade accepts up to ~5000ms; beyond that it stops being
+# perceptually meaningful and the URL gets noisy. 2.4s is a long cinematic
+# dissolve and a sane upper bound for a 6-second beat.
+MAX_TRANSITION_MS = 2400
+# Cloudinary l_text URL parser starts truncating around 200 bytes of encoded
+# text. Cap before we send anything that could 400 the URL.
+MAX_CAPTION_CHARS = 120
 LOOK_NAMES = list(LOOK_PRESETS.keys())
 
 
@@ -305,29 +313,105 @@ def _normalize_args(value: Any) -> Any:
     return value
 
 
+def _coerce_caption(value: Any) -> str:
+    """Bound caption text. The LLM can emit long sentences, em-dashes, or
+    accidentally-quoted JSON. Replace control chars with a space (not strip)
+    so a multi-line caption flattens into 'line1 line2' rather than
+    'line1line2'. Cap length so the Cloudinary l_text URL parser never 400s."""
+    if not value:
+        return ""
+    text = str(value)
+    # Replace any non-printable character with a space; then collapse
+    # whitespace so we don't end up with double-spaces.
+    text = "".join(c if (c.isprintable() and c != "\u0000") else " " for c in text)
+    text = " ".join(text.split())
+    if len(text) > MAX_CAPTION_CHARS:
+        text = text[:MAX_CAPTION_CHARS].rstrip()
+    return text
+
+
 def _normalize_decisions(decisions: dict, baseline: dict) -> dict:
     """
     The agent emits a complete decisions object, but Gemini sometimes drops
     fields. Carry forward anything missing from the baseline so we never
     accidentally zero out the user's prior choices.
+
+    This function also acts as the **trust boundary** between LLM output and
+    the deterministic Cloudinary URL builder. Hostile or malformed LLM output
+    (effect-name injection, oversized captions, absurd transition durations,
+    unknown look LUTs) gets clamped or dropped here so a shaky agent turn
+    can never produce a 400 from Cloudinary in front of the user.
     """
     out = dict(baseline) if baseline else {}
     for k, v in (decisions or {}).items():
         out[k] = v
-    # Per-clip carryover — match by publicId.
-    base_clips_by_id = {c["publicId"]: c for c in (baseline or {}).get("clips") or []}
-    new_clips = []
-    for clip in out.get("clips") or []:
-        merged = dict(base_clips_by_id.get(clip.get("publicId"), {}))
-        merged.update(clip)
-        # Light validation: trim within source duration.
+    # Per-clip carryover. The LLM controls per-beat parameters (trim, grade,
+    # caption, transition) but it does NOT get to invent or reorder clips —
+    # the cut's beat order and source publicIds are pinned by the manifest.
+    # If we let the LLM write publicId, a single hallucinated value becomes
+    # a 404'd Cloudinary URL on stage. We enforce structural integrity by
+    # walking the BASELINE clips in order and looking up the matching LLM
+    # patch (by publicId OR by beatId — Gemini sometimes confuses them).
+    base_clips: list[dict] = list((baseline or {}).get("clips") or [])
+    proposed_clips: list[dict] = list(out.get("clips") or [])
+    proposed_by_public = {c.get("publicId"): c for c in proposed_clips if c.get("publicId")}
+    proposed_by_beat = {c.get("beatId"): c for c in proposed_clips if c.get("beatId")}
+    new_clips: list[dict] = []
+    for i, base in enumerate(base_clips):
+        # Look up the LLM's patch for this beat. Match by publicId first,
+        # then beatId, then positional index — anything to glue the patch
+        # back to the right slot, since the LLM can be loose with names.
+        patch = (
+            proposed_by_public.get(base.get("publicId"))
+            or proposed_by_beat.get(base.get("beatId"))
+            or (proposed_clips[i] if i < len(proposed_clips) else {})
+        )
+        merged = dict(base)
+        # Apply only the keys the agent is allowed to touch — never let it
+        # rewrite publicId / beatId / durationSeconds (those come from the
+        # manifest and are load-bearing for URL construction + duration math).
+        for k in ("trimStart", "trimEnd", "colorGrade", "transitionMs", "caption"):
+            if k in patch:
+                merged[k] = patch[k]
         dur = float(merged.get("durationSeconds") or 0)
         if "trimStart" in merged:
             merged["trimStart"] = max(0.0, min(float(merged["trimStart"]), dur))
         if "trimEnd" in merged and dur:
             merged["trimEnd"] = max(merged.get("trimStart", 0.0), min(float(merged["trimEnd"]), dur))
+        # colorGrade — allowlist effect names + clamp values. Drops anything
+        # the LLM hallucinated (e.g. "e_destroy_world:9999" or injected URL
+        # segments).
+        if "colorGrade" in merged:
+            merged["colorGrade"] = sanitize_color_grade(merged.get("colorGrade"))
+        # transitionMs — clamp to a sane upper bound. Negative becomes 0.
+        if "transitionMs" in merged:
+            try:
+                ms = int(float(merged.get("transitionMs") or 0))
+            except (TypeError, ValueError):
+                ms = 0
+            merged["transitionMs"] = max(0, min(ms, MAX_TRANSITION_MS))
+        # caption — bound length, strip controls.
+        if "caption" in merged:
+            merged["caption"] = _coerce_caption(merged.get("caption"))
         new_clips.append(merged)
     out["clips"] = new_clips
+    # look — must be a known LUT name; default to "neutral" otherwise so the
+    # global look grade is just a no-op rather than a URL 400.
+    look = out.get("look")
+    if look is not None and look not in LOOK_PRESETS:
+        out["look"] = "neutral"
+    # captionPosition — Cloudinary supports many gravity values, but our
+    # editor only ever uses south/north. Fall back rather than 400.
+    pos = out.get("captionPosition")
+    if pos and pos not in ("south", "north"):
+        out["captionPosition"] = "south"
+    # duckOriginalAudioDb — clamp to a sane dB band.
+    duck = out.get("duckOriginalAudioDb")
+    if duck is not None:
+        try:
+            out["duckOriginalAudioDb"] = max(-60, min(int(float(duck)), 0))
+        except (TypeError, ValueError):
+            out["duckOriginalAudioDb"] = None
     return out
 
 
@@ -638,9 +722,20 @@ async def run_editor_turn_streaming(req: dict) -> AsyncIterator[dict]:
     yield {"type": "result", **result}
 
 
-def apply_edit_decisions(manifest: dict, decisions: dict) -> dict:
+def apply_edit_decisions(
+    manifest: dict,
+    decisions: dict,
+    *,
+    cloud_name: str | None = None,
+) -> dict:
     """
     Deterministic. Bake decisions into a Cloudinary delivery URL.
+
+    Args:
+      cloud_name: optional override for the Cloudinary cloud the URL points
+        at. Used by the cached/baked demo path where the assets live on a
+        different cloud than the backend's default. Defaults to
+        CLOUDINARY_CLOUD_NAME / parsed CLOUDINARY_URL.
 
     Returns:
       {
@@ -650,7 +745,7 @@ def apply_edit_decisions(manifest: dict, decisions: dict) -> dict:
     """
     baseline = initial_decisions(manifest)
     normalized = _normalize_decisions(decisions or {}, baseline)
-    final_url = build_editor_url(normalized)
+    final_url = build_editor_url(normalized, cloud_name=cloud_name)
     if not final_url:
         raise ValueError("apply_edit_decisions: no clips in decisions — nothing to bake")
     base_public = (normalized.get("clips") or [{}])[0].get("publicId")

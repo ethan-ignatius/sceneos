@@ -34,6 +34,13 @@ class StatusResult(TypedDict, total=False):
     clipPublicId: str
     error: str
     imageUrl: str
+    # ISO-8601 timestamp captured when the provider job was first dispatched.
+    # Surfaced in the /api/status response so the frontend GenerationPanel
+    # can compute REAL elapsed time (Date.now() - new Date(startedAt))
+    # instead of restarting its local clock when the user closes/reopens
+    # the drawer mid-generation. Optional: providers that don't track it
+    # may omit; the frontend falls back to its local mount-time clock.
+    startedAt: str
 
 
 class ProviderModule(Protocol):

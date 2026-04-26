@@ -87,16 +87,16 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
       >
         <button
           onClick={onOpenTray}
-          className="pointer-events-auto group inline-flex items-center gap-2.5 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/60 px-4 py-2 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.5)] transition-[border-color,background-color] duration-200 hover:border-brand-ember/35 hover:bg-bg-elev-1/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
-          aria-label="Master cut — awaiting first approved beat. Click to open stitch tray."
+          className="pointer-events-auto group inline-flex min-h-10 items-center gap-3 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/60 px-5 py-2 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.5)] transition-[border-color,background-color] duration-200 hover:border-brand-ember/35 hover:bg-bg-elev-1/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+          aria-label="Master cut — awaiting approvals. Click to open stitch tray."
         >
           <span aria-hidden className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-ember/35" />
-          <span className="caption-track text-[10px] text-fg-secondary group-hover:text-brand-ember/90">
+          <span className="font-body text-xs font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
             Master cut
           </span>
-          <span aria-hidden className="h-3 w-px flex-shrink-0 bg-fg-tertiary/20" />
-          <span className="font-body text-[11px] italic text-fg-tertiary">
-            awaiting first approved beat
+          <span aria-hidden className="h-3.5 w-px flex-shrink-0 bg-fg-tertiary/20" />
+          <span className="font-display text-xs italic text-fg-tertiary">
+            awaiting approvals
           </span>
         </button>
       </motion.div>
@@ -128,18 +128,18 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
       transition={{ duration: 0.36, ease: [0.25, 1, 0.5, 1] }}
       className="pointer-events-none absolute inset-x-0 bottom-12 z-10 flex justify-center px-6"
     >
-      <div className="pointer-events-auto flex max-w-[calc(100vw-3rem)] items-center gap-2.5 rounded-full border border-fg-tertiary/20 bg-bg-elev-1/75 py-1.5 pl-4 pr-1.5 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)]">
+      <div className="pointer-events-auto flex min-h-10 max-w-[calc(100vw-3rem)] items-center gap-3 rounded-full border border-fg-tertiary/20 bg-bg-elev-1/75 py-2 pl-5 pr-2 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)]">
         <span
           aria-hidden
           className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-ember shadow-[0_0_8px_rgba(240,168,104,0.55)]"
         />
-        <span className="caption-track flex-shrink-0 text-[10px] text-brand-ember/90">
+        <span className="flex-shrink-0 font-body text-xs font-medium text-brand-ember/90">
           Master cut
         </span>
-        <span aria-hidden className="h-3 w-px flex-shrink-0 bg-fg-tertiary/25" />
+        <span aria-hidden className="h-3.5 w-px flex-shrink-0 bg-fg-tertiary/25" />
         <button
           onClick={onOpenTray}
-          className="min-w-0 overflow-hidden whitespace-nowrap font-mono text-[11px] tabular-nums text-fg-secondary transition-colors hover:text-fg-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember focus-visible:ring-offset-1 focus-visible:ring-offset-bg-elev-1"
+          className="min-w-0 overflow-hidden whitespace-nowrap font-mono text-xs tabular-nums text-fg-secondary transition-colors hover:text-fg-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember focus-visible:ring-offset-1 focus-visible:ring-offset-bg-elev-1"
           aria-label="Open stitch tray to inspect the full URL"
           title="Open stitch tray"
         >

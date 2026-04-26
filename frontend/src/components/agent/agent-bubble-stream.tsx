@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
-import { Send, Loader2, RotateCcw, Mic, MicOff, ImagePlus, X } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { Send, Loader2, RotateCcw, Mic, ImagePlus, X, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
@@ -48,17 +49,37 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const [draft, setDraft] = useState("");
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Live thinking accumulator — populated by /api/agent/stream "thought"
+  // events while the agent composes its next turn. Cleared when the
+  // "result" event arrives (or on unmount). Visible in place of
+  // "Composing the shot." so the 6–8s Vertex Gemini latency reads as
+  // active thinking instead of a frozen UI. NOTE for backend team
+  // (Vishnu, Ethan): per-call latency is real Gemini 2.5 Flash latency
+  // on the trial GCP tier — see backend audit doc. Once latency drops,
+  // this thinking-stream remains useful as a transparency signal.
+  const [streamingThought, setStreamingThought] = useState("");
   const cancelledRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [pendingRetryMessage, setPendingRetryMessage] = useState<string | null>(null);
   // Collapse old turns by default — only the last few are visible. The user
   // can opt to expand via the button at the top of the scroller.
   const [showAllTurns, setShowAllTurns] = useState(false);
+  // The latest agent question's three "or pick one" suggestions, surfaced
+  // as clickable pills above the input. Cleared on user submit and
+  // replaced when the next agent turn arrives. The data is on the wire
+  // via AgentResponse.suggestedAnswers; the editor renders the same
+  // shape via suggestedFollowups.
+  const [latestSuggestions, setLatestSuggestions] = useState<
+    readonly [string, string, string] | null
+  >(null);
 
   // Reference frames — drag-drop or file picker. Stored as dataUris in
   // local component state and prefixed onto the userMessage with a marker
-  // (`[refs:N]`) the mock backend reads to acknowledge ("noted the
-  // reference frame, aiming for that mood"). See FINAL_HANDOFF §5 P0.4.
+  // (`[refs:N]`) the agent reads to acknowledge ("noted the reference
+  // frame, aiming for that mood"). The marker is the on-the-wire contract;
+  // moving to a structured `references: ImageRef[]` field on AgentRequest
+  // is a forward-compatible upgrade once the backend handles it natively.
   const [imageRefs, setImageRefs] = useState<ImageRef[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -169,6 +190,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   }, [scene.conversation.length]);
 
   // Seed question — fire on first mount when conversation is empty.
+  // Uses /api/agent/stream so the user sees Gemini's thinking tokens
+  // accumulate in real time. The one-shot endpoint (api.agent) returns
+  // in 6–8s on the trial Vertex tier, which read as a hung UI.
   useEffect(() => {
     cancelledRef.current = false;
     if (!manifest || scene.conversation.length > 0) return;
@@ -176,28 +200,42 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     let active = true;
     setInFlight(true);
     setError(null);
+    setStreamingThought("");
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     (async () => {
       try {
-        const res = await api.agent({ manifest, beatId: beat.beatId });
-        if (!active || cancelledRef.current) return;
-        if (res.kind === "question") {
-          appendAgentTurn(beat.beatId, scene.sceneId, {
-            role: "agent",
-            content: res.question,
-            timestamp: nowISO(),
-          });
-          updateBeat(beat.beatId, { status: "questioning" });
-        } else if (res.kind === "sufficient") {
-          // Edge case: agent considers itself sufficient on first turn.
-          updateScene(beat.beatId, scene.sceneId, {
-            refinedPrompt: res.refinedPrompt,
-            durationSeconds: res.suggestedDuration,
-          });
-          updateBeat(beat.beatId, { status: "ready-to-generate" });
+        for await (const ev of api.agentStream({ manifest, beatId: beat.beatId }, ctrl.signal)) {
+          if (!active || cancelledRef.current) break;
+          if (ev.type === "thought") {
+            setStreamingThought((prev) => prev + ev.chunk);
+          } else if (ev.type === "result") {
+            if (ev.kind === "question") {
+              appendAgentTurn(beat.beatId, scene.sceneId, {
+                role: "agent",
+                content: ev.question,
+                timestamp: nowISO(),
+              });
+              updateBeat(beat.beatId, { status: "questioning" });
+              setLatestSuggestions(ev.suggestedAnswers ?? null);
+            } else if (ev.kind === "sufficient") {
+              // Edge case: agent considers itself sufficient on first turn.
+              updateScene(beat.beatId, scene.sceneId, {
+                refinedPrompt: ev.refinedPrompt,
+                durationSeconds: ev.suggestedDuration,
+              });
+              updateBeat(beat.beatId, { status: "ready-to-generate" });
+            }
+            setStreamingThought("");
+          } else if (ev.type === "error") {
+            setError(ev.message);
+          }
         }
       } catch (err) {
         if (!active || cancelledRef.current) return;
+        // AbortError from intentional unmount → silent. Anything else surfaces.
+        if ((err as Error)?.name === "AbortError") return;
         setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       } finally {
         if (active && !cancelledRef.current) setInFlight(false);
@@ -207,6 +245,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     return () => {
       active = false;
       cancelledRef.current = true;
+      ctrl.abort();
     };
     // beat.beatId is the stable identity for this drawer instance; deps deliberate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -215,40 +254,56 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // Single source for the user-message → agent-reply round-trip. Used by
   // both the form submit (with optimistic local append) and the Retry
   // button (which doesn't re-append since the user turn is already in state).
+  // Streams via /api/agent/stream so the wait reads as live thinking,
+  // not a frozen loader.
   const callAgent = async (userMessage: string) => {
     if (!manifest) return;
     setInFlight(true);
     setError(null);
+    setStreamingThought("");
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     try {
-      const res = await api.agent({
-        manifest,
-        beatId: beat.beatId,
-        userMessage,
-      });
-      if (cancelledRef.current) return;
-
-      if (res.kind === "question") {
-        appendAgentTurn(beat.beatId, scene.sceneId, {
-          role: "agent",
-          content: res.question,
-          timestamp: nowISO(),
-        });
-      } else {
-        updateScene(beat.beatId, scene.sceneId, {
-          refinedPrompt: res.refinedPrompt,
-          durationSeconds: res.suggestedDuration,
-        });
-        updateBeat(beat.beatId, { status: "ready-to-generate" });
-        appendAgentTurn(beat.beatId, scene.sceneId, {
-          role: "agent",
-          content: `Cued. ${res.sceneSummary}. Call action when ready.`,
-          timestamp: nowISO(),
-        });
+      for await (const ev of api.agentStream(
+        { manifest, beatId: beat.beatId, userMessage },
+        ctrl.signal,
+      )) {
+        if (cancelledRef.current) break;
+        if (ev.type === "thought") {
+          setStreamingThought((prev) => prev + ev.chunk);
+        } else if (ev.type === "result") {
+          if (ev.kind === "question") {
+            appendAgentTurn(beat.beatId, scene.sceneId, {
+              role: "agent",
+              content: ev.question,
+              timestamp: nowISO(),
+            });
+            setLatestSuggestions(ev.suggestedAnswers ?? null);
+          } else {
+            updateScene(beat.beatId, scene.sceneId, {
+              refinedPrompt: ev.refinedPrompt,
+              durationSeconds: ev.suggestedDuration,
+            });
+            updateBeat(beat.beatId, { status: "ready-to-generate" });
+            appendAgentTurn(beat.beatId, scene.sceneId, {
+              role: "agent",
+              content: `Cued. ${ev.sceneSummary}. Call action when ready.`,
+              timestamp: nowISO(),
+            });
+            // Beat is sufficient — no more questions, drop any stale pills.
+            setLatestSuggestions(null);
+          }
+          setPendingRetryMessage(null);
+          setStreamingThought("");
+        } else if (ev.type === "error") {
+          setError(ev.message);
+          setPendingRetryMessage(userMessage);
+        }
       }
-      setPendingRetryMessage(null);
     } catch (err) {
       if (cancelledRef.current) return;
+      if ((err as Error)?.name === "AbortError") return;
       setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       setPendingRetryMessage(userMessage);
     } finally {
@@ -267,8 +322,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     }
 
     // Visible user-turn content includes a small ref tag the bubble can
-    // render. Backend gets a `[refs:N]` marker prefix so the mock agent
-    // can acknowledge.
+    // render. Backend gets a `[refs:N]` marker prefix so the agent can
+    // acknowledge the dropped frames in its next reply.
     const refCount = imageRefs.length;
     const refMarker = refCount > 0 ? `[refs:${refCount}] ` : "";
     const visibleContent =
@@ -283,12 +338,26 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     });
     setDraft("");
     setImageRefs([]);
+    setLatestSuggestions(null);
     await callAgent(`${refMarker}${trimmed}`);
   };
 
   const retry = async () => {
     if (!pendingRetryMessage || inFlight) return;
     await callAgent(pendingRetryMessage);
+  };
+
+  // Click on a suggested-answer pill = submit it as a user turn (skipping
+  // the typing). Mirrors the editor's followup pattern.
+  const handleSuggestion = async (suggestion: string) => {
+    if (inFlight || !manifest) return;
+    appendAgentTurn(beat.beatId, scene.sceneId, {
+      role: "user",
+      content: suggestion,
+      timestamp: nowISO(),
+    });
+    setLatestSuggestions(null);
+    await callAgent(suggestion);
   };
 
   return (
@@ -305,8 +374,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-md border-2 border-dashed border-brand-ember/60 bg-brand-ember/5 backdrop-blur-sm"
         >
-          <div className="caption-track text-[11px] text-brand-ember">
-            Drop frames · mood · references
+          <div className="font-display text-[14px] italic text-brand-ember">
+            Drop frames, mood, references.
           </div>
         </div>
       ) : null}
@@ -325,7 +394,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           push the input form off-viewport. The drawer body already has
           `overflow-hidden flex-1`, so `min-h-0` here is what actually
           enables the inner overflow-y-auto to clip rather than grow. */}
-      <div ref={scrollRef} className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1">
+      <div
+        ref={scrollRef}
+        data-lenis-prevent
+        className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1"
+      >
         {(() => {
           const turns = scene.conversation;
           const VISIBLE = 4; // last ~2 questions + 2 answers
@@ -338,7 +411,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllTurns(true)}
-                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3 py-1 caption-track text-[10px] text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-[12px] font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                   aria-label={`Show ${collapsedCount} earlier turn${collapsedCount === 1 ? "" : "s"}`}
                 >
                   ↑ {collapsedCount} earlier turn{collapsedCount === 1 ? "" : "s"}
@@ -348,7 +421,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllTurns(false)}
-                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3 py-1 caption-track text-[10px] text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-[12px] font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                   aria-label="Collapse earlier turns"
                 >
                   ↓ collapse
@@ -365,15 +438,39 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             </>
           );
         })()}
+        {/* Live thinking display — replaces the static "Composing the
+            shot." spinner with the actual Gemini thinking tokens as
+            they stream in. If thinking is empty (cold start, no events
+            yet), fall back to the static line. Once a thought chunk
+            arrives, it appears character-by-character — same animation
+            principle as agent bubbles, but driven by the SSE stream
+            instead of TextSplitter. Italic display Fraunces matches
+            the rest of the agent voice. */}
         {inFlight ? (
-          <div
-            role="status"
-            aria-live="polite"
-            className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary"
-          >
-            <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
-            Composing the shot.
-          </div>
+          streamingThought ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-start gap-2 font-display text-[14px] italic leading-relaxed text-fg-tertiary"
+            >
+              <Loader2
+                size={12}
+                className="mt-1 animate-spin flex-shrink-0"
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
+              <span className="opacity-85">{streamingThought}</span>
+            </div>
+          ) : (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
+            >
+              <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
+              Composing the shot.
+            </div>
+          )
         ) : null}
         {error ? (
           <div
@@ -396,6 +493,63 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         ) : null}
       </div>
 
+      {/* Suggested answers — three "or pick one" options the agent emitted
+          with its latest question. Clicking submits the suggestion as a
+          user turn (skipping the typing). Cleared on user submit, on a
+          new agent turn without suggestions, or when the beat goes
+          sufficient. Eyebrow + sparkle icon make it unmistakable that
+          these are AI hand-offs the user can lean on; AnimatePresence
+          fades them in/out so they don't pop. */}
+      {/* Suggested answers — three "or pick one" hand-offs the agent
+          emitted with its latest question. Mirrors the mock-frontend's
+          "suggested · click to send · or write your own below" pattern.
+          Clicking a pill submits it as a user turn (skipping typing).
+          The eyebrow copy explicitly tells the user they can either
+          click a pill OR type below — the previous "or pick one"
+          underplayed that they had agency to ignore the pills. */}
+      <AnimatePresence initial={false}>
+        {latestSuggestions && !inFlight ? (
+          <motion.div
+            key="suggestions"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            className="mt-3 space-y-2 border-t border-brand-ember-dim/30 pt-3"
+          >
+            <div className="flex items-center gap-1.5 caption-track text-[10px] text-brand-ember/80">
+              <Sparkles size={11} strokeWidth={1.7} aria-hidden="true" />
+              <span>suggested · click to send · or write your own below</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {latestSuggestions.map((s, i) => (
+                <motion.button
+                  key={i}
+                  type="button"
+                  onClick={() => void handleSuggestion(s)}
+                  disabled={inFlight}
+                  initial={{ opacity: 0, y: -3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.22, delay: 0.05 + i * 0.04, ease: [0.16, 1, 0.3, 1] }}
+                  whileHover={{ y: -1 }}
+                  whileTap={{ scale: 0.985 }}
+                  className={cn(
+                    "rounded-lg border border-brand-ember-dim/35 bg-brand-ember/[0.04] px-3.5 py-2.5",
+                    "text-left font-body text-[13px] leading-snug text-fg-secondary",
+                    "transition-[border-color,background-color,color] duration-200 ease-out",
+                    "hover:border-brand-ember/65 hover:bg-brand-ember/10 hover:text-fg-primary",
+                    "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember",
+                    "disabled:pointer-events-none disabled:opacity-50",
+                  )}
+                >
+                  {s}
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
       {/* Reference-frame thumbnail strip — appears above the input when
           images have been dropped. Each thumb has an X to remove. */}
       {imageRefs.length > 0 ? (
@@ -416,7 +570,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 type="button"
                 onClick={() => removeRef(ref.id)}
                 aria-label={`Remove ${ref.name}`}
-                className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-bg-base/80 text-fg-secondary opacity-0 transition-opacity group-hover:opacity-100 hover:text-fg-primary"
+                // Always-visible at low opacity so users discover it
+                // without hovering each thumbnail to find the X. Bumps
+                // to full on group hover.
+                className="absolute right-0.5 top-0.5 grid h-5 w-5 place-items-center rounded-full bg-bg-base/85 text-fg-secondary opacity-70 transition-opacity group-hover:opacity-100 hover:text-fg-primary"
               >
                 <X size={10} strokeWidth={1.5} />
               </button>
@@ -425,6 +582,12 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         </div>
       ) : null}
 
+      {/* Input row — every interactive element shares h-9 (36px) so the
+          form sits on a single horizontal baseline. Previously the input
+          had py-2 (~40px) and Send was size="sm" (h-8 / 32px) — the
+          baselines drifted by 4-8px depending on font metrics, visible
+          as the buttons floating above the input text. Now: input
+          h-9, image h-9, voice h-9, Send h-9. */}
       <form onSubmit={submit} className="mt-3 flex items-center gap-2 border-t border-fg-tertiary/30 pt-3">
         <input
           value={draft}
@@ -437,7 +600,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 ? "Listening…"
                 : "Direct, or speak it."
           }
-          className="flex-1 bg-transparent px-1 py-2 font-body text-sm text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
+          className="h-9 flex-1 bg-transparent px-1 font-body text-sm leading-none text-fg-primary placeholder:text-fg-tertiary focus:outline-none disabled:opacity-50"
         />
         <button
           type="button"
@@ -470,11 +633,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               inFlight && "opacity-40 pointer-events-none",
             )}
           >
-            {speech.listening ? (
-              <MicOff size={14} strokeWidth={1.5} aria-hidden="true" />
-            ) : (
-              <Mic size={14} strokeWidth={1.5} aria-hidden="true" />
-            )}
+            {/* Always Mic — the button container's ember-pulse + ember
+                bg communicates "actively listening." Flipping to MicOff
+                while the mic was actively capturing read as the state
+                being inverted. */}
+            <Mic size={14} strokeWidth={1.5} aria-hidden="true" />
           </button>
         ) : null}
         <Button
@@ -482,6 +645,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           size="sm"
           disabled={(!draft.trim() && imageRefs.length === 0) || inFlight}
           aria-label={inFlight ? "Sending message" : "Send message"}
+          // Override size="sm" h-8 → h-9 so Send sits on the same
+          // baseline as the round image / voice buttons.
+          className="h-9 px-3.5 text-[12.5px]"
         >
           {inFlight ? (
             <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />

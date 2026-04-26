@@ -51,16 +51,17 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
 
   const isApproved = beat.status === "approved" || scene.approved;
 
-  // Prefer mood-graded Cloudinary URL; fall back to raw clipUrl from the
-  // mock backend if publicId isn't available.
+  // Mood-graded Cloudinary URL when a publicId exists. The real backend
+  // always emits a publicId on success — null = an actual no-clip state,
+  // which the empty render below handles.
   const src = scene.clipPublicId
     ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
-    : scene.clipUrl ?? "";
+    : "";
 
   if (!src) {
     return (
-      <div className="grid h-full place-items-center font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary">
-        Clip not yet available
+      <div className="grid h-full place-items-center font-display text-[14px] italic text-fg-tertiary">
+        Clip not yet available.
       </div>
     );
   }
@@ -109,10 +110,10 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="flex items-baseline justify-between font-mono text-[10px] uppercase tracking-[0.18em]"
+        className="flex items-baseline justify-between font-body text-[12px] font-medium"
       >
         <span className="text-fg-tertiary">Refined prompt</span>
-        <span className="text-fg-tertiary/70 tabular-nums">
+        <span className="font-mono text-[12px] tabular-nums text-fg-tertiary/70">
           {scene.durationSeconds ?? beat.archetype.suggestedDuration}s
         </span>
       </motion.div>

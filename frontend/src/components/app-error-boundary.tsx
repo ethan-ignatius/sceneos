@@ -44,7 +44,7 @@ export class AppErrorBoundary extends Component<Props, State> {
     return (
       <div className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
         <div className="max-w-2xl space-y-4">
-          <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-state-error">
+          <div className="font-body text-[12px] font-medium text-state-error">
             Uncaught render error
           </div>
           <p className="font-display text-2xl italic leading-snug text-fg-primary">
@@ -55,7 +55,7 @@ export class AppErrorBoundary extends Component<Props, State> {
           </pre>
           {this.state.info?.componentStack ? (
             <div className="rounded-md border border-fg-tertiary/25 bg-bg-elev-1/60 p-3">
-              <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-fg-tertiary">
+              <div className="mb-2 font-body text-[12px] font-medium text-fg-tertiary">
                 Component stack
               </div>
               <pre className="overflow-auto font-mono text-[10px] leading-relaxed text-fg-tertiary">
@@ -72,7 +72,7 @@ export class AppErrorBoundary extends Component<Props, State> {
             <button
               type="button"
               onClick={this.reset}
-              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
             >
               Try again
             </button>
@@ -83,7 +83,7 @@ export class AppErrorBoundary extends Component<Props, State> {
                 localStorage.removeItem("sceneos:prompt");
                 location.href = "/";
               }}
-              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
             >
               Reset session and go home
             </button>

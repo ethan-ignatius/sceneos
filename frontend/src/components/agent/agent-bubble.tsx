@@ -22,8 +22,12 @@ interface AgentBubbleProps {
  * (see docs/AGENT_FLOW.md §4). User bubbles render instantly — the user
  * already knows what they wrote; revealing it would feel patronising.
  *
- * Reveal cap: total reveal time ≤ 1.6s regardless of length. Long answers
- * scale per-char step down accordingly.
+ * Reveal pacing is adaptive: total reveal scales with text length, clamped
+ * to [0.4s, 1.6s]. Short replies ("Got it.") get ~0.4s so they don't feel
+ * laggy; long replies cap at 1.6s so the user isn't waiting on a slow type
+ * animation. The previous fixed 1.6s cap made every short answer feel
+ * artificially slow OR (when paired with a per-char step) flicker by
+ * faster than the eye registers.
  *
  * Wrapped in React.memo so a parent re-render (e.g., a sibling in the stream
  * appending a new turn) doesn't recompute character delays mid-animation —
@@ -32,6 +36,10 @@ interface AgentBubbleProps {
  */
 function AgentBubbleImpl({ turn, reveal = true }: AgentBubbleProps) {
   const isAgent = turn.role === "agent";
+  // Adaptive total: ~25 chars/second feels like deliberate-but-quick typing.
+  // 0.4s floor keeps "Got it." from being instant; 1.6s ceiling keeps long
+  // answers from dragging on.
+  const adaptiveTotalDelay = Math.max(0.4, Math.min(1.6, turn.content.length * 0.022));
   return (
     <motion.div
       initial={{ opacity: 0, y: 6, scale: 0.97 }}
@@ -55,7 +63,7 @@ function AgentBubbleImpl({ turn, reveal = true }: AgentBubbleProps) {
             className="reveal-chars"
             delayStrategy="sequential"
             perCharStep={0.025}
-            maxTotalDelay={1.6}
+            maxTotalDelay={adaptiveTotalDelay}
             ariaLabel={turn.content}
           />
         ) : (

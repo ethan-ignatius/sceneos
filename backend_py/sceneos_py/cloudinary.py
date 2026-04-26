@@ -68,6 +68,52 @@ def color_grade_for(mood: str) -> str:
     }.get(mood, "")
 
 
+# Effects we trust to splice into a Cloudinary delivery URL. The editor agent
+# is an LLM and can hallucinate effect names or inject characters that break
+# the URL parser; this allowlist is the gate. Anything outside this set gets
+# silently dropped at normalize time.
+_ALLOWED_VIDEO_EFFECTS: set[str] = {
+    "brightness", "contrast", "saturation", "vibrance", "hue", "gamma",
+    "blue", "red", "green", "sepia", "blur", "sharpen", "noise",
+    "vignette", "fade", "pixelate", "art", "grayscale", "negate",
+}
+
+
+def sanitize_color_grade(grade: str | None) -> str:
+    """
+    Validate a Cloudinary effect string before we paste it into a URL.
+
+    Format: comma-separated `e_<name>:<int>` segments. Anything that doesn't
+    match the shape — empty, unknown effect name, non-integer value, stray
+    characters — is dropped from the output. Returns "" if nothing survives.
+
+    Hard-blocks LLM hallucinations like `e_destroy_world:9999` or value
+    injection like `e_brightness:5/fl_attachment:evil`.
+    """
+    if not grade or not isinstance(grade, str):
+        return ""
+    cleaned: list[str] = []
+    for part in grade.split(","):
+        part = part.strip()
+        if not part.startswith("e_") or ":" not in part:
+            continue
+        name, _, value = part[2:].partition(":")
+        name = name.strip().lower()
+        value = value.strip()
+        if name not in _ALLOWED_VIDEO_EFFECTS:
+            continue
+        try:
+            int_value = int(float(value))
+        except (TypeError, ValueError):
+            continue
+        # Cloudinary accepts wide ranges per effect; clamp to a sane band so
+        # an out-of-range value never hard-fails. -100..100 covers every
+        # effect we use.
+        int_value = max(-100, min(100, int_value))
+        cleaned.append(f"e_{name}:{int_value}")
+    return ",".join(cleaned)
+
+
 # Named look presets — picked by the editor agent as a single LUT-style choice
 # applied across the whole cut. Mood color grades stay per-beat; this is the
 # editor's global pass on top.
@@ -107,12 +153,54 @@ def _escape_caption(text: str) -> str:
 _NORMALIZE = "c_fill,w_1920,h_1080"
 
 
+def _static_caption_overlay(text: str) -> str | None:
+    """Build a Cloudinary l_text overlay for a per-clip caption.
+
+    Used by the simple `build_splice_url` path (one caption per source clip,
+    spans the whole clip's duration). For the timeline-anchored editor path
+    see `_caption_overlay(text, start_at, duration, position)` further down.
+
+    Visual: lower-third position, pure white text with a thin black stroke.
+    Font: Arial bold at 52pt, ships on every Cloudinary cloud (no TTF upload).
+
+    Caption legibility rules learned the hard way:
+      - WHITE (`co_white`), not cream. Cream + a thick stroke produces a
+        gray fringe on the letter edges that reads as muddy on dark frames.
+      - Outline 2px (`e_outline:2:000000`), not 4px. A 4px stroke at 60pt
+        bleeds adjacent letters into each other — looks like the text is
+        overlapping itself. 2px is enough for a sea of sea-spray + storm.
+      - Font 52pt, not 60pt. 60pt at 1080p is too dense for the lower-third
+        and forces line-wrap on dialogue captions; 52pt fits tight cleanly.
+
+    URL-syntax note (load-bearing): Cloudinary's text-overlay positioning
+    (`g_<gravity>`, `x_`, `y_`) MUST live in the `fl_layer_apply` segment,
+    not the `l_text:` opener. Putting `g_south,y_120` next to `l_text:`
+    silently centers the caption on the canvas — the bug that made the
+    first lighthouse bake unwatchable (text covering the keeper's chest
+    and face for 6 seconds at a time). Splitting into two segments fixes it.
+    """
+    if not text or not text.strip():
+        return None
+    safe = text.strip().replace(",", " ").replace("/", " ").replace("\n", " ")
+    safe = safe[:120]
+    encoded = quote(safe, safe="")
+    # Segment 1 — declare the text layer (font, color, stroke).
+    # Segment 2 — apply the layer with positioning (gravity + offset).
+    return (
+        f"l_text:Arial_52_bold:{encoded},co_white,e_outline:2:000000"
+        f"/fl_layer_apply,g_south,y_140"
+    )
+
+
 def _clip_segments(clip: dict, normalize: bool = True) -> list[str]:
     out: list[str] = []
     if normalize:
         out.append(_NORMALIZE)
     if clip.get("colorGrade"):
         out.append(clip["colorGrade"])
+    caption_seg = _static_caption_overlay(clip.get("caption") or "")
+    if caption_seg:
+        out.append(caption_seg)
     return out
 
 
@@ -120,32 +208,59 @@ def build_splice_url(
     clips: list[dict],
     audio_public_id: str | None = None,
     normalize: bool = True,
+    music_volume: int = -28,
 ) -> str | None:
     """
     Cloudinary fl_splice URL builder.
 
     Mirrors backend/src/services/cloudinary.ts. Each clip is normalized to a
     common 1920x1080 frame before splicing so mixed provider outputs stitch
-    cleanly. Mood color grade applied when provided per clip.
+    cleanly. Mood color grade applied when provided per clip. Captions baked
+    in per-clip via l_text. Music ducked under the native clip audio so
+    Veo 3's dialogue / SFX / ambient stay readable.
+
+    Args:
+      music_volume: dB attenuation for the music bed (negative = quieter).
+        Default -28dB sits the music well underneath dialogue + SFX. Pass 0
+        to leave music at full volume (legacy behavior).
     """
     if not clips:
         return None
     base, *overlays = clips
     segments: list[str] = []
-    segments.extend(_clip_segments(base, normalize))
+    base_segs = _clip_segments(base, normalize)
+    if base_segs:
+        # Base clip transforms apply directly (no layer wrapping needed).
+        # The caption helper emits its own /fl_layer_apply because l_text
+        # IS its own layer over the base — that part is correct.
+        segments.extend(base_segs)
 
+    # Overlay clips for splicing. Cloudinary's canonical syntax:
+    #   l_video:<id>,fl_splice / <transforms> / fl_layer_apply
+    # The fl_splice flag MUST be in the same URL component as l_video:
+    # (the layer opener), NOT in the fl_layer_apply component (the closer).
+    # Putting fl_splice in the closer silently produces the base clip alone
+    # (Cloudinary treats the overlay as a regular layer without splicing).
     for clip in overlays:
-        layer = f"l_video:{_layer_id(clip['publicId'])}"
+        layer = f"l_video:{_layer_id(clip['publicId'])},fl_splice"
         transforms = _clip_segments(clip, normalize)
         if transforms:
             segments.append(layer)
             segments.extend(transforms)
-            segments.append("fl_layer_apply,fl_splice")
+            segments.append("fl_layer_apply")
         else:
-            segments.append(f"{layer},fl_splice")
+            segments.append(f"{layer}/fl_layer_apply")
 
     if audio_public_id:
-        segments.append(f"l_audio:{_layer_id(audio_public_id)}")
+        # e_volume ducks the music under the clip's native audio. Veo 3
+        # already baked dialogue + ambient into each clip, so we want music
+        # ~28dB below that, not on top of it.
+        if music_volume:
+            segments.append(
+                f"l_audio:{_layer_id(audio_public_id)},e_volume:{music_volume}/fl_layer_apply"
+            )
+        else:
+            segments.append(f"l_audio:{_layer_id(audio_public_id)}")
 
     prefix = f"{'/'.join(segments)}/" if segments else ""
     return f"https://res.cloudinary.com/{CLOUD}/video/upload/{prefix}{base['publicId']}.mp4"
@@ -184,13 +299,21 @@ def _caption_overlay(text: str, start_at: float, duration: float, position: str 
     A single caption overlay timed to a specific window in the spliced timeline.
 
     `g_<position>` controls anchor (south = bottom-center, north = top-center).
-    `y_60` lifts off the absolute edge so the text sits in the safe zone.
+    `y_140` lifts off the absolute edge so the text sits in the lower-third
+    safe zone (broadcast convention). Arial bold 48pt with a 2px black
+    outline on pure white reads cleanly on every frame without smushing
+    adjacent letters together (which is what 4px did at 56pt).
+
+    URL-syntax note (load-bearing): Cloudinary's text-overlay positioning
+    (`g_*`, `x_`, `y_`) MUST be in the `fl_layer_apply` segment alongside
+    `so_/du_`, NOT in the `l_text:` opener. Inline positioning silently
+    falls back to canvas-center, which is what broke the first bake.
     """
     safe = _escape_caption(text)
     return (
-        f"l_text:Inter_36_bold:{safe},co_white,bo_2px_solid_black,"
-        f"g_{position},y_60/"
-        f"fl_layer_apply,so_{round(start_at, 2)},du_{round(duration, 2)}"
+        f"l_text:Arial_48_bold:{safe},co_white,e_outline:2:000000"
+        f"/fl_layer_apply,g_{position},y_140,"
+        f"so_{round(start_at, 2)},du_{round(duration, 2)}"
     )
 
 
@@ -213,7 +336,7 @@ def _watermark_overlay(public_id: str) -> str:
     return f"l_{_layer_id(public_id)},g_south_east,x_24,y_24"
 
 
-def build_editor_url(decisions: dict) -> str | None:
+def build_editor_url(decisions: dict, cloud_name: str | None = None) -> str | None:
     """
     Build the final Cloudinary delivery URL for an EditDecisions object.
 
@@ -270,7 +393,13 @@ def build_editor_url(decisions: dict) -> str | None:
         cumulative_duration = max(contributed, 0)
 
     for clip in overlays:
-        layer = f"l_video:{_layer_id(clip['publicId'])}"
+        # CRITICAL Cloudinary URL-syntax rule: `fl_splice` MUST live in the
+        # OPENER (l_video:<id>,fl_splice), NOT the closer (fl_layer_apply,
+        # fl_splice). Putting it in the closer silently produces the base
+        # clip alone — Cloudinary treats the overlay as a regular layer
+        # without splicing it onto the timeline. Same rule as
+        # `build_splice_url` above; see the comment there for context.
+        layer = f"l_video:{_layer_id(clip['publicId'])},fl_splice"
         transforms: list[str] = [_NORMALIZE]
         trim = _trim_segment(clip.get("trimStart"), clip.get("trimEnd"))
         if trim:
@@ -279,11 +408,11 @@ def build_editor_url(decisions: dict) -> str | None:
             transforms.append(clip["colorGrade"])
         transition = clip.get("transitionMs")
         if transition:
-            # e_fade:NNN before fl_splice gives a cross-fade INTO this layer.
+            # e_fade:NNN gives a cross-fade INTO this spliced layer.
             transforms.append(f"e_fade:{int(transition)}")
         segments.append(layer)
         segments.append(",".join(transforms))
-        segments.append("fl_layer_apply,fl_splice")
+        segments.append("fl_layer_apply")
 
         contributed = (clip.get("trimEnd") or clip.get("durationSeconds") or 0) - (clip.get("trimStart") or 0)
         cumulative_duration += max(contributed, 0)
@@ -333,7 +462,8 @@ def build_editor_url(decisions: dict) -> str | None:
         segments.append(_watermark_overlay(decisions["watermarkPublicId"]))
 
     prefix = f"{'/'.join(segments)}/" if segments else ""
-    return f"https://res.cloudinary.com/{CLOUD}/video/upload/{prefix}{base['publicId']}.mp4"
+    cloud = cloud_name or CLOUD
+    return f"https://res.cloudinary.com/{cloud}/video/upload/{prefix}{base['publicId']}.mp4"
 
 
 def edit_decisions_total_duration(decisions: dict) -> float:
@@ -374,23 +504,65 @@ def sign_upload(folder: str = "sceneos/user-media") -> dict:
 
 
 async def upload_video_from_url(remote_url: str, public_id: str) -> dict:
+    """Upload a video to Cloudinary by URL or data URI.
+
+    The data-URI path is used by `vertex_veo._persist` to forward Veo's
+    base64 response. A 1080p / 8s Veo 3.1 clip after base64 inflation can
+    exceed 25 MB — that's a multi-second TLS upload, and 7 in parallel
+    against a single Cloudinary endpoint will sometimes hit transient
+    connection-reset / EOF errors. We:
+      - Bump the timeout to 300s so a slow upload doesn't get cut.
+      - Retry a small number of times on transport errors and 5xx, with
+        backoff. 4xx (bad request, auth, public_id collision) is NOT
+        retried — those are deterministic and won't get better.
+    """
     cloud, api_key, api_secret = _cloudinary_creds()
     if not api_key or not api_secret or not cloud:
         raise RuntimeError("missing Cloudinary credentials (set CLOUDINARY_URL or the three explicit vars)")
     url = f"https://api.cloudinary.com/v1_1/{cloud}/video/upload"
-    async with httpx.AsyncClient(timeout=120) as client:
-        res = await client.post(
-            url,
-            data={"file": remote_url, "public_id": public_id, "overwrite": "true"},
-            auth=(api_key, api_secret),
-        )
-        res.raise_for_status()
-    body = res.json()
-    return {
-        "publicId": body["public_id"],
-        "url": body.get("secure_url"),
-        "durationSeconds": body.get("duration", 0),
-    }
+
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                res = await client.post(
+                    url,
+                    data={"file": remote_url, "public_id": public_id, "overwrite": "true"},
+                    auth=(api_key, api_secret),
+                )
+            if res.status_code >= 500:
+                last_exc = RuntimeError(
+                    f"Cloudinary {res.status_code} (attempt {attempt + 1}/3): {res.text[:300]}"
+                )
+                await _httpx_backoff(attempt)
+                continue
+            res.raise_for_status()
+            body = res.json()
+            return {
+                "publicId": body["public_id"],
+                "url": body.get("secure_url"),
+                "durationSeconds": body.get("duration", 0),
+            }
+        except (httpx.TransportError, httpx.TimeoutException) as exc:
+            # Catches the full transient family: RemoteProtocolError, ReadError,
+            # WriteError, ConnectError, PoolTimeout, ReadTimeout, WriteTimeout,
+            # ConnectTimeout. We've actually observed WriteTimeout in the
+            # 7-clip parallel rebake — that's what surfaces as `persist
+            # error: WriteTimeout('')` in the Veo job log.
+            last_exc = exc
+            await _httpx_backoff(attempt)
+            continue
+    raise RuntimeError(
+        f"Cloudinary video upload exhausted retries (public_id={public_id}): {last_exc!r}"
+    )
+
+
+async def _httpx_backoff(attempt: int) -> None:
+    """Exponential backoff with a small jitter — 1.5s, 3s, 6s."""
+    import asyncio as _asyncio
+    import random as _random
+    delay = 1.5 * (2 ** attempt) + _random.uniform(0, 0.5)
+    await _asyncio.sleep(delay)
 
 
 async def upload_audio_from_bytes(content: bytes, public_id: str, mime: str = "audio/mpeg") -> dict:

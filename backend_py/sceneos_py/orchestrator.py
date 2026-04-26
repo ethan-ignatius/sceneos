@@ -77,6 +77,8 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
     framing = beat_facts.get("framing") or motion_preset.get("composition", "")
     character = beat_facts.get("characterDescription") or ""
     location = beat_facts.get("locationDescription") or ""
+    voice_line = (beat_facts.get("voiceLine") or "").strip()
+    caption_line = (beat_facts.get("captionLine") or "").strip()
 
     image_prompt = (
         f"Cinematic still of {subject} {action}. Setting: {setting}. "
@@ -95,10 +97,19 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
     return {
         "imagePrompt": image_prompt,
         "motionPrompt": motion_prompt,
+        # voiceLine + captionLine ride along on the clipPrompt so:
+        # 1. vertex_veo.generate() can append the dialogue to the prompt
+        #    (Veo 3 will lip-sync it natively when it sounds like dialogue,
+        #    or generate matching ambient audio when it reads as VO).
+        # 2. The post-stitch step uses the same line for narration TTS +
+        #    on-screen captions, so the audio + captions match what's
+        #    embedded in the clip.
+        "voiceLine": voice_line,
+        "captionLine": caption_line,
         "aspectRatio": aspect_ratio,
         "resolution": "1080p",
         "durationSeconds": duration,
-        "preferredModel": "higgsfield-ai/dop/standard",
+        "preferredModel": "veo-3.1-generate-001",
     }
 
 

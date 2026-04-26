@@ -10,6 +10,7 @@ import { NodeMesh } from "./node-mesh";
 import { CameraRig, type PanState, type OrbitState, type ZoomState } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
+import { CosmicScene } from "./cosmic-scene";
 
 /**
  * Custom event the route chrome (Esc handler, Re-center button) dispatches
@@ -89,6 +90,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   // position=…>` prop — which read on screen as the orbs blinking out.
   const positions = useMemo(() => computeBeatPositions(beats), [beats.length]);
 
+  // First unstarted beat — drives the "start here" guidance overlay.
+  // Pending or questioning both count as "not yet committed." Once every
+  // beat is past those states, guidance vanishes entirely (the canvas
+  // becomes a working board, not an onboarding board).
+  const guidedTargetId = useMemo(
+    () => beats.find((b) => b.status === "pending" || b.status === "questioning")?.beatId ?? null,
+    [beats],
+  );
+
   // Camera distance scales with beat count. The new wider spread (1.55x)
   // means a 7-beat timeline is ~10.85 world-units wide; we need to be far
   // enough back that all of them sit comfortably inside the 42° vertical
@@ -154,23 +164,36 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      // Maya/Blender-style binding (per user direction):
+      //   Middle drag         → orbit around scene/active beat (NEW — was pan)
+      //   Shift + left drag   → orbit (kept as a power-user alt for trackpad
+      //                         users who don't have a middle button)
+      //   Left drag on empty  → pan
+      //   Wheel               → zoom
+      //
+      // No setPointerCapture: capture redirects pointermove events to the
+      // captured target only, which broke the global CinematicCursor's
+      // window-level pointermove listener — the cursor froze in place
+      // mid-drag. Instead we bind move/up on WINDOW so the drag keeps
+      // working off-canvas AND the cursor keeps tracking. (Pointer
+      // capture was originally added so drags didn't break when the
+      // pointer left the canvas; window-bound listeners solve the same
+      // problem without the cursor side-effect.)
       const isMiddle = e.button === 1;
-      // Left on empty: pan (default) or orbit (with shift). Left on a
-      // planet is reserved for the planet's onClick to activate the beat.
       const isLeftEmpty = e.button === 0 && hoveredBeatIdRef.current === null;
       if (!isMiddle && !isLeftEmpty) return;
 
       anchorX = e.clientX;
       anchorY = e.clientY;
-      el.setPointerCapture(e.pointerId);
 
-      if (isLeftEmpty && e.shiftKey) {
+      if (isMiddle || (isLeftEmpty && e.shiftKey)) {
+        // Orbit. Middle preventDefault suppresses the browser's auto-
+        // scroll cursor.
+        if (isMiddle) e.preventDefault();
         orbitRef.current.active = true;
         orbitRef.current.didDrag = false;
       } else {
-        // Pan. Middle-button preventDefault suppresses the browser's
-        // auto-scroll cursor; left-button works without it.
-        if (isMiddle) e.preventDefault();
+        // Pan (left-drag on empty space).
         panRef.current.active = true;
         setPanning(true);
         startOffsetX = panRef.current.offset[0];
@@ -211,15 +234,10 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       }
     };
 
-    const onPointerUp = (e: PointerEvent) => {
+    const onPointerUp = () => {
       if (panRef.current.active) {
         panRef.current.active = false;
         setPanning(false);
-        try {
-          el.releasePointerCapture(e.pointerId);
-        } catch {
-          /* released already; no-op */
-        }
         document.body.style.cursor = "";
         return;
       }
@@ -227,11 +245,6 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         orbitRef.current.active = false;
         // Leave didDrag set so onPointerMissed can suppress the
         // click-deactivates-beat behavior; reset on next pointerdown.
-        try {
-          el.releasePointerCapture(e.pointerId);
-        } catch {
-          /* noop */
-        }
         document.body.style.cursor = "";
       }
     };
@@ -249,9 +262,12 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
 
     el.addEventListener("pointerdown", onPointerDown);
-    el.addEventListener("pointermove", onPointerMove);
-    el.addEventListener("pointerup", onPointerUp);
-    el.addEventListener("pointercancel", onPointerUp);
+    // Move + up bound on WINDOW (not el) so drag continues if pointer
+    // leaves the canvas AND the cinematic-cursor's window-level
+    // pointermove listener keeps receiving events during the drag.
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     el.addEventListener("wheel", onWheel, { passive: false });
 
     // External reset (Esc / Re-center button) — zero pan + orbit + zoom.
@@ -285,9 +301,9 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
 
     return () => {
       el.removeEventListener("pointerdown", onPointerDown);
-      el.removeEventListener("pointermove", onPointerMove);
-      el.removeEventListener("pointerup", onPointerUp);
-      el.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       el.removeEventListener("wheel", onWheel);
       window.removeEventListener(RESET_CAMERA_EVENT, onReset);
       window.removeEventListener(GOTO_CAMERA_EVENT, onGoto);
@@ -299,7 +315,11 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       <Canvas
         camera={{ position: [0, 0.4, cameraZ], fov: 42 }}
         gl={{ antialias: true, powerPreference: "high-performance" }}
-        dpr={[1, 1.75]}
+        // DPR cap raised 1.75 → 2 so retina screens render the canvas at
+        // native pixel density instead of an 87.5% downsample. Combined
+        // with anisotropy 16 on each planet texture, surface detail stays
+        // crisp under zoom. (1.5 max keeps mid-tier mobile from frying.)
+        dpr={[1, Math.min(window.devicePixelRatio || 2, 2)]}
         // Force ACES tone mapping so postprocess Bloom uses correct luminance
         // space — prevents ember from clamping toward white. Issues #046 + #166.
         onCreated={({ gl }) => {
@@ -328,30 +348,47 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         <pointLight position={[2.5, 3, 5]} intensity={2.4} color="#f0a868" />
         <pointLight position={[-3, -1, 2]} intensity={1.0} color="#5e7080" />
 
-        {/* INNER Suspense boundary — critical. Without this, any texture or
-            HDR load that suspends inside the Canvas (Environment HDR, planet
-            textures, ring alpha) propagates UP through the React tree to the
-            outer Suspense in canvas-route.tsx, which unmounts the WHOLE
-            BeatMap3D and shows "Composing the canvas." Result: planets pop
-            in, then a transient cache miss on a single texture takes them
-            all down. Localising the boundary here means a re-suspension only
-            briefly hides the suspended subtree, never the entire canvas.
-            Fallback is null (an invisible WebGL "gap") because we never want
-            DOM chrome to flash inside the GL surface. */}
+        {/* Environment HDR in its OWN Suspense boundary so its (relatively
+            slow) load doesn't gate the planets. Without this, the HDR
+            being mid-flight would suspend the inner boundary that planets
+            ALSO live in, leaving the canvas dark while we wait — exactly
+            the "moment of dark space after Pulling focus disappears" the
+            user flagged. Now planets render the moment their textures
+            (already preloaded) resolve, regardless of HDR state. */}
         <Suspense fallback={null}>
-          {/* `background={false}` keeps the HDR for reflections only — we keep
-              our explicit warm-near-black `<color>` background. */}
           <Environment preset="night" background={false} />
-          <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} fade speed={0.3} />
+        </Suspense>
 
+        {/* Planets, stars, traces — share their own boundary so a single
+            re-suspension here only briefly hides this subtree, not the
+            full BeatMap3D via the outer canvas-route Suspense. */}
+        <Suspense fallback={null}>
+          {/* Distant starfield — drei's Stars sphere wrapped around the
+              whole scene. Kept WITH the new <CosmicScene> below: stars are
+              the deep-deep background twinkle; CosmicScene adds the
+              foreground galaxy, asteroids, comets, and the distant ship. */}
+          <Stars radius={140} depth={70} count={2400} factor={3.5} saturation={0} fade speed={0.25} />
+          {/* The cosmic backdrop — galaxy nebula spiral, asteroid belt,
+              comet trails, and a distant procedural spaceship. Sits
+              behind the planets and the journey path. See cosmic-scene.tsx. */}
+          <CosmicScene />
           <ConnectingPath positions={positions} />
-
           {beats.map((beat, i) => (
             <NodeMesh
               key={beat.beatId}
               beat={beat}
               position={positions[i]}
               onHoverChange={setHoveredBeatId}
+              introIndex={i}
+              // Guide the user to the first beat that hasn't been
+              // worked yet. As soon as ANY beat is active, all guides
+              // hide so the camera/drawer take focus. Once the user
+              // closes the drawer, the guide returns on the next
+              // unfinished beat — gentle nudge, not blocker.
+              isGuidedTarget={
+                activeBeatId === null &&
+                guidedTargetId === beat.beatId
+              }
             />
           ))}
         </Suspense>
@@ -393,19 +430,9 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
             postprocess after the pipeline (Veo + stitch + delivery) is
             verified end-to-end. */}
       </Canvas>
-      {/* Edge-vignette feedback while panning. Gentle 5% darkening at the
-          frame edges signals "you're in motion" without obstructing the
-          scene. CSS-only; no per-frame React work. */}
-      <div
-        aria-hidden
-        className={`pointer-events-none absolute inset-0 transition-opacity duration-200 ease-out ${
-          panning ? "opacity-100" : "opacity-0"
-        }`}
-        style={{
-          background:
-            "radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.18) 100%)",
-        }}
-      />
+      {/* Pan vignette removed (Tier 2 D3): the 5% edge-darkening was too
+          quiet to register as feedback and added a persistent overlay layer
+          during drags. The cursor's grabbing state already signals motion. */}
     </div>
   );
 }

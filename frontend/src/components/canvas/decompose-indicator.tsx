@@ -33,12 +33,16 @@ export function DecomposeIndicator() {
       : status === "success"
         ? "Scenes refined"
         : "Couldn't refine — using templates";
+  // Error dot at full opacity (was /70). The faded variant made errors
+  // read DIMMER than the pending pulse — wrong signal for "something
+  // went wrong." Full opacity + the error border below make the failure
+  // state unmistakable.
   const dotClass =
     status === "pending"
       ? "ember-pulse bg-brand-ember"
       : status === "success"
         ? "bg-brand-ember"
-        : "bg-state-error/70";
+        : "bg-state-error";
 
   return (
     <AnimatePresence>
@@ -49,7 +53,7 @@ export function DecomposeIndicator() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -4 }}
           transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-          className="pointer-events-none inline-flex items-center gap-2 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/70 px-3 py-1 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] caption-track text-[10px] text-fg-secondary"
+          className="pointer-events-none inline-flex min-h-9 items-center gap-2.5 rounded-full border border-fg-tertiary/15 bg-bg-elev-1/70 px-4 py-1.5 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] font-body text-[12px] text-fg-secondary"
         >
           <span aria-hidden className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${dotClass}`} />
           <span>{label}</span>

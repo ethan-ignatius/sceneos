@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Mic, MicOff } from "lucide-react";
+import { ArrowUp, Mic } from "lucide-react";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { api, ApiError } from "@/lib/api";
@@ -40,6 +40,8 @@ export function LandingRoute() {
   const initialize = useBeatGraphStore((s) => s.initialize);
   const applyDecomposition = useBeatGraphStore((s) => s.applyDecomposition);
   const setDecomposeStatus = useBeatGraphStore((s) => s.setDecomposeStatus);
+  const projects = useBeatGraphStore((s) => s.projects);
+  const resumeProject = useBeatGraphStore((s) => s.resumeProject);
   const reducedMotion = useReducedMotion();
   const [draft, setDraft] = useState(masterPrompt);
   const [focused, setFocused] = useState(false);
@@ -268,11 +270,12 @@ export function LandingRoute() {
                           : "text-fg-tertiary hover:bg-bg-elev-2 hover:text-fg-secondary",
                       )}
                     >
-                      {speech.listening ? (
-                        <MicOff size={15} strokeWidth={1.7} aria-hidden="true" />
-                      ) : (
-                        <Mic size={15} strokeWidth={1.7} aria-hidden="true" />
-                      )}
+                      {/* Always Mic — the BUTTON state (ember bg + ember
+                          color + the pulsing bars beside it) communicates
+                          "actively listening." Showing MicOff while the
+                          mic is actively capturing read as a state
+                          mismatch (icon said muted; mic was on). */}
+                      <Mic size={15} strokeWidth={1.7} aria-hidden="true" />
                     </button>
                   ) : null}
 
@@ -332,6 +335,51 @@ export function LandingRoute() {
               )}
             </motion.p>
           </motion.form>
+
+          {/* Recent projects rail — the 3 most recent archived projects as
+              clickable pills. Click resumes the project on /canvas with the
+              manifest restored verbatim. Empty state collapses entirely so
+              the empty landing stays clean (no "no projects yet" prose). */}
+          {projects.length > 0 ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 1.8 }}
+              className="mt-10 w-full max-w-[40rem]"
+            >
+              <div className="mb-2.5 text-center font-body text-[11px] font-medium text-fg-tertiary">
+                Pick up where you left off
+              </div>
+              <div className="flex flex-col items-stretch gap-1.5">
+                {projects.slice(0, 3).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => {
+                      resumeProject(p.id);
+                      navigate("/canvas");
+                    }}
+                    className="group inline-flex w-full items-center justify-between gap-3 rounded-full border border-fg-tertiary/20 bg-bg-elev-1/55 px-4 py-2 backdrop-blur-md transition-colors hover:border-brand-ember/40 hover:bg-bg-elev-1/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+                  >
+                    <span className="truncate text-left font-body text-[12.5px] text-fg-secondary transition-colors group-hover:text-fg-primary">
+                      {p.masterPrompt}
+                    </span>
+                    <span className="flex-shrink-0 font-mono text-[10.5px] tabular-nums text-fg-tertiary/65">
+                      {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(p.archivedAt))}
+                    </span>
+                  </button>
+                ))}
+                {projects.length > 3 ? (
+                  <Link
+                    to="/projects"
+                    className="mt-1 text-center font-body text-[11.5px] text-fg-tertiary transition-colors hover:text-brand-ember focus-visible:outline-none focus-visible:underline"
+                  >
+                    View all {projects.length} archived
+                  </Link>
+                ) : null}
+              </div>
+            </motion.div>
+          ) : null}
         </section>
       </main>
     </MotionConfig>

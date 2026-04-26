@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
  * For primary CTAs, use <MagneticButton> instead.
  */
 const pillVariants = cva(
-  "inline-flex items-center gap-1.5 whitespace-nowrap font-mono uppercase transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-brand-ember-dim",
+  "inline-flex items-center gap-1.5 whitespace-nowrap font-body font-medium transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-brand-ember-dim",
   {
     variants: {
       variant: {
@@ -29,8 +29,8 @@ const pillVariants = cva(
         fg: "",
       },
       size: {
-        sm: "h-6 rounded-full px-2.5 text-[10px] tracking-[0.18em]",
-        md: "h-7 rounded-full px-3.5 py-0.5 text-[11px] tracking-[0.18em]",
+        sm: "h-7 rounded-full px-3 text-[12px]",
+        md: "h-8 rounded-full px-4 py-1 text-[12.5px]",
       },
       active: {
         true: "",

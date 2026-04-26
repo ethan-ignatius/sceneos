@@ -38,7 +38,7 @@ export class CanvasErrorBoundary extends Component<Props, State> {
       return (
         <div className="absolute inset-0 grid place-items-center bg-bg-base p-8">
           <div className="max-w-lg space-y-4 text-center">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-state-error">
+            <div className="font-body text-[12px] font-medium text-state-error">
               Canvas render failed
             </div>
             <p className="font-display text-2xl italic leading-snug text-fg-primary">
@@ -49,7 +49,7 @@ export class CanvasErrorBoundary extends Component<Props, State> {
             </pre>
             <button
               onClick={this.reset}
-              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
             >
               Try again
             </button>

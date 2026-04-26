@@ -49,8 +49,10 @@ export function EditorTimeline({
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between">
-        <span className="caption-track text-[10px]">Timeline · click a beat to refine</span>
-        <span className="font-mono text-[10px] tabular-nums text-fg-tertiary">
+        <span className="font-display text-[14px] italic text-fg-secondary">
+          Timeline — click a beat to refine.
+        </span>
+        <span className="font-mono text-[12px] tabular-nums text-fg-tertiary">
           {totalDuration.toFixed(1)}s · {decisions.clips.length} beats
         </span>
       </div>
@@ -165,24 +167,24 @@ function TimelineBar({ clip, flex, index, label, moodTint, selected, onSelect, o
       <div className="absolute inset-x-2 top-1.5 flex items-center justify-between gap-2">
         <span
           className={cn(
-            "font-mono text-[9px] tabular-nums",
+            "font-body text-[11px] font-medium tabular-nums",
             selected ? "text-brand-ember" : "text-fg-tertiary",
           )}
         >
           {(index + 1).toString().padStart(2, "0")}
         </span>
         {transitionMs > 0 && index > 0 ? (
-          <span className="font-mono text-[8px] uppercase tracking-[0.18em] text-fg-tertiary/80">
+          <span className="font-body text-[10.5px] tabular-nums text-fg-tertiary/80">
             ↘ {transitionMs}ms
           </span>
         ) : null}
       </div>
 
       <div className="absolute inset-x-2 bottom-1.5 space-y-0.5 leading-tight">
-        <div className="font-display text-sm italic text-fg-primary truncate">
+        <div className="font-display text-[15px] italic text-fg-primary truncate">
           {label}
         </div>
-        <div className="font-mono text-[9px] tabular-nums text-fg-tertiary">
+        <div className="font-mono text-[11px] tabular-nums text-fg-tertiary">
           {beatDur.toFixed(1)}s {trimmed ? "· trimmed" : ""}
         </div>
       </div>

@@ -121,6 +121,13 @@ export interface StatusResponse {
   error?: string;
   pollAfterMs?: number;
   provider?: GenerationProvider;
+  /**
+   * ISO-8601 timestamp captured server-side when the provider job was first
+   * dispatched. The frontend uses this as the elapsed-time source so closing
+   * and re-opening a drawer mid-generation doesn't restart the progress bar
+   * from zero. Only present for providers that track it (Vertex today).
+   */
+  startedAt?: string;
 }
 
 export interface StitchRequest {

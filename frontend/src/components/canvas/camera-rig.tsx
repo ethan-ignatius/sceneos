@@ -85,7 +85,13 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
   // live wheel-zoom offset — reading zoomRef at render time only would
   // freeze the scroll-wheel value (the ref updates outside React, so a
   // wheel event won't trigger a re-render to refresh the closure).
-  const overviewPos = useRef(new THREE.Vector3(0, 0.4, overviewZ));
+  //
+  // Shoulder-view: camera sits AT PLANET HEIGHT (y=0.5, just above the
+  // path's centerline so we look slightly down ON the planets) on the +z
+  // side of the journey, looking at the journey midpoint. Reads as
+  // "walking alongside the planets." y=1.6 was too high — felt like a
+  // drone view, not a shoulder view.
+  const overviewPos = useRef(new THREE.Vector3(0, 0.5, overviewZ));
   const targetPos = useRef(overviewPos.current.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
   const reducedMotion = usePrefersReducedMotion();
@@ -99,6 +105,35 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
     return i === -1 ? null : positions[i];
   };
 
+  /**
+   * Returns the position of the NEXT beat in the journey, used as the
+   * lookAt anchor when active. For the LAST beat, extrapolates one step
+   * forward along the journey direction so the camera still has a
+   * "looking ahead" axis to angle toward.
+   *
+   * Per user direction — when active beat is N, the camera's view
+   * direction should aim TOWARD beat N+1, not directly at N. The active
+   * planet ends up in the foreground, the next-up planet is the visual
+   * destination of the eye. Reads as "we're traveling, looking at
+   * what's coming next, with the current planet right in front of us."
+   */
+  const findNextAnchor = (beatId: string | null): [number, number, number] | null => {
+    if (!beatId) return null;
+    const i = beats.findIndex((b) => b.beatId === beatId);
+    if (i === -1) return null;
+    if (i === beats.length - 1) {
+      // Last beat — extrapolate one step FORWARD using the vector from
+      // beat N-1 to beat N (or a default if there's only one beat).
+      const cur = positions[i];
+      const prev = positions[i - 1] ?? [cur[0] - 2, cur[1], cur[2]];
+      const dx = cur[0] - prev[0];
+      const dy = cur[1] - prev[1];
+      const dz = cur[2] - prev[2];
+      return [cur[0] + dx, cur[1] + dy, cur[2] + dz];
+    }
+    return positions[i + 1];
+  };
+
   useFrame((state) => {
     const active = findPosition(activeBeatId);
     const hovered = findPosition(hoveredBeatId);
@@ -108,7 +143,9 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
     // can't capture it at render time.
     const zoomOffset = zoomRef?.current.z ?? 0;
     const effectiveZ = Math.max(2.5, overviewZ + zoomOffset);
-    overviewPos.current.set(0, 0.4, effectiveZ);
+    // Shoulder-view: y=0.5 (planet-height + slight elevation), z=+effectiveZ
+    // (looking from in front of the journey toward midpoint).
+    overviewPos.current.set(0, 0.5, effectiveZ);
 
     // ── Pan: clear instantly when transitioning from no-active → active ──
     // Clicking a beat is a deliberate cinematographic move; any residual pan
@@ -121,20 +158,76 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
 
     if (active) {
       const [ax, ay, az] = active;
-      // Drawer-aware offset: on desktop (md+, where the drawer is a fixed
-      // ~34rem panel anchored to the right edge), the active planet should
-      // sit in the LEFT half of the viewport so the drawer doesn't cover
-      // it. Shifting both camera position AND lookAt by the same amount
-      // preserves the look direction; only the framing shifts.
-      // 1.4 world units ≈ ~28% of the viewport width at our zoom — matches
-      // the drawer's screen footprint, so the planet ends up centered in
-      // the not-drawer area rather than behind it.
-      // On mobile, the drawer is a bottom sheet; no horizontal shift needed.
+      // Active-beat camera framing — adventure-map composition:
+      //   1. Camera looks DIRECTLY AT the next planet in the journey,
+      //      so the visible horizon reads as "ahead, traveling forward."
+      //   2. Camera position is offset right (in camera-space) so the
+      //      active planet projects into the LEFT third of the viewport,
+      //      with next at viewport-center down the journey axis.
+      //   3. Active stays large in the foreground; next is the visible
+      //      destination.
+      //
+      // Right-vector math:
+      //   forward = (next − active).normalised
+      //   In Three.js's right-handed system with worldUp=(0,1,0),
+      //   camera-right (world) = forward × up = (-fz, 0, fx).
+      //   The previous build used (fz, 0, -fx) which is up × forward —
+      //   that's camera-LEFT in world coords, so a positive drawerMag
+      //   shifted the camera LEFT and the active planet ended up on
+      //   the SCREEN RIGHT (the bug the user flagged).
+      //
+      // Position math:
+      //   camera = active
+      //          − forward × 1.6     (pull back)
+      //          + right   × drawerMag (shift camera-right →
+      //                                 active projects to LEFT)
+      //          + worldUp × 0.45    (slight elevation, looking down
+      //                               on the journey plane)
+      //   lookAt = next              (camera AIMS at next directly,
+      //                               not at active+ε — gives the
+      //                               "traveling forward" trajectory)
+      //
+      // drawerMag tuning: 1.0 desktop puts active at ~−18° horizontal
+      // (left third of viewport), next at viewport-center. 0.5 mobile
+      // because the drawer is a bottom-sheet on mobile, not a side
+      // panel, so the right-shift only needs to land the active in
+      // a tasteful left-of-center, not clear of an overlay.
+      const next = findNextAnchor(activeBeatId);
       const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
-      const drawerOffsetX = isDesktop ? 1.4 : 0;
-      const azimuth = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
-      targetPos.current.set(ax + 0.35 + drawerOffsetX + azimuth, ay + 0.25, az + 1.9);
-      targetLook.current.set(ax + drawerOffsetX, ay, az);
+      const drawerMag = isDesktop ? 1.0 : 0.5;
+      const breath = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
+      if (next) {
+        const [nx, ny, nz] = next;
+        const fx = nx - ax, fy = ny - ay, fz = nz - az;
+        const fmag = Math.max(Math.sqrt(fx * fx + fy * fy + fz * fz), 0.001);
+        const fNx = fx / fmag, fNy = fy / fmag, fNz = fz / fmag;
+        // Corrected camera-right: forward × up = (-fNz, 0, fNx).
+        let rx = -fNz, rz = fNx;
+        const rmag = Math.sqrt(rx * rx + rz * rz);
+        if (rmag < 0.001) {
+          // Forward is nearly vertical — degenerate case. Default to
+          // world +X as the right axis so we don't divide by zero.
+          rx = 1; rz = 0;
+        } else {
+          rx /= rmag; rz /= rmag;
+        }
+        const drx = rx * drawerMag, drz = rz * drawerMag;
+        // Camera: pull back along -forward by 1.6, lift, shift camera-right.
+        targetPos.current.set(
+          ax - fNx * 1.6 + drx + breath,
+          ay - fNy * 1.6 + 0.45,
+          az - fNz * 1.6 + drz,
+        );
+        // LookAt: aim DIRECTLY at next so the camera's view axis reads
+        // as forward motion through the journey. Active lands in the
+        // left foreground naturally because the camera is shifted right.
+        targetLook.current.set(nx, ny, nz);
+      } else {
+        // Defensive fallback — shouldn't fire because findNextAnchor
+        // has the last-beat extrapolation, but keeps the rig robust.
+        targetPos.current.set(ax - 0.7 + breath, ay + 0.45, az + 1.7);
+        targetLook.current.set(ax, ay, az);
+      }
     } else {
       // ── Free-orbit (left-drag on empty space) ──────────────────────
       // When the user drags on empty space, we orbit the camera around
@@ -144,15 +237,15 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
       const azimuth = orbitRef?.current.azimuth ?? 0;
       const polar = orbitRef?.current.polar ?? 0;
       if (azimuth !== 0 || polar !== 0) {
-        // Orbit radius uses effectiveZ so wheel-zoom and orbit compose:
-        // user can rotate AND zoom simultaneously without one fighting
-        // the other. Without this the rotation would always be at the
-        // base distance and zoom-while-rotating felt broken.
+        // Shoulder-view orbit: default (azimuth=0, polar=0) lands the
+        // camera at (0, 0.5, +rad) — the shoulder-view spot in front of
+        // the journey. Positive azimuth orbits clockwise around y from
+        // there. Polar tilts the camera up/down from the y=0.5 baseline.
         const rad = effectiveZ;
         const cosPolar = Math.cos(polar);
         const x = rad * Math.sin(azimuth) * cosPolar;
         const z = rad * Math.cos(azimuth) * cosPolar;
-        const y = 0.4 + rad * Math.sin(polar) * 0.4;
+        const y = 0.5 + rad * Math.sin(polar) * 0.4;
         targetPos.current.set(x, y, z);
       } else {
         targetPos.current.copy(overviewPos.current);

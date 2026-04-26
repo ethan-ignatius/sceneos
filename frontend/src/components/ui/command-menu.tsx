@@ -11,11 +11,15 @@ import {
   RotateCcw,
   Compass,
   CornerDownLeft,
+  LocateFixed,
+  Map as MapIcon,
+  FolderClock,
 } from "lucide-react";
 import { useBeatGraphStore, selectApprovedClipPublicIds } from "@/stores/beat-graph-store";
 import { usePromptStore } from "@/stores/prompt-store";
 import { isAudioMuted, setAudioMuted } from "@/lib/audio-cues";
 import { buildSpliceUrl } from "@/lib/cloudinary";
+import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { toast } from "sonner";
 
@@ -38,6 +42,9 @@ export function CommandMenu() {
   const navigate = useNavigate();
   const manifest = useBeatGraphStore((s) => s.manifest);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
+  const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
+  const minimapOpen = useBeatGraphStore((s) => s.minimapOpen);
+  const setMinimapOpen = useBeatGraphStore((s) => s.setMinimapOpen);
   const reset = useBeatGraphStore((s) => s.reset);
   const resetPrompt = usePromptStore((s) => s.reset);
   const approvedIds = useBeatGraphStore(selectApprovedClipPublicIds);
@@ -90,6 +97,19 @@ export function CommandMenu() {
     close();
   };
 
+  const recenterCamera = () => {
+    if (activeBeatId) setActiveBeat(null);
+    window.dispatchEvent(new CustomEvent(RESET_CAMERA_EVENT));
+    if (window.location.pathname !== "/canvas") navigate("/canvas");
+    close();
+  };
+
+  const toggleOverview = () => {
+    setMinimapOpen(!minimapOpen);
+    if (window.location.pathname !== "/canvas") navigate("/canvas");
+    close();
+  };
+
   return (
     <AnimatePresence>
       {open ? (
@@ -118,14 +138,14 @@ export function CommandMenu() {
                 />
               </div>
               <Command.List className="max-h-[24rem] overflow-y-auto p-2">
-                <Command.Empty className="px-3 py-6 text-center font-mono text-[11px] uppercase tracking-[0.18em] text-fg-tertiary">
+                <Command.Empty className="px-3 py-6 text-center font-display text-[14px] italic text-fg-tertiary">
                   No matches.
                 </Command.Empty>
 
                 {manifest && manifest.beats.length > 0 ? (
                   <Command.Group
                     heading="Jump to beat"
-                    className="px-1 pb-2 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-2 [&_[cmdk-group-heading]]:caption-track [&_[cmdk-group-heading]]:text-[10px]"
+                    className="px-1 pb-2 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-2 [&_[cmdk-group-heading]]:font-body [&_[cmdk-group-heading]]:text-[11.5px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-fg-tertiary"
                   >
                     {manifest.beats.map((b, i) => (
                       <CommandRow
@@ -141,7 +161,7 @@ export function CommandMenu() {
 
                 <Command.Group
                   heading="Actions"
-                  className="px-1 pt-1 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-2 [&_[cmdk-group-heading]]:caption-track [&_[cmdk-group-heading]]:text-[10px]"
+                  className="px-1 pt-1 [&_[cmdk-group-heading]]:px-3 [&_[cmdk-group-heading]]:py-2 [&_[cmdk-group-heading]]:font-body [&_[cmdk-group-heading]]:text-[11.5px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-fg-tertiary"
                 >
                   <CommandRow
                     icon={
@@ -174,16 +194,37 @@ export function CommandMenu() {
                     }}
                   />
                   <CommandRow
+                    icon={<LocateFixed size={14} strokeWidth={1.5} />}
+                    label="Re-center camera"
+                    hint="Esc"
+                    onSelect={recenterCamera}
+                  />
+                  <CommandRow
+                    icon={<MapIcon size={14} strokeWidth={1.5} />}
+                    label={minimapOpen ? "Hide overview" : "Show overview"}
+                    hint="2D minimap"
+                    onSelect={toggleOverview}
+                  />
+                  <CommandRow
+                    icon={<FolderClock size={14} strokeWidth={1.5} />}
+                    label="Open project history"
+                    hint="archived reels"
+                    onSelect={() => {
+                      navigate("/projects");
+                      close();
+                    }}
+                  />
+                  <CommandRow
                     icon={<RotateCcw size={14} strokeWidth={1.5} />}
                     label="Reset session"
                     onSelect={resetAll}
                   />
                 </Command.Group>
               </Command.List>
-              <div className="flex items-center justify-between border-t border-fg-tertiary/15 px-4 py-2 caption-track text-[9px] text-fg-tertiary">
-                <span>SceneOS · ⌘K</span>
-                <span className="inline-flex items-center gap-1">
-                  <CornerDownLeft size={10} strokeWidth={1.5} aria-hidden="true" />
+              <div className="flex items-center justify-between border-t border-fg-tertiary/15 px-4 py-2 font-body text-[11.5px] text-fg-tertiary">
+                <span>SceneOS · <kbd className="font-body">⌘K</kbd></span>
+                <span className="inline-flex items-center gap-1.5">
+                  <CornerDownLeft size={11} strokeWidth={1.5} aria-hidden="true" />
                   Select
                 </span>
               </div>
@@ -213,7 +254,7 @@ function CommandRow({ icon, label, hint, onSelect }: CommandRowProps) {
         <span>{label}</span>
       </span>
       {hint ? (
-        <span className="caption-track text-[9px] text-fg-tertiary">{hint}</span>
+        <span className="font-body text-[11.5px] text-fg-tertiary">{hint}</span>
       ) : null}
     </Command.Item>
   );

@@ -14,6 +14,7 @@ import asyncio
 import base64
 import logging
 import uuid
+from datetime import datetime, UTC
 from typing import Any
 
 import httpx
@@ -29,6 +30,12 @@ _MAX_POLL_ATTEMPTS = 120
 logger = logging.getLogger(__name__)
 
 _JOBS: dict[str, dict[str, Any]] = {}
+# Job start timestamps live in a parallel dict so the existing dict-replacement
+# pattern in _poll_until_done (which overwrites _JOBS[id] on each transition)
+# doesn't lose them. Captured ONCE when the job is first dispatched; surfaced
+# via status() so the frontend can compute true elapsed across drawer
+# close/reopen cycles.
+_JOB_STARTED_AT: dict[str, str] = {}
 
 
 def _read_config() -> dict[str, str]:
@@ -47,7 +54,21 @@ def _read_config() -> dict[str, str]:
         or env("GCP_LOCATION")
         or "us-central1"
     )
-    model_id = env("VEO_MODEL_ID", "veo-2.0-generate-001") or "veo-2.0-generate-001"
+    # Veo 3.1 GA (released Nov 17, 2025). The current SOTA on Vertex AI for
+    # text-to-video. Over Veo 3:
+    #   - Better cinematic-style adherence (i.e. the prompt's framing, lens,
+    #     and lighting language actually shows up on screen).
+    #   - Better character consistency across image-to-video: when seeded
+    #     with the project's character/location ref, the protagonist looks
+    #     like the SAME person across all 7 beats, not seven similar people.
+    #     This is the single biggest contributor to "the video has flow".
+    #   - Richer native audio (synchronized SFX + dialogue at 1080p).
+    #   - Same predictLongRunning + fetchPredictOperation transport, no
+    #     wire-format change vs. Veo 3 — drop-in upgrade.
+    # Override with VEO_MODEL_ID for cost-throttling (e.g. veo-3.1-fast-generate-001
+    # has 5x the per-minute quota at the cost of some fidelity) or to pin to
+    # the older veo-3.0-generate-001 / veo-2.0-generate-001 for regression.
+    model_id = env("VEO_MODEL_ID", "veo-3.1-generate-001") or "veo-3.1-generate-001"
     return {"projectId": project_id, "location": location, "modelId": model_id}
 
 
@@ -114,6 +135,10 @@ async def _fetch_image_b64(url: str) -> tuple[str, str]:
 
 async def generate(params: GenerateClipParams) -> dict:
     provider_job_id = str(uuid.uuid4())
+    # Capture the dispatch timestamp NOW so even fail-fast paths (image
+    # fetch errors, predictLongRunning rejections) still expose a startedAt
+    # to status callers. The frontend uses this to compute true elapsed.
+    _JOB_STARTED_AT[provider_job_id] = datetime.now(UTC).isoformat()
     pid = public_id_for_scene(
         params.get("projectId"), params.get("beatId"), params.get("sceneId"), provider_job_id
     )
@@ -127,9 +152,27 @@ async def generate(params: GenerateClipParams) -> dict:
     requested_int = round(float(requested))
     allowed = (4, 6, 8)
     duration_seconds = min(allowed, key=lambda d: (abs(d - requested_int), -d))
-    prompt = clip_prompt.get("motionPrompt") or params["refinedPrompt"]
 
-    instance: dict[str, Any] = {"prompt": prompt}
+    # CRITICAL: send Veo the FULL cinematic prompt (subject + action + setting
+    # + framing + lighting + mood), not just the camera-motion fragment. The
+    # earlier code preferred motionPrompt — which is a 25-word string with no
+    # subject — and that's why output looked generic. Veo 3 rewards specificity.
+    full_prompt = (
+        params.get("refinedPrompt")
+        or (
+            f"{clip_prompt.get('imagePrompt', '')} {clip_prompt.get('motionPrompt', '')}".strip()
+        )
+        or clip_prompt.get("motionPrompt")
+        or ""
+    )
+    # Optional voice line — Veo 3 will lip-sync dialogue when included in the
+    # prompt as direct speech. Keep this short; Veo handles ~10 words of
+    # spoken dialogue cleanly per 8s clip.
+    voice_line = (clip_prompt.get("voiceLine") or "").strip()
+    if voice_line:
+        full_prompt = f"{full_prompt} The narrator says: \"{voice_line}\"."
+
+    instance: dict[str, Any] = {"prompt": full_prompt}
 
     # Chained generation: when the previous beat's last frame is provided,
     # seed Veo's I2V mode with it. Veo accepts inline base64 OR gcsUri.
@@ -145,6 +188,11 @@ async def generate(params: GenerateClipParams) -> dict:
             }
             return {"jobId": provider_job_id}
 
+    # Veo 3 native audio: synced sound effects, ambient, and (when prompted)
+    # dialogue. Resolution 1080p > Veo 2's default. Both can be overridden via
+    # env for cost-throttling during dev.
+    generate_audio = (env("VEO_GENERATE_AUDIO", "true") or "true").lower() != "false"
+    resolution = env("VEO_RESOLUTION", "1080p") or "1080p"
     body = {
         "instances": [instance],
         "parameters": {
@@ -152,6 +200,8 @@ async def generate(params: GenerateClipParams) -> dict:
             "durationSeconds": duration_seconds,
             "sampleCount": 1,
             "personGeneration": "allow_adult",
+            "generateAudio": generate_audio,
+            "resolution": resolution,
         },
     }
 
@@ -241,7 +291,21 @@ async def _poll_until_done(provider_job_id: str) -> None:
             }
             logger.info("[vertex] Cloudinary upload complete job=%s publicId=%s url=%s", provider_job_id, clip_public_id, clip_url)
         except Exception as exc:
-            _JOBS[provider_job_id] = {"status": "failed", "error": f"persist error: {exc}"}
+            # Surface the real cause. Wrapping just `exc` (e.g. an httpx
+            # HTTPStatusError with empty args) loses the response body, which
+            # is the only thing that tells you whether Cloudinary rejected
+            # the data URI for size, format, or auth — all three look the
+            # same when stringified.
+            import traceback
+            detail = repr(exc)
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    detail = f"{detail} | http {response.status_code}: {response.text[:400]}"
+                except Exception:
+                    pass
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-800:]
+            _JOBS[provider_job_id] = {"status": "failed", "error": f"persist error: {detail}\n{tb}"}
             logger.exception("[vertex] Cloudinary upload failed job=%s", provider_job_id)
         return
 
@@ -272,13 +336,23 @@ async def status(provider_job_id: str) -> StatusResult:
     job = _JOBS.get(provider_job_id)
     if not job:
         return {"status": "failed", "error": f"Unknown vertex jobId: {provider_job_id}"}
+    started_at = _JOB_STARTED_AT.get(provider_job_id)
     if job["status"] == "running":
-        return {"status": "running", "stage": job.get("stage", "veo_running")}
+        out: StatusResult = {"status": "running", "stage": job.get("stage", "veo_running")}
+        if started_at:
+            out["startedAt"] = started_at
+        return out
     if job["status"] == "failed":
-        return {"status": "failed", "error": job.get("error", "vertex failed")}
-    return {
+        out2: StatusResult = {"status": "failed", "error": job.get("error", "vertex failed")}
+        if started_at:
+            out2["startedAt"] = started_at
+        return out2
+    out3: StatusResult = {
         "status": "succeeded",
         "stage": job.get("stage", "cloudinary_uploaded"),
         "clipUrl": job["clipUrl"],
         "clipPublicId": job["clipPublicId"],
     }
+    if started_at:
+        out3["startedAt"] = started_at
+    return out3

@@ -113,6 +113,10 @@ export function ConnectingPath({ positions }: ConnectingPathProps) {
         // Base stays low so the dim segments fall back into the void.
         uColorBase: { value: new THREE.Color("#6b5d50") },
         uColorAccent: { value: new THREE.Color("#c08858") },
+        // Intro fade-in. Set live in useFrame; ramps 0 → 1 starting at
+        // ~1s after mount so the trace appears just as the last planet
+        // lands rather than floating between empty slots.
+        uIntro: { value: 0 },
       },
       vertexShader: /* glsl */ `
         attribute float aProgress;
@@ -134,6 +138,7 @@ export function ConnectingPath({ positions }: ConnectingPathProps) {
       fragmentShader: /* glsl */ `
         uniform vec3 uColorBase;
         uniform vec3 uColorAccent;
+        uniform float uIntro;
         varying float vWave;
         void main() {
           // Round, soft-edged points.
@@ -142,7 +147,7 @@ export function ConnectingPath({ positions }: ConnectingPathProps) {
           if (r > 0.5) discard;
           float alpha = smoothstep(0.5, 0.0, r);
           vec3 color = mix(uColorBase, uColorAccent, vWave);
-          gl_FragColor = vec4(color, alpha * (0.25 + vWave * 0.55));
+          gl_FragColor = vec4(color, alpha * (0.25 + vWave * 0.55) * uIntro);
         }
       `,
       transparent: true,
@@ -153,9 +158,21 @@ export function ConnectingPath({ positions }: ConnectingPathProps) {
     return m;
   }, []);
 
+  // Lock the intro start time on first frame so the fade is anchored
+  // to actual canvas mount, not React render.
+  const introStartRef = useRef<number | null>(null);
   useFrame((state, delta) => {
-    if (matRef.current && !reducedMotion) {
-      matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+    if (introStartRef.current === null) introStartRef.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - introStartRef.current;
+    // Path fades in over [0.55s, 0.95s]. Last planet lands ~0.75s
+    // (0.55 duration + 4 × 0.05 stagger), so trace completes shortly
+    // after — reads as "the circuit completes once planets are placed."
+    const introOpacity = THREE.MathUtils.clamp((elapsed - 0.55) / 0.4, 0, 1);
+    if (matRef.current) {
+      matRef.current.uniforms.uIntro.value = introOpacity;
+      if (!reducedMotion) {
+        matRef.current.uniforms.uTime.value = state.clock.elapsedTime;
+      }
     }
     void delta; // marker
   });

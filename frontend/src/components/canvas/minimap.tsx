@@ -75,10 +75,10 @@ export function Minimap({ beats, activeBeatId }: MinimapProps) {
       {/* Eyebrow — names the surface. The user who's never seen this canvas
           before gets one tiny line of "this is what you're looking at,"
           where without it the SVG is just dots. */}
-      <div className="flex items-center justify-between border-b border-fg-tertiary/15 px-2.5 py-1.5">
-        <span className="caption-track text-[9px] text-fg-tertiary">Timeline</span>
-        <span className="caption-track text-[9px] text-fg-tertiary/55" title="Scroll to zoom · click empty to reset">
-          ⊕ scroll
+      <div className="flex items-center justify-between border-b border-fg-tertiary/15 px-3 py-2">
+        <span className="font-body text-[12px] font-medium text-fg-secondary">Timeline</span>
+        <span className="font-body text-[11px] text-fg-tertiary" title="Scroll to zoom · click empty to reset">
+          Scroll to zoom
         </span>
       </div>
 
@@ -105,7 +105,8 @@ export function Minimap({ beats, activeBeatId }: MinimapProps) {
           y1={32}
           x2={148}
           y2={32}
-          stroke="rgba(142, 127, 110, 0.22)"
+          style={{ stroke: "var(--color-fg-tertiary)" }}
+          strokeOpacity={0.22}
           strokeWidth={0.6}
           strokeDasharray="2 3"
         />
@@ -116,7 +117,8 @@ export function Minimap({ beats, activeBeatId }: MinimapProps) {
           <polyline
             points={layout.points.map((p) => `${(p.px / 140) * 156},32`).join(" ")}
             fill="none"
-            stroke="rgba(192, 136, 88, 0.45)"
+            style={{ stroke: "var(--color-brand-ember-dim)" }}
+            strokeOpacity={0.55}
             strokeWidth={0.9}
           />
         ) : null}
@@ -127,13 +129,14 @@ export function Minimap({ beats, activeBeatId }: MinimapProps) {
         {layout.points.map((p) => {
           const isActive = p.beatId === activeBeatId;
           const isApproved = p.status === "approved";
-          const fill = isApproved
-            ? "#f0a868"
-            : isActive
-              ? "#f0a868"
+          const fillVar =
+            isApproved || isActive
+              ? "var(--color-brand-ember)"
               : p.status === "ready-to-generate" || p.status === "preview" || p.status === "generating"
-                ? "#c08858"
-                : "rgba(245, 239, 231, 0.4)";
+                ? "var(--color-brand-ember-dim)"
+                : "var(--color-fg-primary)";
+          const fillOpacity =
+            isApproved || isActive ? 1 : p.status === "pending" || p.status === "questioning" ? 0.4 : 1;
           const r = isActive ? 3.5 : isApproved ? 2.8 : 2.2;
           const cx = (p.px / 140) * 156;
           const cy = 32;
@@ -161,11 +164,12 @@ export function Minimap({ beats, activeBeatId }: MinimapProps) {
                   cy={cy}
                   r={r + 2}
                   fill="none"
-                  stroke="rgba(240, 168, 104, 0.5)"
+                  style={{ stroke: "var(--color-brand-ember)" }}
+                  strokeOpacity={0.5}
                   strokeWidth={0.85}
                 />
               ) : null}
-              <circle cx={cx} cy={cy} r={r} fill={fill} />
+              <circle cx={cx} cy={cy} r={r} style={{ fill: fillVar }} fillOpacity={fillOpacity} />
             </g>
           );
         })}

@@ -10,7 +10,11 @@ const LOOKS: { value: EditLook; label: string; hint: string }[] = [
   { value: "soft-romance", label: "Soft romance", hint: "haze, warmth" },
 ];
 
-const MOCK_MUSIC_TRACK = "audio/mock-bed";
+// Placeholder Cloudinary public ID for the music-bed feature. Real audio
+// beds get uploaded under their own publicIds; this constant is the
+// "no-asset-yet" sentinel the editor uses while the audio library is
+// scaffolded. Kept centralized so swapping in a real default is one edit.
+const DEMO_MUSIC_TRACK = "audio/demo-bed";
 
 interface EditorToolbarProps {
   decisions: EditDecisions;
@@ -34,17 +38,17 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
 
   return (
     <div className="space-y-5 rounded-md border border-fg-tertiary/15 bg-bg-elev-1/60 p-4 backdrop-blur-md">
-      <div className="caption-track text-[10px] text-fg-tertiary">
+      <div className="font-display text-[14px] italic text-fg-secondary">
         Global · the whole cut
       </div>
 
       {/* Look LUT */}
       <section className="space-y-2">
         <div className="flex items-baseline justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-secondary">
+          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
             Look
           </span>
-          <span className="font-mono text-[9px] text-fg-tertiary">
+          <span className="font-body text-[11.5px] text-fg-tertiary">
             {LOOKS.find((l) => l.value === look)?.hint ?? ""}
           </span>
         </div>
@@ -55,7 +59,7 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               type="button"
               onClick={() => onPatch({ look: l.value })}
               className={cn(
-                "rounded-sm border px-2 py-1.5 text-left text-[10.5px]",
+                "rounded-md border px-2.5 py-1.5 text-left font-body text-[12px]",
                 "transition-colors duration-200 ease-out",
                 look === l.value
                   ? "border-brand-ember/70 bg-brand-ember/10 text-fg-primary"
@@ -71,10 +75,10 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
       {/* Music */}
       <section className="space-y-2">
         <div className="flex items-baseline justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-secondary">
+          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
             Music bed
           </span>
-          <span className="font-mono text-[9px] text-fg-tertiary">
+          <span className="font-body text-[11.5px] text-fg-tertiary">
             {audio ? `${audio.publicId} · ${audio.volume ?? 0}` : "off"}
           </span>
         </div>
@@ -85,11 +89,11 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               setAudio(
                 audio
                   ? null
-                  : { publicId: MOCK_MUSIC_TRACK, volume: -20, fadeInMs: 800, fadeOutMs: 1200 },
+                  : { publicId: DEMO_MUSIC_TRACK, volume: -20, fadeInMs: 800, fadeOutMs: 1200 },
               )
             }
             className={cn(
-              "rounded-sm border px-3 py-1.5 text-[11px] text-fg-primary",
+              "rounded-md border px-3 py-1.5 font-body text-[12.5px] text-fg-primary",
               audio
                 ? "border-brand-ember/60 bg-brand-ember/10"
                 : "border-fg-tertiary/30 bg-bg-base/40 hover:border-fg-secondary",
@@ -125,10 +129,10 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
       {/* Captions */}
       <section className="space-y-2">
         <div className="flex items-baseline justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-secondary">
+          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
             Captions
           </span>
-          <span className="font-mono text-[9px] text-fg-tertiary">
+          <span className="font-body text-[11.5px] text-fg-tertiary">
             anchored: {captionPosition}
           </span>
         </div>
@@ -139,7 +143,7 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               type="button"
               onClick={() => onPatch({ captionPosition: pos })}
               className={cn(
-                "rounded-sm border px-2 py-1.5 text-[10.5px]",
+                "rounded-md border px-2.5 py-1.5 font-body text-[12px]",
                 captionPosition === pos
                   ? "border-brand-ember/60 bg-brand-ember/10 text-fg-primary"
                   : "border-fg-tertiary/20 bg-bg-base/40 text-fg-tertiary hover:border-fg-secondary",
@@ -154,10 +158,10 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
       {/* Watermark */}
       <section className="space-y-2">
         <div className="flex items-baseline justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-fg-secondary">
+          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
             Watermark
           </span>
-          <span className="font-mono text-[9px] text-fg-tertiary">
+          <span className="font-body text-[11.5px] text-fg-tertiary">
             {decisions.watermarkPublicId ?? "off"}
           </span>
         </div>
@@ -192,7 +196,7 @@ function DuckingToggle({
       type="button"
       onClick={() => onChange(value == null ? -12 : null)}
       className={cn(
-        "rounded-sm border px-3 py-1.5 text-[10.5px]",
+        "rounded-md border px-3 py-1.5 font-body text-[12px]",
         value != null
           ? "border-brand-ember/50 bg-brand-ember/10 text-fg-primary"
           : "border-fg-tertiary/20 bg-bg-base/40 text-fg-tertiary hover:border-fg-secondary",
