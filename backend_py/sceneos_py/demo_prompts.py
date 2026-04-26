@@ -21,7 +21,7 @@ import random
 from typing import TypedDict
 
 
-class CuratedBeatFacts(TypedDict):
+class CuratedBeatFacts(TypedDict, total=False):
     subject: str
     action: str
     setting: str
@@ -29,6 +29,8 @@ class CuratedBeatFacts(TypedDict):
     mood: str
     characterDescription: str
     locationDescription: str
+    voiceLine: str    # ~10-18 words; Veo 3 native audio renders this as VO/dialogue
+    captionLine: str  # 5-10 words; baked into the splice as a chapter card
 
 
 class DemoPromptDef(TypedDict):
@@ -175,6 +177,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                 "mood": "intimate-hook",
                 "characterDescription": _LIGHTHOUSE_CHAR,
                 "locationDescription": _LIGHTHOUSE_LOC,
+                "voiceLine": "There are two kinds of light at sea. The kind that warns. And the kind that calls.",
+                "captionLine": "Cape Disappointment Light. November 1957.",
             },
             "story.exposition": {
                 "subject": "the lighthouse keeper",
@@ -184,6 +188,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                 "mood": "wide-establish",
                 "characterDescription": _LIGHTHOUSE_CHAR,
                 "locationDescription": _LIGHTHOUSE_LOC,
+                "voiceLine": "Forty-one years he had kept this watch. Forty-one years, the lens had not failed.",
+                "captionLine": "",
             },
             "story.inciting": {
                 "subject": "the lighthouse keeper",
@@ -193,6 +199,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                 "mood": "intimate-hook",
                 "characterDescription": _LIGHTHOUSE_CHAR,
                 "locationDescription": _LIGHTHOUSE_LOC,
+                "voiceLine": "Then, just past the third bell, the green came back.",
+                "captionLine": "23:42 hours.",
             },
             "story.rising": {
                 "subject": "the lighthouse keeper",
@@ -205,6 +213,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                     "Cast-iron spiral stairwell of the lighthouse, single oil lantern casting hard moving "
                     "shadows on whitewashed brick walls, distant storm wind audible."
                 ),
+                "voiceLine": "He had been told, as a boy, that ghosts only travel one way. The old keeper had been wrong.",
+                "captionLine": "",
             },
             "story.climax": {
                 "subject": "the lighthouse keeper",
@@ -218,6 +228,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                     "a luminous schooner-shaped silhouette gliding impossibly through the rocks, "
                     "trailing pale green phosphor light."
                 ),
+                "voiceLine": "It was the Astoria. The schooner that had gone down with all hands, in 1922.",
+                "captionLine": "The Astoria. Lost: October 31, 1922.",
             },
             "story.falling": {
                 "subject": "the lighthouse keeper",
@@ -230,6 +242,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                     "The cliff at storm's end, settling fog, pale pre-dawn light, the ocean calming, "
                     "no ship visible, only the mist."
                 ),
+                "voiceLine": "By dawn, the storm had moved on. So had she.",
+                "captionLine": "",
             },
             "story.resolution": {
                 "subject": "the lighthouse keeper",
@@ -239,6 +253,8 @@ DEMO_PROMPTS: list[DemoPromptDef] = [
                 "mood": "still-resolve",
                 "characterDescription": _LIGHTHOUSE_CHAR,
                 "locationDescription": _LIGHTHOUSE_LOC,
+                "voiceLine": "He wrote in the logbook only this: she came again, and I think she's looking for someone.",
+                "captionLine": "From Logbook 41.",
             },
         },
     },

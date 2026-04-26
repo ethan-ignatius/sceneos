@@ -602,7 +602,7 @@ def _registry_for(provider: GenerationProvider):
 
 
 @app.post("/api/stitch/url")
-def stitch(body: dict):
+async def stitch(body: dict):
     manifest = body.get("manifest") or {}
     if not isinstance(manifest.get("beats"), list):
         raise HTTPException(
@@ -627,24 +627,70 @@ def stitch(body: dict):
         )
 
     apply_grade = bool(body.get("colorGrade"))
-    clips = [
-        {
-            "publicId": item["scene"]["clipPublicId"],
-            "colorGrade": color_grade_for(item["beat"]["archetype"]["mood"]) if apply_grade else None,
-        }
-        for item in approved
-    ]
-    # Audio resolution order: explicit body.audioPublicId > manifest.audioPublicId
-    # > picked-by-mood from audio.pick_music. The session-start path stamps
-    # the manifest field so this is usually a no-op; the body override is
-    # for power-user / external callers.
-    audio_public_id = body.get("audioPublicId") or manifest.get("audioPublicId")
+    apply_captions = body.get("captions", True) is not False
+    clips = []
+    for item in approved:
+        scene = item["scene"]
+        beat = item["beat"]
+        # captionLine lives on the scene's beatFacts (set by the agent's
+        # markSufficient). It's an optional 5-10 word phrase — chapter card,
+        # not subtitles. If the agent didn't emit one, the clip just renders
+        # without a caption layer.
+        beat_facts = scene.get("beatFacts") or {}
+        caption = (beat_facts.get("captionLine") or "").strip() if apply_captions else ""
+        clips.append({
+            "publicId": scene["clipPublicId"],
+            "colorGrade": color_grade_for(beat["archetype"]["mood"]) if apply_grade else None,
+            "caption": caption,
+        })
+    # Audio resolution order:
+    #   1. explicit body.audioPublicId  (caller knows what they want)
+    #   2. lazy Lyria generation        (cinematic, per-project, ~30s)
+    #   3. manifest.audioPublicId       (static fallback stamped at session-start)
+    #   4. None                         (silent stitch — better than a phantom URL)
+    #
+    # We INTENTIONALLY skip manifest.audioPublicId when no body override is
+    # given, and try Lyria first — the manifest value is the placeholder
+    # `sceneos/audio/default` which is usually NOT uploaded on customer
+    # clouds. Lyria gives us a real, project-tuned cinematic score.
+    #
+    # If the resolved publicId points at an asset that doesn't exist on
+    # this cloud (Lyria failed, static fallback missing, etc), we drop the
+    # audio layer entirely — a silent splice still renders, a 404'd
+    # `l_audio:` ref makes Cloudinary refuse the whole transformation.
+    audio_public_id = body.get("audioPublicId")
     if not audio_public_id:
         from . import audio as audio_service
-        audio_public_id = audio_service.pick_music(
-            manifest.get("videoType", "story"),
-            mood="auto",
+        # First beat's mood seeds the music — the score covers the WHOLE
+        # film, so we want it tuned to where the story OPENS, not where
+        # it climaxes (climax music over the establishing shot reads as
+        # melodramatic).
+        first_mood = (
+            (manifest["beats"][0].get("archetype") or {}).get("mood")
+            if manifest.get("beats") else None
+        ) or "intimate-hook"
+        project_id = manifest.get("projectId") or "anon"
+        audio_public_id = await audio_service.ensure_music_bed(
+            project_id=project_id,
+            video_type=manifest.get("videoType", "story"),
+            mood=first_mood,
         )
+        if not audio_public_id:
+            audio_public_id = manifest.get("audioPublicId")
+        # Verify the audio actually exists on the cloud. If it's the
+        # placeholder `sceneos/audio/default` that nobody uploaded, drop
+        # it. Skipped in mock mode (cheap probe would still fire and we
+        # don't want network in tests).
+        if audio_public_id and not mock_mode():
+            from . import audio as audio_service
+            ok = await audio_service.audio_publicid_exists(audio_public_id)
+            if not ok:
+                logger.warning(
+                    "[stitch] audio publicId %r does not resolve on Cloudinary — "
+                    "rendering silent",
+                    audio_public_id,
+                )
+                audio_public_id = None
     final_url = build_splice_url(clips, audio_public_id)
     if not final_url:
         raise HTTPException(status_code=500, detail="Failed to build splice URL")
@@ -744,15 +790,20 @@ def editor_apply(body: dict):
     """
     Deterministic. Bake EditDecisions into a Cloudinary delivery URL.
 
-    Request: { manifest, decisions }
+    Request: { manifest, decisions, cloudName? }
     Response: { finalUrl, thumbnailUrl, durationSeconds, decisions }
+
+    The optional `cloudName` override targets a specific Cloudinary cloud —
+    used by the baked-demo path so the URL points at the cloud where the
+    assets actually live (e.g. `dghelx0al`), not the backend's default.
     """
     manifest = body.get("manifest") or {}
     decisions = body.get("decisions") or {}
+    cloud_name = body.get("cloudName") or None
     if not isinstance(manifest.get("beats"), list):
         raise HTTPException(status_code=400, detail="manifest.beats[] is required")
     try:
-        return editor_service.apply_edit_decisions(manifest, decisions)
+        return editor_service.apply_edit_decisions(manifest, decisions, cloud_name=cloud_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -761,6 +812,85 @@ def editor_apply(body: dict):
             status_code=500,
             detail={"error": "Editor apply failed", "details": str(exc)},
         ) from exc
+
+
+# ── /api/cached/lighthouse — pre-baked demo for instant playback ────────────
+
+
+@app.get("/api/cached/lighthouse")
+def cached_lighthouse():
+    """
+    Return the pre-baked lighthouse-ship demo so the mock frontend can play
+    the full film inline with one click — no live generation, no waiting.
+
+    This is the on-stage safety net + the "let me show you what shipped"
+    button. The URLs reference Cloudinary assets baked end-to-end with:
+      - Veo 3 (1080p, native synced audio + voice acting)
+      - Lyria 2 (instrumental music bed, ducked at -28dB)
+      - Cloudinary fl_splice + l_text captions
+
+    Response shape mirrors `/api/stitch/url` so the frontend can render it
+    through the same component path.
+    """
+    from . import cached as cached_module
+
+    clips_in_order = [
+        ("story.hook", "Hook", 1),
+        ("story.exposition", "Exposition", 2),
+        ("story.inciting", "Inciting Incident", 3),
+        ("story.rising", "Rising Action", 4),
+        ("story.climax", "Climax", 5),
+        ("story.falling", "Falling Action", 6),
+        ("story.resolution", "Resolution", 7),
+    ]
+    beats_payload = []
+    total_duration = 0.0
+    for template, beat_name, idx in clips_in_order:
+        clip = cached_module.LIGHTHOUSE_SHIP_CLIPS.get(template)
+        if not clip:
+            continue
+        total_duration += float(clip.duration_seconds)
+        beats_payload.append({
+            "index": idx,
+            "beatName": beat_name,
+            "template": template,
+            "publicId": clip.public_id,
+            "clipUrl": clip.clip_url,
+            "durationSeconds": clip.duration_seconds,
+            "thumbnailUrl": build_thumbnail_url(clip.public_id),
+        })
+    if not beats_payload:
+        raise HTTPException(
+            status_code=503,
+            detail="Lighthouse demo is not baked on this build. Run smoke_pipeline.py and re-populate cached.py.",
+        )
+    # The bake lives on a fixed cloud (the team's project cloud). Surface
+    # it explicitly so the editor route can target the same cloud when the
+    # frontend asks to apply a counter-edit, instead of defaulting to
+    # whatever cloud the backend was booted against.
+    bake_cloud = "dghelx0al"
+    return {
+        "demoId": "lighthouse-ship",
+        "title": "The lost lighthouse keeper",
+        "masterPrompt": (
+            "A lighthouse keeper at Cape Disappointment receives a distress signal "
+            "from a ship that vanished four decades ago."
+        ),
+        "finalUrl": cached_module.LIGHTHOUSE_SHIP_FINAL_URL,
+        "thumbnailUrl": f"https://res.cloudinary.com/{bake_cloud}/video/upload/so_auto/{beats_payload[0]['publicId']}.jpg",
+        "audioPublicId": cached_module.LIGHTHOUSE_SHIP_AUDIO_PUBLIC_ID,
+        "cloudName": bake_cloud,
+        "durationSeconds": round(total_duration, 1),
+        "beats": beats_payload,
+        "bake": {
+            "videoModel": "veo-3.0-generate-001",
+            "musicModel": "lyria-002",
+            "resolution": "1920x1080",
+            "captions": True,
+            "nativeAudio": True,
+            "musicDuckDb": -28,
+        },
+    }
 
 
 # ── /api/cloudinary/sign ────────────────────────────────────────────────────

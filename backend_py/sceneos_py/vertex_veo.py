@@ -45,7 +45,10 @@ def _read_config() -> dict[str, str]:
         or env("GCP_LOCATION")
         or "us-central1"
     )
-    model_id = env("VEO_MODEL_ID", "veo-2.0-generate-001") or "veo-2.0-generate-001"
+    # Veo 3 GA. Native synced audio (dialogue + SFX + ambient), better video,
+    # 1080p output. Same predictLongRunning endpoint as Veo 2 — no transport
+    # change. Override with VEO_MODEL_ID if you need legacy Veo 2.
+    model_id = env("VEO_MODEL_ID", "veo-3.0-generate-001") or "veo-3.0-generate-001"
     return {"projectId": project_id, "location": location, "modelId": model_id}
 
 
@@ -125,9 +128,27 @@ async def generate(params: GenerateClipParams) -> dict:
     requested_int = round(float(requested))
     allowed = (4, 6, 8)
     duration_seconds = min(allowed, key=lambda d: (abs(d - requested_int), -d))
-    prompt = clip_prompt.get("motionPrompt") or params["refinedPrompt"]
 
-    instance: dict[str, Any] = {"prompt": prompt}
+    # CRITICAL: send Veo the FULL cinematic prompt (subject + action + setting
+    # + framing + lighting + mood), not just the camera-motion fragment. The
+    # earlier code preferred motionPrompt — which is a 25-word string with no
+    # subject — and that's why output looked generic. Veo 3 rewards specificity.
+    full_prompt = (
+        params.get("refinedPrompt")
+        or (
+            f"{clip_prompt.get('imagePrompt', '')} {clip_prompt.get('motionPrompt', '')}".strip()
+        )
+        or clip_prompt.get("motionPrompt")
+        or ""
+    )
+    # Optional voice line — Veo 3 will lip-sync dialogue when included in the
+    # prompt as direct speech. Keep this short; Veo handles ~10 words of
+    # spoken dialogue cleanly per 8s clip.
+    voice_line = (clip_prompt.get("voiceLine") or "").strip()
+    if voice_line:
+        full_prompt = f"{full_prompt} The narrator says: \"{voice_line}\"."
+
+    instance: dict[str, Any] = {"prompt": full_prompt}
 
     # Chained generation: when the previous beat's last frame is provided,
     # seed Veo's I2V mode with it. Veo accepts inline base64 OR gcsUri.
@@ -143,6 +164,11 @@ async def generate(params: GenerateClipParams) -> dict:
             }
             return {"jobId": provider_job_id}
 
+    # Veo 3 native audio: synced sound effects, ambient, and (when prompted)
+    # dialogue. Resolution 1080p > Veo 2's default. Both can be overridden via
+    # env for cost-throttling during dev.
+    generate_audio = (env("VEO_GENERATE_AUDIO", "true") or "true").lower() != "false"
+    resolution = env("VEO_RESOLUTION", "1080p") or "1080p"
     body = {
         "instances": [instance],
         "parameters": {
@@ -150,6 +176,8 @@ async def generate(params: GenerateClipParams) -> dict:
             "durationSeconds": duration_seconds,
             "sampleCount": 1,
             "personGeneration": "allow_adult",
+            "generateAudio": generate_audio,
+            "resolution": resolution,
         },
     }
 

@@ -115,6 +115,14 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
                             "type": "string",
                             "description": "Visual details of the setting — enough for an image model to render the location.",
                         },
+                        "voiceLine": {
+                            "type": "string",
+                            "description": "ONE short narration or dialogue line for this beat (8-18 words, ~5 seconds spoken). Voice-over style — what a narrator would say across this image, OR a single line of overheard dialogue. Drives both Veo 3 native lip-sync (when dialogue) and the post-stitch narration track. Optional but strongly recommended.",
+                        },
+                        "captionLine": {
+                            "type": "string",
+                            "description": "Optional short on-screen text (5-10 words) — not subtitles, but a single evocative phrase like a chapter card. Often a quote, a date, or a one-line emotional beat.",
+                        },
                     },
                 },
                 "suggestedDuration": {
@@ -314,8 +322,13 @@ beatFacts must contain:
 - mood: emotional register (a word or two)
 - characterDescription: appearance, age, costume, identifying details — enough for an image model to render the same person consistently across all 7 beats
 - locationDescription: visual details of the setting — enough for an image model to render the location
+- voiceLine: ONE short narration or dialogue line for this beat (8-18 words, ~5 seconds spoken). This is what the audience HEARS over the image. It can be a narrator's voice-over OR a single line of overheard dialogue. Examples:
+   - VO: "She had spent eleven years pretending the language was real."
+   - Dialogue (overheard): "We've been waiting for you. We just didn't know it was you."
+  Make it sound like real cinema — earned, not on-the-nose. Avoid generic narration ("In a world where..."). Required.
+- captionLine: optional 5-10 word on-screen phrase (not subtitles — a chapter-card or stylized cue). Examples: "Geneva. The thirty-first session." or "Three days before everything." Optional.
 
-Carry forward character + world descriptors verbatim from earlier beats so the protagonist looks the same in every frame.
+Carry forward character + world descriptors verbatim from earlier beats so the protagonist looks the same in every frame. Keep voiceLine consistent in voice — if beat 1 was first-person VO, every beat should be first-person VO.
 
 # Tools — call exactly one per turn
 - askQuestion(question, reasoning, suggestedAnswers, estimatedRemaining)
@@ -543,6 +556,9 @@ def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
         beat_facts.setdefault("action", "the action of this beat")
         beat_facts.setdefault("setting", "the established location")
         beat_facts.setdefault("mood", beat["archetype"]["mood"])
+        # voiceLine + captionLine pass through whatever the model emitted.
+        # Both are optional but strongly preferred — the orchestrator will
+        # still ship a clip without them, just silent + un-captioned.
         return {
             "kind": "sufficient",
             "refinedPrompt": str(args.get("refinedPrompt", "")),

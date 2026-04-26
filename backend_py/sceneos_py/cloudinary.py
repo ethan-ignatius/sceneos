@@ -68,6 +68,52 @@ def color_grade_for(mood: str) -> str:
     }.get(mood, "")
 
 
+# Effects we trust to splice into a Cloudinary delivery URL. The editor agent
+# is an LLM and can hallucinate effect names or inject characters that break
+# the URL parser; this allowlist is the gate. Anything outside this set gets
+# silently dropped at normalize time.
+_ALLOWED_VIDEO_EFFECTS: set[str] = {
+    "brightness", "contrast", "saturation", "vibrance", "hue", "gamma",
+    "blue", "red", "green", "sepia", "blur", "sharpen", "noise",
+    "vignette", "fade", "pixelate", "art", "grayscale", "negate",
+}
+
+
+def sanitize_color_grade(grade: str | None) -> str:
+    """
+    Validate a Cloudinary effect string before we paste it into a URL.
+
+    Format: comma-separated `e_<name>:<int>` segments. Anything that doesn't
+    match the shape — empty, unknown effect name, non-integer value, stray
+    characters — is dropped from the output. Returns "" if nothing survives.
+
+    Hard-blocks LLM hallucinations like `e_destroy_world:9999` or value
+    injection like `e_brightness:5/fl_attachment:evil`.
+    """
+    if not grade or not isinstance(grade, str):
+        return ""
+    cleaned: list[str] = []
+    for part in grade.split(","):
+        part = part.strip()
+        if not part.startswith("e_") or ":" not in part:
+            continue
+        name, _, value = part[2:].partition(":")
+        name = name.strip().lower()
+        value = value.strip()
+        if name not in _ALLOWED_VIDEO_EFFECTS:
+            continue
+        try:
+            int_value = int(float(value))
+        except (TypeError, ValueError):
+            continue
+        # Cloudinary accepts wide ranges per effect; clamp to a sane band so
+        # an out-of-range value never hard-fails. -100..100 covers every
+        # effect we use.
+        int_value = max(-100, min(100, int_value))
+        cleaned.append(f"e_{name}:{int_value}")
+    return ",".join(cleaned)
+
+
 # Named look presets — picked by the editor agent as a single LUT-style choice
 # applied across the whole cut. Mood color grades stay per-beat; this is the
 # editor's global pass on top.
@@ -107,12 +153,41 @@ def _escape_caption(text: str) -> str:
 _NORMALIZE = "c_fill,w_1920,h_1080"
 
 
+def _static_caption_overlay(text: str) -> str | None:
+    """Build a Cloudinary l_text overlay for a per-clip caption.
+
+    Used by the simple `build_splice_url` path (one caption per source clip,
+    spans the whole clip's duration). For the timeline-anchored editor path
+    see `_caption_overlay(text, start_at, duration, position)` further down.
+
+    Visual: lower-third position, warm cream text with a soft black stroke
+    for legibility on any clip. Font: Arial — ships on every Cloudinary
+    cloud out of the box. Custom fonts require uploading a TTF first which
+    we don't want as a hackathon dependency.
+    """
+    if not text or not text.strip():
+        return None
+    safe = text.strip().replace(",", " ").replace("/", " ").replace("\n", " ")
+    safe = safe[:120]
+    encoded = quote(safe, safe="")
+    # font_size 60 reads at 1080p; co_rgb:F4F1E8 = warm cream off-white (less
+    # harsh than pure white); g_south + y_120 places it lower-third; e_outline
+    # adds a 4px black stroke so it's legible over any background.
+    return (
+        f"l_text:Arial_60_bold:{encoded},"
+        f"co_rgb:F4F1E8,e_outline:4:000000,g_south,y_120/fl_layer_apply"
+    )
+
+
 def _clip_segments(clip: dict, normalize: bool = True) -> list[str]:
     out: list[str] = []
     if normalize:
         out.append(_NORMALIZE)
     if clip.get("colorGrade"):
         out.append(clip["colorGrade"])
+    caption_seg = _static_caption_overlay(clip.get("caption") or "")
+    if caption_seg:
+        out.append(caption_seg)
     return out
 
 
@@ -120,32 +195,59 @@ def build_splice_url(
     clips: list[dict],
     audio_public_id: str | None = None,
     normalize: bool = True,
+    music_volume: int = -28,
 ) -> str | None:
     """
     Cloudinary fl_splice URL builder.
 
     Mirrors backend/src/services/cloudinary.ts. Each clip is normalized to a
     common 1920x1080 frame before splicing so mixed provider outputs stitch
-    cleanly. Mood color grade applied when provided per clip.
+    cleanly. Mood color grade applied when provided per clip. Captions baked
+    in per-clip via l_text. Music ducked under the native clip audio so
+    Veo 3's dialogue / SFX / ambient stay readable.
+
+    Args:
+      music_volume: dB attenuation for the music bed (negative = quieter).
+        Default -28dB sits the music well underneath dialogue + SFX. Pass 0
+        to leave music at full volume (legacy behavior).
     """
     if not clips:
         return None
     base, *overlays = clips
     segments: list[str] = []
-    segments.extend(_clip_segments(base, normalize))
+    base_segs = _clip_segments(base, normalize)
+    if base_segs:
+        # Base clip transforms apply directly (no layer wrapping needed).
+        # The caption helper emits its own /fl_layer_apply because l_text
+        # IS its own layer over the base — that part is correct.
+        segments.extend(base_segs)
 
+    # Overlay clips for splicing. Cloudinary's canonical syntax:
+    #   l_video:<id>,fl_splice / <transforms> / fl_layer_apply
+    # The fl_splice flag MUST be in the same URL component as l_video:
+    # (the layer opener), NOT in the fl_layer_apply component (the closer).
+    # Putting fl_splice in the closer silently produces the base clip alone
+    # (Cloudinary treats the overlay as a regular layer without splicing).
     for clip in overlays:
-        layer = f"l_video:{_layer_id(clip['publicId'])}"
+        layer = f"l_video:{_layer_id(clip['publicId'])},fl_splice"
         transforms = _clip_segments(clip, normalize)
         if transforms:
             segments.append(layer)
             segments.extend(transforms)
-            segments.append("fl_layer_apply,fl_splice")
+            segments.append("fl_layer_apply")
         else:
-            segments.append(f"{layer},fl_splice")
+            segments.append(f"{layer}/fl_layer_apply")
 
     if audio_public_id:
-        segments.append(f"l_audio:{_layer_id(audio_public_id)}")
+        # e_volume ducks the music under the clip's native audio. Veo 3
+        # already baked dialogue + ambient into each clip, so we want music
+        # ~28dB below that, not on top of it.
+        if music_volume:
+            segments.append(
+                f"l_audio:{_layer_id(audio_public_id)},e_volume:{music_volume}/fl_layer_apply"
+            )
+        else:
+            segments.append(f"l_audio:{_layer_id(audio_public_id)}")
 
     prefix = f"{'/'.join(segments)}/" if segments else ""
     return f"https://res.cloudinary.com/{CLOUD}/video/upload/{prefix}{base['publicId']}.mp4"
@@ -184,12 +286,15 @@ def _caption_overlay(text: str, start_at: float, duration: float, position: str 
     A single caption overlay timed to a specific window in the spliced timeline.
 
     `g_<position>` controls anchor (south = bottom-center, north = top-center).
-    `y_60` lifts off the absolute edge so the text sits in the safe zone.
+    `y_120` lifts off the absolute edge so the text sits in the lower-third
+    safe zone (broadcast convention). Arial is one of Cloudinary's built-in
+    fonts — no TTF upload required, ships on every cloud. e_outline gives a
+    4px black stroke so the text is legible over any frame.
     """
     safe = _escape_caption(text)
     return (
-        f"l_text:Inter_36_bold:{safe},co_white,bo_2px_solid_black,"
-        f"g_{position},y_60/"
+        f"l_text:Arial_56_bold:{safe},co_rgb:F4F1E8,e_outline:4:000000,"
+        f"g_{position},y_120/"
         f"fl_layer_apply,so_{round(start_at, 2)},du_{round(duration, 2)}"
     )
 
@@ -213,7 +318,7 @@ def _watermark_overlay(public_id: str) -> str:
     return f"l_{_layer_id(public_id)},g_south_east,x_24,y_24"
 
 
-def build_editor_url(decisions: dict) -> str | None:
+def build_editor_url(decisions: dict, cloud_name: str | None = None) -> str | None:
     """
     Build the final Cloudinary delivery URL for an EditDecisions object.
 
@@ -333,7 +438,8 @@ def build_editor_url(decisions: dict) -> str | None:
         segments.append(_watermark_overlay(decisions["watermarkPublicId"]))
 
     prefix = f"{'/'.join(segments)}/" if segments else ""
-    return f"https://res.cloudinary.com/{CLOUD}/video/upload/{prefix}{base['publicId']}.mp4"
+    cloud = cloud_name or CLOUD
+    return f"https://res.cloudinary.com/{cloud}/video/upload/{prefix}{base['publicId']}.mp4"
 
 
 def edit_decisions_total_duration(decisions: dict) -> float:
