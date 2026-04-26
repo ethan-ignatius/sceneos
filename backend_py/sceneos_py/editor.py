@@ -345,12 +345,34 @@ def _normalize_decisions(decisions: dict, baseline: dict) -> dict:
     out = dict(baseline) if baseline else {}
     for k, v in (decisions or {}).items():
         out[k] = v
-    # Per-clip carryover — match by publicId.
-    base_clips_by_id = {c["publicId"]: c for c in (baseline or {}).get("clips") or []}
-    new_clips = []
-    for clip in out.get("clips") or []:
-        merged = dict(base_clips_by_id.get(clip.get("publicId"), {}))
-        merged.update(clip)
+    # Per-clip carryover. The LLM controls per-beat parameters (trim, grade,
+    # caption, transition) but it does NOT get to invent or reorder clips —
+    # the cut's beat order and source publicIds are pinned by the manifest.
+    # If we let the LLM write publicId, a single hallucinated value becomes
+    # a 404'd Cloudinary URL on stage. We enforce structural integrity by
+    # walking the BASELINE clips in order and looking up the matching LLM
+    # patch (by publicId OR by beatId — Gemini sometimes confuses them).
+    base_clips: list[dict] = list((baseline or {}).get("clips") or [])
+    proposed_clips: list[dict] = list(out.get("clips") or [])
+    proposed_by_public = {c.get("publicId"): c for c in proposed_clips if c.get("publicId")}
+    proposed_by_beat = {c.get("beatId"): c for c in proposed_clips if c.get("beatId")}
+    new_clips: list[dict] = []
+    for i, base in enumerate(base_clips):
+        # Look up the LLM's patch for this beat. Match by publicId first,
+        # then beatId, then positional index — anything to glue the patch
+        # back to the right slot, since the LLM can be loose with names.
+        patch = (
+            proposed_by_public.get(base.get("publicId"))
+            or proposed_by_beat.get(base.get("beatId"))
+            or (proposed_clips[i] if i < len(proposed_clips) else {})
+        )
+        merged = dict(base)
+        # Apply only the keys the agent is allowed to touch — never let it
+        # rewrite publicId / beatId / durationSeconds (those come from the
+        # manifest and are load-bearing for URL construction + duration math).
+        for k in ("trimStart", "trimEnd", "colorGrade", "transitionMs", "caption"):
+            if k in patch:
+                merged[k] = patch[k]
         dur = float(merged.get("durationSeconds") or 0)
         if "trimStart" in merged:
             merged["trimStart"] = max(0.0, min(float(merged["trimStart"]), dur))

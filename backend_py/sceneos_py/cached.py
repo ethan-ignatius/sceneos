@@ -73,30 +73,35 @@ LIGHTHOUSE_SHIP_CLIPS: dict[str, _Clip] = {
 LIGHTHOUSE_SHIP_AUDIO_PUBLIC_ID = "sceneos/8dbb956c76a7/audio/music"
 
 # Pre-built stitched URL — captions + music ducked at -28dB.
+#
+# URL-syntax note: text-overlay positioning (`g_south`, `y_120`) lives in the
+# `fl_layer_apply` segment, NOT the `l_text:` opener. Inline positioning
+# silently centers the caption mid-frame — that's the bug the first lighthouse
+# bake shipped with (text covered the keeper's chest the whole time).
 LIGHTHOUSE_SHIP_FINAL_URL = (
     f"{_LIGHTHOUSE_CLOUD}/c_fill,w_1920,h_1080"
     "/l_text:Arial_60_bold:Cape%20Disappointment%20Light.%20November%201957.,"
-    "co_rgb:F4F1E8,e_outline:4:000000,g_south,y_120/fl_layer_apply"
+    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
     "/l_video:sceneos:8dbb956c76a7:beat-2:beat-2-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080/fl_layer_apply"
     "/l_video:sceneos:8dbb956c76a7:beat-3:beat-3-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080"
     "/l_text:Arial_60_bold:23%3A42%20hours.,"
-    "co_rgb:F4F1E8,e_outline:4:000000,g_south,y_120/fl_layer_apply"
+    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
     "/fl_layer_apply"
     "/l_video:sceneos:8dbb956c76a7:beat-4:beat-4-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080/fl_layer_apply"
     "/l_video:sceneos:8dbb956c76a7:beat-5:beat-5-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080"
     "/l_text:Arial_60_bold:The%20Astoria.%20Lost%3A%20October%2031%20%201922.,"
-    "co_rgb:F4F1E8,e_outline:4:000000,g_south,y_120/fl_layer_apply"
+    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
     "/fl_layer_apply"
     "/l_video:sceneos:8dbb956c76a7:beat-6:beat-6-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080/fl_layer_apply"
     "/l_video:sceneos:8dbb956c76a7:beat-7:beat-7-scene-1,fl_splice"
     "/c_fill,w_1920,h_1080"
     "/l_text:Arial_60_bold:From%20Logbook%2041.,"
-    "co_rgb:F4F1E8,e_outline:4:000000,g_south,y_120/fl_layer_apply"
+    "co_rgb:F4F1E8,e_outline:4:000000/fl_layer_apply,g_south,y_120"
     "/fl_layer_apply"
     "/l_audio:sceneos:8dbb956c76a7:audio:music,e_volume:-28/fl_layer_apply"
     "/sceneos/8dbb956c76a7/beat-1/beat-1-scene-1.mp4"
