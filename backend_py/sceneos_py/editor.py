@@ -44,10 +44,11 @@ from .cloudinary import (
     edit_decisions_total_duration,
     sanitize_color_grade,
 )
+from .agent import THINKING_BUDGET_DEMO, THINKING_BUDGET_NORMAL
+from .agent.context import _mode_of
 from .genai_client import default_gemini_model_for, make_genai_client
 
 
-THINKING_BUDGET = 1024
 DEFAULT_TRANSITION_MS = 240
 # Cloudinary's e_fade accepts up to ~5000ms; beyond that it stops being
 # perceptually meaningful and the URL gets noisy. 2.4s is a long cinematic
@@ -544,9 +545,13 @@ def _build_request_config(manifest: dict, decisions: dict, conversation: list[di
         max_output_tokens=4096,
     )
     if with_thinking:
+        # Demo mode runs on stage with a tight budget so each user-facing
+        # turn lands fast; normal mode gives the model more room to reason
+        # about cross-clip continuity. Mirrors the agent module's split.
+        budget = THINKING_BUDGET_DEMO if _mode_of(manifest) == "demo" else THINKING_BUDGET_NORMAL
         config_kwargs["thinking_config"] = types.ThinkingConfig(
             include_thoughts=True,
-            thinking_budget=THINKING_BUDGET,
+            thinking_budget=budget,
         )
     return system, types.GenerateContentConfig(**config_kwargs)
 
