@@ -64,7 +64,9 @@ async def run_agent_turn(req: dict) -> dict:
         beat, manifest, with_thinking=False, user_turn_count=user_turn_count,
         force_mark_sufficient=force_mark,
     )
-    contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
+    contents = _to_gemini_contents(
+        conversation, manifest["masterPrompt"], beat=beat, manifest=manifest,
+    )
 
     def _call_sync(temp: float = 0.85) -> Any:
         config_kwargs = dict(config.model_dump(exclude_none=True))
@@ -199,7 +201,9 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         beat, manifest, with_thinking=True, user_turn_count=user_turn_count,
         force_mark_sufficient=force_mark,
     )
-    contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
+    contents = _to_gemini_contents(
+        conversation, manifest["masterPrompt"], beat=beat, manifest=manifest,
+    )
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
