@@ -548,22 +548,66 @@ export const useBeatGraphStore = create<BeatGraphState>()(
 
 // ── Global auto-approve subscriber ────────────────────────────────────────
 // Fires on every store update. Any beat whose scene has a clipPublicId
-// but isn't yet approved gets promoted automatically. This is the
-// authoritative auto-approve — it runs independently of which component
-// is mounted, so navigating away from a planet mid-render or having the
-// drawer closed never leaves a beat dangling. Without this, the stitch
-// step 400'd and the user could accidentally re-Roll-camera on a
-// "preview" beat, burning Higgsfield credits twice.
+// but isn't already promoted to status="approved" gets promoted
+// automatically. Independent of which component is mounted — navigating
+// away from a planet mid-render no longer leaves a beat dangling, and
+// the stitch endpoint always sees beats with their authoritative
+// status set.
+//
+// Two-step deferral that the previous version didn't have:
+//   1. queueMicrotask so we don't re-enter set() during the update
+//      that triggered us. Calling state.approveScene mid-fire was
+//      cascading through subscribers and leaving some beats with
+//      scene.approved=true but beat.status still on "preview" — the
+//      Stitch pill's `b.status === "approved"` filter then silently
+//      skipped them ("Stitch 0 / 3" with all clips rendered).
+//   2. ONE setState that flips BOTH scene.approved AND beat.status
+//      atomically, bypassing approveScene's per-beat "allApproved"
+//      check (which would only fire status=approved if EVERY scene
+//      under the beat is approved — fragile if more than one scene
+//      ever lands per beat).
 useBeatGraphStore.subscribe((state, prev) => {
   const m = state.manifest;
   if (!m || m === prev.manifest) return;
+  // Collect work synchronously off the snapshot, then defer the write.
+  const promotions: Array<{ beatId: string; sceneId: string }> = [];
   for (const beat of m.beats) {
     if (beat.status === "approved") continue;
     const scene = beat.scenes[0];
     if (!scene?.clipPublicId) continue;
-    if (scene.approved) continue;
-    state.approveScene(beat.beatId, scene.sceneId);
+    promotions.push({ beatId: beat.beatId, sceneId: scene.sceneId });
   }
+  if (promotions.length === 0) return;
+
+  queueMicrotask(() => {
+    const live = useBeatGraphStore.getState().manifest;
+    if (!live) return;
+    // Re-check every promotion against the live state — another writer
+    // may have approved the beat in the gap (e.g. user clicked
+    // Approve manually). Skip those.
+    const stillNeedsPromotion = promotions.filter(({ beatId }) => {
+      const b = live.beats.find((x) => x.beatId === beatId);
+      return b && b.status !== "approved";
+    });
+    if (stillNeedsPromotion.length === 0) return;
+
+    useBeatGraphStore.setState({
+      manifest: {
+        ...live,
+        beats: live.beats.map((b) => {
+          const target = stillNeedsPromotion.find((p) => p.beatId === b.beatId);
+          if (!target) return b;
+          return {
+            ...b,
+            status: "approved",
+            scenes: b.scenes.map((s) =>
+              s.sceneId === target.sceneId ? { ...s, approved: true } : s,
+            ),
+          };
+        }),
+      },
+    });
+  });
 });
 
 export function selectActiveBeat(state: BeatGraphState): Beat | null {
