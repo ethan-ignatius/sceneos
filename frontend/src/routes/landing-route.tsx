@@ -80,7 +80,7 @@ export function LandingRoute() {
   const submitRef = useRef<((text: string) => void) | null>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
-    silenceMs: 3000,
+    silenceMs: 2000,
     onSettle: (text) => submitRef.current?.(text),
   });
   const autoStartedMicRef = useRef(false);
@@ -150,7 +150,13 @@ export function LandingRoute() {
     submittingRef.current = true;
     setSubmitting(true);
     setMasterPrompt(trimmed);
-    initialize({ masterPrompt: trimmed, videoType });
+    // Read videoType FRESH from the store at submit time. Reading the
+    // closure value would lose a chip-click that fired in the same React
+    // batch as the submit (user clicks Trailer then immediately hits
+    // Enter — the submit's videoType closure was the stale value).
+    // Reproduces as: pick Trailer, get 8 planets anyway.
+    const submittedVideoType = usePromptStore.getState().videoType;
+    initialize({ masterPrompt: trimmed, videoType: submittedVideoType });
 
     // Fire-and-forget enrichment. Bridge starts immediately; the canvas
     // gets refined per-beat prompts when the API returns. If it 502s, the
@@ -161,7 +167,7 @@ export function LandingRoute() {
       api
         .decompose({
           masterPrompt: trimmed,
-          videoType,
+          videoType: submittedVideoType,
           beats: fresh.beats.map((b) => ({
             beatId: b.beatId,
             template: b.template,

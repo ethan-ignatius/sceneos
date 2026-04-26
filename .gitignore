@@ -2,6 +2,7 @@ examples/
 issues/
 .claude/
 examples-locked/
+demo-plan/
 
 # Node / Vite
 node_modules/
