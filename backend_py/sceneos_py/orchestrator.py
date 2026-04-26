@@ -379,10 +379,16 @@ async def run_beat_pipeline(
         # seed. This is the "degraded refs → use last frame" path.
         seed_image_url = previous_last_frame_url
 
-    if not seed_image_url and not chain:
-        # Last-resort fallback: no project refs, no chain. Generate per-beat
-        # refs concurrently. Older callers (tests, ad-hoc /api/orchestrate
-        # without /api/session/start) take this path.
+    if not seed_image_url:
+        # Last-resort fallback: no project refs, no usable chain. Generate
+        # per-beat refs concurrently. Reached by:
+        #   - First beat (chain=False).
+        #   - Non-first beats whose previous beat hasn't completed yet
+        #     (previous_last_frame_url=None even though chain=True).
+        #   - Ad-hoc /api/orchestrate calls outside a session.
+        # Originally this branch was guarded by `not chain` — which left
+        # downstream Higgsfield with no `image_url` whenever the prior beat
+        # hadn't rendered yet, forcing the "no seed available" cascade.
         #
         # Provider-aware ref source: when Higgsfield is the active provider
         # we generate refs via Higgsfield Soul T2I so the same model that

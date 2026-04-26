@@ -1519,16 +1519,17 @@ async def projects_get(project_id: str, request: Request):
 async def projects_save(body: dict, request: Request):
     """Save or update a project. Body: { projectId, manifest, status?, editor? }
     Stamps the owner_id from X-User-Id so subsequent list/get/delete
-    can scope by the caller. Without an X-User-Id the project is
-    rejected — anonymous saves would orphan the record."""
+    can scope by the caller. Anonymous saves are accepted (owner_id=None)
+    so the in-app ManifestAutoSync still persists demo runs that don't
+    have an Auth0 session — those records remain visible to anyone hitting
+    the unscoped list endpoint, which is the right read tier for the
+    public demo. Switch to a 401 when production hardening lands."""
     from . import db
     manifest = body.get("manifest")
     project_id = body.get("projectId") or (manifest or {}).get("projectId")
     if not project_id or not manifest:
         raise HTTPException(status_code=400, detail="projectId and manifest are required")
-    owner = _owner_id(request)
-    if not owner:
-        raise HTTPException(status_code=401, detail="X-User-Id header is required")
+    owner = _owner_id(request)  # may be None for anonymous demo runs
     await db.upsert_project(
         project_id,
         manifest=manifest,
