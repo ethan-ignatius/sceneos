@@ -155,15 +155,15 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         "fixed inset-x-0 bottom-0 z-50 flex max-h-[88svh] w-full select-text flex-col rounded-t-2xl",
         "md:absolute md:inset-x-auto md:right-6 md:top-20 md:bottom-6 md:max-h-none md:w-[42rem] md:max-w-[calc(100vw-3rem)] md:rounded-2xl",
         "overflow-hidden border border-fg-tertiary/15",
-        "bg-[#14110f]/[0.97] backdrop-blur-2xl",
-        "shadow-[0_40px_80px_-24px_rgba(0,0,0,0.65),_0_0_0_1px_rgba(255,255,255,0.03)]",
+        "bg-bg-panel/97 backdrop-blur-2xl",
+        "shadow-(--shadow-deep)",
       )}
     >
       {/* Header — eyebrow + headline + close */}
       <header className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-7 pb-5 pt-6">
         <div className="space-y-2">
           <div className="font-body text-[12px] font-medium text-fg-tertiary">Stitch</div>
-          <h2 className="font-body text-[1.35rem] font-semibold leading-[1.18] tracking-[-0.018em] text-fg-primary">
+          <h2 className="text-balance font-body text-[1.35rem] font-semibold leading-[1.18] tracking-[-0.018em] text-fg-primary">
             {headline}
           </h2>
         </div>
@@ -348,6 +348,11 @@ function BeatRow({
   const hasClip = Boolean(scene.clipPublicId);
   const canApprove = isPreview && hasClip;
   const canRetake = (isPreview || isApproved) && hasClip;
+  // Tracks whether the <video> errored. Resuming an archived project may
+  // surface stale Cloudinary URLs (rotated cloud, deleted public_id);
+  // we hide the player and show "Clip unavailable" instead of letting
+  // the row render a broken-image icon.
+  const [mediaUnavailable, setMediaUnavailable] = useState(false);
 
   // Derived URLs — only computed when there's a public id, otherwise empty.
   const videoUrl = hasClip
@@ -373,7 +378,7 @@ function BeatRow({
           until there's something to show. */}
       {hasClip ? (
         <div className="relative aspect-video w-20 flex-shrink-0 overflow-hidden rounded-md bg-bg-base/60 sm:w-24">
-          {videoUrl ? (
+          {videoUrl && !mediaUnavailable ? (
             <video
               src={videoUrl}
               poster={thumbnailUrl ?? undefined}
@@ -381,8 +386,19 @@ function BeatRow({
               loop
               playsInline
               autoPlay
+              onError={() => setMediaUnavailable(true)}
               className="absolute inset-0 h-full w-full object-cover"
             />
+          ) : null}
+          {/* Stale Cloudinary URL fallback — when the video errors (404, expired,
+              network), we hide the <video> tag and show a small "Clip
+              unavailable" caption so the row doesn't render a broken-image
+              icon. Resuming an old archived project hits this path most
+              often. */}
+          {mediaUnavailable ? (
+            <div className="absolute inset-0 grid place-items-center bg-bg-base/80 px-1 text-center font-body text-[10px] text-fg-tertiary">
+              Clip unavailable
+            </div>
           ) : null}
           {isGenerating ? (
             <span className="absolute inset-0 grid place-items-center bg-bg-base/40">

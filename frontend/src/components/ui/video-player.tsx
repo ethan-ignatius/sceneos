@@ -125,7 +125,7 @@ export function VideoPlayer({
       data-cursor="hide"
       className={cn(
         "group relative aspect-video overflow-hidden rounded-md bg-black outline-none",
-        "shadow-[0_24px_60px_-20px_rgba(0,0,0,0.6)]",
+        "shadow-(--shadow-panel)",
         "ring-1 ring-brand-ember-dim/40 focus-visible:ring-2 focus-visible:ring-brand-ember",
         className,
       )}

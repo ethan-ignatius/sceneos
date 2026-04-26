@@ -204,6 +204,13 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     setStreamingThought("");
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // 60s ceiling — Vertex Gemini turns run ~6–10s warm; 60s gives a
+    // generous buffer for cold starts before we surface a timeout
+    // error and unstick the UI.
+    const seedTimeoutId = window.setTimeout(() => {
+      ctrl.abort();
+      if (active && !cancelledRef.current) setError("Director took too long — try again.");
+    }, 60_000);
 
     (async () => {
       try {
@@ -239,6 +246,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         if ((err as Error)?.name === "AbortError") return;
         setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       } finally {
+        window.clearTimeout(seedTimeoutId);
         if (active && !cancelledRef.current) setInFlight(false);
       }
     })();
@@ -247,6 +255,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       active = false;
       cancelledRef.current = true;
       ctrl.abort();
+      window.clearTimeout(seedTimeoutId);
     };
     // beat.beatId is the stable identity for this drawer instance; deps deliberate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -375,7 +384,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-md border-2 border-dashed border-brand-ember/60 bg-brand-ember/5 backdrop-blur-sm"
         >
-          <div className="font-display text-[14px] italic text-brand-ember">
+          <div className="font-body text-[13px] font-medium text-brand-ember">
             Drop frames, mood, references.
           </div>
         </div>
@@ -464,7 +473,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 />
                 <span>Thinking</span>
               </div>
-              <p className="font-display text-[13.5px] italic leading-relaxed text-fg-tertiary/85">
+              <p className="font-body text-[12.5px] leading-relaxed text-fg-tertiary/85">
                 {renderThoughtMarkdown(streamingThought)}
               </p>
             </motion.div>
@@ -472,7 +481,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             <div
               role="status"
               aria-live="polite"
-              className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
+              className="flex items-center gap-2 font-body text-[12.5px] text-fg-tertiary"
             >
               <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
               Composing the shot.
@@ -527,7 +536,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 disabled={inFlight}
                 className={cn(
                   "block w-full border-b border-fg-tertiary/12 px-1 py-2.5 last:border-b-0",
-                  "text-left font-body text-[13.5px] leading-snug text-fg-secondary",
+                  "text-left font-body text-meta-lg leading-snug text-fg-secondary",
                   "transition-colors duration-200 ease-out",
                   "hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember",
                   "disabled:pointer-events-none disabled:opacity-50",
@@ -637,7 +646,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           aria-label={inFlight ? "Sending message" : "Send message"}
           // Override size="sm" h-8 → h-9 so Send sits on the same
           // baseline as the round image / voice buttons.
-          className="h-9 px-3.5 text-[12.5px]"
+          className="h-9 px-3.5 text-pill"
         >
           {inFlight ? (
             <Loader2 size={14} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />

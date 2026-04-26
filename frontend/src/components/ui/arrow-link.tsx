@@ -82,7 +82,7 @@ export const ArrowLink = forwardRef<HTMLAnchorElement, ArrowLinkProps>(
             )}
           />
         </span>
-        <span className="font-body text-[12.5px] font-medium">{children}</span>
+        <span className="font-body text-pill font-medium">{children}</span>
       </a>
     );
   },

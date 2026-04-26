@@ -89,7 +89,7 @@ export function Dialog({
             </DialogPrimitive.Title>
 
             {title ? (
-              <h2 className="mt-1 font-display text-2xl italic text-fg-primary">{title}</h2>
+              <h2 className="text-balance mt-1 font-display text-2xl italic text-fg-primary">{title}</h2>
             ) : null}
 
             <div className={cn(caption || title ? "mt-4" : undefined)}>

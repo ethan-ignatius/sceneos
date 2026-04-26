@@ -1,44 +1,32 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Send, Loader2, Sparkles, Lock } from "lucide-react";
+import { Send, Loader2, Lock } from "lucide-react";
 import type { EditDecisions, EditorTurnResponse } from "@/types/api";
 import type { EditorTurn } from "@/stores/beat-graph-store";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
+import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { renderThoughtMarkdown } from "@/lib/render-thought-markdown";
 
 interface EditorAgentPanelProps {
   conversation: EditorTurn[];
-  /** The most recent agent emission. Drives the proposal card and follow-ups. */
   latest: EditorTurnResponse | null;
   thinking: boolean;
-  /** Live thinking-token accumulator from /api/editor/stream. While thinking
-   *  is true and this string is non-empty, the panel renders the live
-   *  thoughts in place of the static "Director is watching the cut" loader. */
   streamingThought?: string;
   onUserMessage: (text: string) => void;
   onAcceptProposal: () => void;
   onRevertProposal: () => void;
   onCommitNow: () => void;
-  /** True after the agent committed via commitEdit. */
   committed: boolean;
-  /** The decisions currently displayed on the timeline (not necessarily the latest agent emission). */
   livingDecisions: EditDecisions | null;
 }
 
 /**
- * The director's chat for the post-stitch edit pass.
+ * Director chat for the post-stitch edit pass.
  *
- * The agent emits one of:
- *   - propose: a new EditDecisions + rationale + 3 suggestedFollowups
- *   - commit:  the locked cut, with summary
- *
- * The proposal card sits at the top — clearly marked as "the agent suggests".
- * The user can Accept (merges decisions into livingDecisions), Revert (restores
- * pre-proposal state), or counter-propose by typing or clicking a follow-up.
- *
- * Voice rules — same as agent.py: warm, curious, no fake enthusiasm, no em dashes.
+ * Body-text register only — no Fraunces decoration, no eyebrows that just
+ * say what the surface is. Conversation flows top to bottom, the proposal
+ * sits inline with text-button affordances, and the input pins to the
+ * bottom of the column.
  */
 export function EditorAgentPanel({
   conversation,
@@ -56,7 +44,6 @@ export function EditorAgentPanel({
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Keep the chat scrolled to the latest message.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -82,61 +69,45 @@ export function EditorAgentPanel({
     proposal && livingDecisions && JSON.stringify(livingDecisions) === JSON.stringify(proposal.decisions);
 
   return (
-    <aside
-      className={cn(
-        "flex h-full flex-col rounded-md border border-fg-tertiary/15 bg-bg-elev-1/70 backdrop-blur-xl",
-        "shadow-[0_30px_60px_-24px_rgba(0,0,0,0.6),_0_0_0_1px_rgba(240,168,104,0.04)]",
-      )}
-    >
-      {/* Header — single Fraunces line. The "Editor · Director voice"
-          eyebrow was redundant with the route header; the panel's
-          content speaks for itself. */}
-      <header className="border-b border-fg-tertiary/15 px-5 pb-4 pt-5">
-        <h2 className="font-display text-2xl italic leading-tight text-fg-primary">
-          {committed ? "Locked." : "What do you want to refine?"}
-        </h2>
-      </header>
-
-      {/* Conversation scroller */}
+    <aside className="flex h-full flex-col">
+      {/* Conversation */}
       <div
         ref={scrollRef}
         data-lenis-prevent
-        className="flex-1 space-y-4 overflow-y-auto px-5 py-5 [scrollbar-width:thin]"
+        className="flex-1 space-y-4 overflow-y-auto pb-4 pr-1 [scrollbar-width:thin]"
       >
         {conversation.length === 0 && !thinking && !latest ? (
-          <div className="rounded-md border border-dashed border-fg-tertiary/20 bg-bg-base/40 p-4 font-body text-[13px] leading-relaxed text-fg-tertiary">
-            The cut just rendered. Tell me what you want to change, or wait for me to suggest something.
-          </div>
+          <p className="font-body text-[13px] leading-relaxed text-fg-tertiary">
+            Tell me what to refine, or wait for a suggestion.
+          </p>
         ) : null}
 
         {conversation.map((t, i) => (
           <ConversationTurn key={i} turn={t} />
         ))}
 
-        {/* Live thinking — same hairline-bordered register as the per-beat
-            agent's "Thinking" panel. Streamed thoughts win over the static
-            loader; the loader only shows during the cold-start window
-            before the first thought chunk arrives. */}
         {thinking ? (
           streamingThought ? (
             <motion.div
               role="status"
               aria-live="polite"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, ease: [0.25, 1, 0.5, 1] }}
-              className="rounded-md border border-fg-tertiary/15 bg-bg-base/40 px-4 py-3"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.18 }}
+              className="space-y-1"
             >
-              <div className="caption-track mb-2 flex items-center gap-1.5 text-[10px] text-fg-tertiary">
+              <div className="flex items-center gap-1.5">
                 <motion.span
                   aria-hidden="true"
                   className="h-1.5 w-1.5 rounded-full bg-brand-ember"
                   animate={{ opacity: [0.35, 1, 0.35] }}
                   transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
                 />
-                <span>Director thinking</span>
+                <span className="font-body text-[10px] font-medium uppercase tracking-[0.08em] text-fg-tertiary">
+                  Thinking
+                </span>
               </div>
-              <p className="font-display text-[13.5px] italic leading-relaxed text-fg-tertiary/85">
+              <p className="font-body text-pill leading-relaxed text-fg-tertiary/85">
                 {renderThoughtMarkdown(streamingThought)}
               </p>
             </motion.div>
@@ -144,107 +115,100 @@ export function EditorAgentPanel({
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="flex items-center gap-2 font-display text-[14px] italic text-fg-tertiary"
+              className="flex items-center gap-2 font-body text-pill text-fg-tertiary"
             >
-              <Loader2 size={11} strokeWidth={1.5} className="animate-spin" />
-              <span>Director is watching the cut.</span>
+              <Loader2 size={11} strokeWidth={1.5} className="animate-spin" aria-hidden="true" />
+              <span>Watching the cut.</span>
             </motion.div>
           )
         ) : null}
 
-        {/* Proposal card */}
         <AnimatePresence mode="wait">
           {proposal ? (
             <motion.div
               key={proposal.rationale}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-              className={cn(
-                "space-y-3 rounded-md border border-brand-ember-dim/40 bg-brand-ember/[0.04] p-4",
-                "shadow-[inset_0_0_0_1px_rgba(240,168,104,0.06)]",
-              )}
+              className="space-y-3 border-t border-fg-tertiary/15 pt-3"
             >
-              <div className="flex items-center gap-1.5 font-body text-[12px] font-medium text-brand-ember">
-                <Sparkles size={12} strokeWidth={1.5} aria-hidden="true" />
-                <span>Director suggests</span>
-              </div>
-              <p className="font-body text-[13.5px] leading-relaxed text-fg-primary">{proposal.rationale}</p>
-              <div className="flex flex-wrap items-center gap-2 pt-1">
+              <p className="font-body text-[13px] leading-relaxed text-fg-primary">
+                {proposal.rationale}
+              </p>
+              <div className="flex items-center gap-3">
                 {livingMatchesProposal ? (
-                  <span className="font-body text-[11.5px] text-fg-tertiary">Applied</span>
+                  <span className="font-body text-chip text-fg-tertiary">Applied</span>
                 ) : (
                   <>
-                    <Button size="sm" variant="primary" onClick={onAcceptProposal}>
-                      Apply edit
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={onRevertProposal}>
+                    <button
+                      type="button"
+                      onClick={onAcceptProposal}
+                      className="cursor-pointer font-body text-[12px] font-medium text-brand-ember transition-colors hover:text-brand-ember/80"
+                    >
+                      Apply
+                    </button>
+                    <span aria-hidden="true" className="text-fg-tertiary/40">·</span>
+                    <button
+                      type="button"
+                      onClick={onRevertProposal}
+                      className="cursor-pointer font-body text-[12px] text-fg-tertiary transition-colors hover:text-fg-primary"
+                    >
                       Keep mine
-                    </Button>
+                    </button>
                   </>
                 )}
               </div>
 
-              {/* Follow-up suggestions — same shape as the questionnaire pills. */}
-              <div className="space-y-1.5 pt-2">
-                <div className="font-body text-[11.5px] font-medium text-fg-tertiary">
-                  Or try
-                </div>
-                <div className="flex flex-col gap-1.5">
+              {proposal.suggestedFollowups.length > 0 ? (
+                <div className="border-t border-fg-tertiary/12">
                   {proposal.suggestedFollowups.map((s, i) => (
-                    <motion.button
+                    <button
                       key={i}
                       type="button"
-                      initial={{ opacity: 0, x: -8 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{
-                        duration: DURATIONS.quick,
-                        ease: EASE.outQuart,
-                        delay: i * STAGGER.bubbles,
-                      }}
                       onClick={() => handleSuggestion(s)}
                       disabled={thinking || committed}
                       className={cn(
-                        "rounded-md border border-fg-tertiary/20 bg-bg-base/60 px-3.5 py-2.5",
-                        "text-left font-body text-[13px] leading-snug text-fg-secondary",
+                        "block w-full cursor-pointer border-b border-fg-tertiary/12 px-1 py-2",
+                        "text-left font-body text-pill leading-snug text-fg-secondary",
                         "transition-colors duration-200 ease-out",
-                        "hover:border-brand-ember-dim/60 hover:text-fg-primary",
-                        "disabled:pointer-events-none disabled:opacity-50",
+                        "hover:text-brand-ember focus-visible:text-brand-ember focus-visible:outline-none",
+                        "disabled:pointer-events-none disabled:opacity-50 last:border-b-0",
                       )}
                     >
                       {s}
-                    </motion.button>
+                    </button>
                   ))}
                 </div>
-              </div>
+              ) : null}
             </motion.div>
           ) : null}
 
           {commit ? (
             <motion.div
               key={commit.summary}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-              className="space-y-2 rounded-md border border-state-success/40 bg-state-success/5 p-4"
+              className="space-y-1.5 border-t border-state-success/40 pt-3"
             >
-              <div className="font-body text-[12px] font-medium text-state-success">Locked</div>
-              <p className="font-display text-lg italic leading-snug text-fg-primary">
+              <div className="font-body text-[10px] font-medium uppercase tracking-[0.08em] text-state-success">
+                Locked
+              </div>
+              <p className="font-body text-[13px] font-medium leading-snug text-fg-primary">
                 {commit.summary}
               </p>
-              <p className="font-body text-[13px] leading-relaxed text-fg-tertiary">{commit.rationale}</p>
+              <p className="font-body text-pill leading-relaxed text-fg-tertiary">
+                {commit.rationale}
+              </p>
             </motion.div>
           ) : null}
         </AnimatePresence>
       </div>
 
-      {/* Input */}
-      <form
-        onSubmit={handleSubmit}
-        className="space-y-2 border-t border-fg-tertiary/15 px-5 pb-5 pt-4"
-      >
-        <div className="flex items-center gap-2 rounded-sm border border-fg-tertiary/25 bg-bg-base/60 px-3">
+      {/* Input — pinned to bottom of column with hairline above. */}
+      <form onSubmit={handleSubmit} className="space-y-2 border-t border-fg-tertiary/15 pt-3">
+        <div className="flex items-center gap-2 border-b border-fg-tertiary/25 px-1 transition-colors focus-within:border-brand-ember-dim/60">
           <input
             ref={inputRef}
             type="text"
@@ -253,7 +217,7 @@ export function EditorAgentPanel({
             placeholder={committed ? "Cut is locked" : "Tighten beat 4 by half a second…"}
             disabled={thinking || committed}
             className={cn(
-              "flex-1 bg-transparent py-2.5 text-[13px] text-fg-primary outline-none",
+              "flex-1 bg-transparent py-2 font-body text-[13px] text-fg-primary outline-none",
               "placeholder:text-fg-tertiary/60",
               "disabled:cursor-not-allowed",
             )}
@@ -263,7 +227,7 @@ export function EditorAgentPanel({
             type="submit"
             disabled={!draft.trim() || thinking || committed}
             className={cn(
-              "grid h-7 w-7 place-items-center rounded-full text-fg-tertiary",
+              "grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary",
               "transition-colors hover:text-brand-ember",
               "disabled:pointer-events-none disabled:opacity-30",
             )}
@@ -272,17 +236,20 @@ export function EditorAgentPanel({
             {thinking ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} strokeWidth={1.5} />}
           </button>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
+        <button
           type="button"
           disabled={committed || thinking}
           onClick={onCommitNow}
-          className="w-full justify-center"
+          className={cn(
+            "flex w-full cursor-pointer items-center justify-center gap-1.5 py-1",
+            "font-body text-chip text-fg-tertiary",
+            "transition-colors hover:text-brand-ember",
+            "disabled:pointer-events-none disabled:opacity-30",
+          )}
         >
-          <Lock size={12} strokeWidth={1.5} aria-hidden="true" />
+          <Lock size={11} strokeWidth={1.5} aria-hidden="true" />
           Lock the cut
-        </Button>
+        </button>
       </form>
     </aside>
   );
@@ -290,18 +257,18 @@ export function EditorAgentPanel({
 
 function ConversationTurn({ turn }: { turn: EditorTurn }) {
   const isUser = turn.role === "user";
-  return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[85%] rounded-md px-3 py-2 text-[12px] leading-relaxed",
-          isUser
-            ? "bg-fg-primary/8 text-fg-primary"
-            : "bg-bg-base/50 text-fg-secondary",
-        )}
-      >
-        {turn.content}
+  if (isUser) {
+    return (
+      <div className="flex justify-end">
+        <p className="max-w-[88%] border-l-2 border-brand-ember-dim/40 pl-3 font-body text-pill leading-relaxed text-fg-secondary">
+          {turn.content}
+        </p>
       </div>
-    </div>
+    );
+  }
+  return (
+    <p className="font-body text-[13px] leading-relaxed text-fg-secondary">
+      {turn.content}
+    </p>
   );
 }

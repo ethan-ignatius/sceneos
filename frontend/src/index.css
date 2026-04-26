@@ -16,6 +16,16 @@
   --color-bg-elev-1: #14110f;
   --color-bg-elev-2: #1f1a16;
 
+  /* Panel + tile — derived from bg-elev-1 but used at higher alpha through
+     `bg-bg-panel/97` etc. on floating drawers/trays so we never reach for
+     the raw #14110f hex string. The tile tone is one shade darker, used by
+     in-drawer surfaces (the GenerationPanel placeholder, ClipPreview frame)
+     so the panel sits OVER a tile and reads in stacked depth, not flat.
+     Tokens, not magic numbers — this is the "every value is intentional"
+     pass per the awwwards-tier brief. */
+  --color-bg-panel: #14110f;
+  --color-bg-tile: #0d0a07;
+
   /* Foreground.
      fg-tertiary lifted from #6b5d50 to #8e7f6e — the previous value failed
      WCAG AA on bg-base for the 10–11px caption text it gates everywhere.
@@ -55,8 +65,12 @@
      in the app sat at 10-12px caption mono. These tokens give every screen
      a comfortable reading size to land on. */
   --text-overline: 0.625rem;   /* 10px — chrome eyebrows ONLY */
+  --text-micro: 0.65625rem;    /* 10.5px — editor chrome captions */
   --text-caption: 0.6875rem;   /* 11px — URL segments, frame counts */
+  --text-chip: 0.71875rem;     /* 11.5px — chip captions, end-card slate */
+  --text-pill: 0.78125rem;     /* 12.5px — pill labels, button micro */
   --text-meta: 0.8125rem;      /* 13px — pill labels, button micro-text */
+  --text-meta-lg: 0.84375rem;  /* 13.5px — agent bubble body */
   --text-body-sm: 0.875rem;    /* 14px — drawer body, secondary copy */
   --text-body: 1rem;           /* 16px — DEFAULT body */
   --text-body-lg: 1.0625rem;   /* 17px — primary paragraphs */
@@ -64,6 +78,18 @@
 
   /* Single uppercase tracking. Sweep all 0.2/0.24/0.28/0.32em to this. */
   --tracking-caption: 0.18em;
+
+  /* Shadow tokens — three discrete depths for the three discrete surfaces.
+     Inline `shadow-[0_8px_24px_...]` strings were drifting (some had two
+     stops, some had one, some used 0.55 alpha, others 0.65). One token
+     per surface depth keeps the chrome stack visually coherent.
+       pill   — floating glass pills (Stitch, Save & exit, URL strip)
+       panel  — drawers, in-canvas cards (NodeDetailDrawer, GenerationPanel)
+       deep   — the StitchTray and EditorPreview, the heaviest panels
+                with an inset hairline rim baked in. */
+  --shadow-pill: 0 8px 24px -12px rgba(0, 0, 0, 0.55);
+  --shadow-panel: 0 24px 60px -16px rgba(0, 0, 0, 0.65);
+  --shadow-deep: 0 40px 80px -24px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 @layer base {
@@ -177,33 +203,11 @@
     font-family: var(--font-mono);
   }
 
-  /* ──────────────────────────────────────────────────────────────────
-   * .caption-track — the chrome label utility.
-   *
-   * Was a phantom class for months: referenced in 50+ places, defined
-   * nowhere, doing nothing. Components had to bolt on `text-[10px]
-   * uppercase tracking-[0.18em]` manually, which propagated by copy-
-   * paste and produced the dated tracked-tiny-uppercase aesthetic the
-   * user flagged.
-   *
-   * What it now means: a small chrome label, sentence-case, Geist
-   * medium, no uppercase, no tracking. Components that override the
-   * size with text-[Npx] still win — but the family / weight / case /
-   * tracking are LOCKED so a forgotten override can't drift back into
-   * 10px-mono-uppercase territory.
-   *
-   * Use this for: pill eyebrows, small chrome labels, drawer counters,
-   * minimap headers, footer hints. Do NOT use it for body copy, button
-   * text, or display headlines — those use font-body / font-display
-   * directly with explicit sizes.
-   * ────────────────────────────────────────────────────────────────── */
-  .caption-track {
-    font-family: var(--font-body);
-    font-weight: 500;
-    letter-spacing: 0;
-    text-transform: none;
-    font-feature-settings: "kern", "calt", "tnum";
-  }
+  /* .caption-track utility removed — all consumers migrated to the
+     text-pill / text-chip / text-micro token system. The phantom-class
+     era left a long comment here documenting the lock-down rules; the
+     tokens replace it cleanly. If a chrome-label utility comes back,
+     define it here with the same family/weight/case discipline. */
 
   /* Z-index hierarchy (single source of truth — DO NOT use ad-hoc values):
        5   film-grain                       (under all UI)

@@ -102,6 +102,15 @@ export interface GenerateResponse {
   jobId: string;
   provider: GenerationProvider;
   pollAfterMs: number;
+  /**
+   * Set by the backend when the active provider rejected the call (quota,
+   * safety filter, network) and we auto-fell-back to the `cached` demo
+   * lane. The frontend uses this pair to show a tasteful "demo lane"
+   * badge on the resulting clip — judges should see WHEN we're showing
+   * a real Veo render vs a demo-cloud cached clip.
+   */
+  originalProvider?: GenerationProvider;
+  fallbackReason?: string;
 }
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";

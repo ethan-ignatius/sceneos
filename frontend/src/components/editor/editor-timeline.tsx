@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { motion } from "motion/react";
 import type { EditClipDecision, EditDecisions } from "@/types/api";
 import type { BeatMood } from "@/types/manifest";
@@ -17,17 +17,12 @@ interface EditorTimelineProps {
 /**
  * Editor timeline. One bar per beat, length proportional to its trimmed duration.
  *
- * Interactions:
- *   - Click a beat → selects it (drives the trim handles + caption editor below).
- *   - Drag the LEFT handle → trimStart.
- *   - Drag the RIGHT handle → trimEnd.
- *   - Hover the beat → see the transition tag (cross-fade ms into this beat).
+ *  - Click a beat → opens the per-clip detail (transition + caption).
+ *  - Drag the LEFT handle → trimStart.
+ *  - Drag the RIGHT handle → trimEnd.
  *
- * Visual language matches the StitchTray strip — mood-tinted, ember halo when
- * the user has moved the trim from defaults. Mono numerals for the duration.
- *
- * The handles operate on logical SOURCE seconds, not pixel widths. We compute
- * pixel widths from the current trim state so the bar shrinks live as you drag.
+ * Hairline-bordered band, mood-tinted bars. The selected bar gets an ember
+ * inset bottom-rule + visible trim handles. No card chrome around the row.
  */
 export function EditorTimeline({
   decisions,
@@ -47,17 +42,17 @@ export function EditorTimeline({
   );
 
   return (
-    <div className="space-y-3">
+    <section className="space-y-3">
       <div className="flex items-baseline justify-between">
-        <span className="font-display text-[14px] italic text-fg-secondary">
-          Timeline — click a beat to refine.
+        <span className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
+          Timeline
         </span>
-        <span className="font-mono text-[12px] tabular-nums text-fg-tertiary">
+        <span className="font-mono text-chip tabular-nums text-fg-tertiary">
           {totalDuration.toFixed(1)}s · {decisions.clips.length} beats
         </span>
       </div>
 
-      <div className="relative flex h-[5.5rem] items-stretch gap-px overflow-hidden rounded-md border border-fg-tertiary/20 bg-bg-base/60 p-px">
+      <div className="relative flex h-[5.5rem] items-stretch border-y border-fg-tertiary/15 bg-bg-base/40">
         {decisions.clips.map((clip, i) => {
           const inS = clip.trimStart ?? 0;
           const outS = clip.trimEnd ?? clip.durationSeconds;
@@ -81,11 +76,9 @@ export function EditorTimeline({
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }
-
-// ── Per-bar component ─────────────────────────────────────────────────────
 
 interface TimelineBarProps {
   clip: EditClipDecision;
@@ -120,7 +113,6 @@ function TimelineBar({ clip, flex, index, label, moodTint, selected, onSelect, o
       const rect = el.getBoundingClientRect();
       const move = (ev: PointerEvent) => {
         const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-        // Map visible bar (which only covers the trimmed range) back to source seconds.
         const sourceSec = inS + ratio * beatDur;
         if (dragKindRef.current === "in") {
           const clamped = Math.max(0, Math.min(sourceSec, outS - 0.25));
@@ -153,38 +145,38 @@ function TimelineBar({ clip, flex, index, label, moodTint, selected, onSelect, o
         background: `linear-gradient(140deg, ${moodTint}30 0%, ${moodTint}08 60%, transparent 100%)`,
       }}
       className={cn(
-        "group relative h-full min-w-[3rem] cursor-pointer overflow-hidden rounded-sm border text-left",
-        "transition-[border-color,box-shadow] duration-200 ease-out",
+        "group relative h-full min-w-[3.5rem] cursor-pointer overflow-hidden text-left",
+        "border-l border-fg-tertiary/15 first:border-l-0",
+        "transition-[box-shadow,background-color] duration-200 ease-out",
         selected
-          ? "border-brand-ember/70 shadow-[0_0_16px_-4px_rgba(240,168,104,0.55)]"
+          ? "shadow-[inset_0_-2px_0_0_rgba(240,168,104,0.7)]"
           : trimmed
-            ? "border-brand-ember-dim/50"
-            : "border-fg-tertiary/25 hover:border-fg-secondary",
+            ? "shadow-[inset_0_-1px_0_0_rgba(240,168,104,0.4)]"
+            : "hover:bg-fg-primary/[0.02]",
       )}
       aria-label={`${label} — ${beatDur.toFixed(1)} seconds${trimmed ? ", trimmed" : ""}`}
     >
-      {/* Beat number + label */}
+      {/* Index + transition tag */}
       <div className="absolute inset-x-2 top-1.5 flex items-center justify-between gap-2">
         <span
           className={cn(
-            "font-body text-[11px] font-medium tabular-nums",
+            "font-body text-micro font-medium tabular-nums",
             selected ? "text-brand-ember" : "text-fg-tertiary",
           )}
         >
           {(index + 1).toString().padStart(2, "0")}
         </span>
         {transitionMs > 0 && index > 0 ? (
-          <span className="font-body text-[10.5px] tabular-nums text-fg-tertiary/80">
+          <span className="font-body text-micro tabular-nums text-fg-tertiary/80">
             ↘ {transitionMs}ms
           </span>
         ) : null}
       </div>
 
+      {/* Beat name + duration */}
       <div className="absolute inset-x-2 bottom-1.5 space-y-0.5 leading-tight">
-        <div className="font-display text-[15px] italic text-fg-primary truncate">
-          {label}
-        </div>
-        <div className="font-mono text-[11px] tabular-nums text-fg-tertiary">
+        <div className="truncate font-body text-pill font-medium text-fg-primary">{label}</div>
+        <div className="font-mono text-micro tabular-nums text-fg-tertiary">
           {beatDur.toFixed(1)}s {trimmed ? "· trimmed" : ""}
         </div>
       </div>
@@ -193,13 +185,15 @@ function TimelineBar({ clip, flex, index, label, moodTint, selected, onSelect, o
       {selected ? (
         <>
           <span
+            data-cursor="hide"
             onPointerDown={handlePointerDown("in")}
-            className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-brand-ember/70"
+            className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize bg-brand-ember/70"
             aria-label="Trim in-point"
           />
           <span
+            data-cursor="hide"
             onPointerDown={handlePointerDown("out")}
-            className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-brand-ember/70"
+            className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize bg-brand-ember/70"
             aria-label="Trim out-point"
           />
         </>

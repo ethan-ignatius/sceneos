@@ -26,6 +26,11 @@ export function NodeDetailDrawer() {
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
   const [providerStage, setProviderStage] = useState<string | null>(null);
+  // When backend auto-falls-back to the cached lane (Vertex quota/safety
+  // failure), keep the original-attempted provider so the GenerationPanel
+  // can surface a "demo lane — Vertex unreachable" badge. Judges shouldn't
+  // think a cached demo clip is a fresh Veo render.
+  const [fallbackFrom, setFallbackFrom] = useState<GenerationProvider | null>(null);
   // ISO timestamp from the backend status response — survives drawer
   // close/reopen so the GenerationPanel's elapsed time is the TRUE
   // elapsed (Date.now() - startedAt) rather than restarting from drawer
@@ -97,6 +102,7 @@ export function NodeDetailDrawer() {
     setProvider(null);
     setProviderStage(null);
     setStartedAt(null);
+    setFallbackFrom(null);
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
@@ -110,6 +116,7 @@ export function NodeDetailDrawer() {
       });
       if (cancelRef.current) return;
       setProvider(gen.provider);
+      setFallbackFrom(gen.originalProvider ?? null);
       updateScene(beat.beatId, scene.sceneId, { jobId: gen.jobId });
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
@@ -190,7 +197,7 @@ export function NodeDetailDrawer() {
       // select-text reverses the canvas main's select-none so users can
       // copy agent messages / refined prompts. The chrome above doesn't
       // need to be copyable; the drawer's content does.
-      className="fixed inset-x-3 bottom-3 z-40 flex max-h-[85svh] w-auto select-text flex-col rounded-2xl border border-fg-tertiary/15 bg-[#14110f]/[0.92] backdrop-blur-2xl shadow-[0_24px_60px_-16px_rgba(0,0,0,0.65)] md:absolute md:inset-x-auto md:bottom-4 md:right-4 md:top-20 md:max-h-none md:w-[34rem] md:max-w-[calc(100vw-2rem)]"
+      className="fixed inset-x-3 bottom-3 z-40 flex max-h-[85svh] w-auto select-text flex-col rounded-2xl border border-fg-tertiary/15 bg-bg-panel/92 backdrop-blur-2xl shadow-(--shadow-panel) md:absolute md:inset-x-auto md:bottom-4 md:right-4 md:top-20 md:max-h-none md:w-[34rem] md:max-w-[calc(100vw-2rem)]"
     >
       <motion.div
         initial="hidden"
@@ -219,7 +226,7 @@ export function NodeDetailDrawer() {
               <span className="mx-1.5 text-fg-tertiary/45">of</span>
               <span>{totalBeats.toString().padStart(2, "0")}</span>
             </div>
-            <h2 className="mt-1.5 font-display text-2xl italic leading-[1.05] text-fg-primary">
+            <h2 className="text-balance mt-1.5 font-body text-[18px] font-medium leading-[1.15] text-fg-primary">
               {beat.beatName}
             </h2>
           </div>
@@ -245,11 +252,13 @@ export function NodeDetailDrawer() {
               provider={provider}
               stage={providerStage}
               startedAt={startedAt}
+              fallbackFrom={fallbackFrom}
               onCancel={() => {
                 cancelRef.current = true;
                 setStartedAt(null);
                 setProviderStage(null);
                 setProvider(null);
+                setFallbackFrom(null);
                 setGenError(null);
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               }}

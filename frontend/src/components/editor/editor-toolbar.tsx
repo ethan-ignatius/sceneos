@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { EditAudio, EditDecisions, EditLook } from "@/types/api";
 import { cn } from "@/lib/utils";
 
@@ -12,77 +13,62 @@ const LOOKS: { value: EditLook; label: string; hint: string }[] = [
 
 // Placeholder Cloudinary public ID for the music-bed feature. Real audio
 // beds get uploaded under their own publicIds; this constant is the
-// "no-asset-yet" sentinel the editor uses while the audio library is
-// scaffolded. Kept centralized so swapping in a real default is one edit.
+// no-asset-yet sentinel the editor uses while the audio library is scaffolded.
 const DEMO_MUSIC_TRACK = "audio/demo-bed";
 
 interface EditorToolbarProps {
-  decisions: EditDecisions;
+  /** Null while /api/editor/init is in flight or after a reset. The toolbar
+   *  early-returns null in that case; callers can mount unconditionally. */
+  decisions: EditDecisions | null;
   onPatch: (patch: Partial<EditDecisions>) => void;
 }
 
 /**
- * Global controls for the cut. Everything here patches the top-level
- * EditDecisions (not per-clip): look LUT, music bed, ducking, watermark,
- * caption position.
- *
- * The user can override the agent on any of these — every change re-bakes
- * the Cloudinary URL via /api/editor/apply.
+ * Global controls for the cut. Hairline-divided sections, no card chrome.
+ * Each section: caption-track eyebrow + value hint on the right + control row.
+ * Every change re-bakes the Cloudinary URL via /api/editor/apply.
  */
 export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
+  // Defensive null guard. The route conditionally mounts the toolbar
+  // today, but that guard could regress under refactor or a future caller
+  // could pass null directly — early-return here so a stale state never
+  // crashes the right rail with "cannot read property of null."
+  if (!decisions) return null;
   const audio = decisions.audio ?? null;
   const look = decisions.look ?? "neutral";
   const captionPosition = decisions.captionPosition ?? "south";
-
   const setAudio = (next: EditAudio | null) => onPatch({ audio: next });
 
   return (
-    <div className="space-y-5 rounded-md border border-fg-tertiary/15 bg-bg-elev-1/60 p-4 backdrop-blur-md">
-      <div className="font-display text-[14px] italic text-fg-secondary">
-        Global · the whole cut
-      </div>
-
-      {/* Look LUT */}
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
-            Look
-          </span>
-          <span className="font-body text-[11.5px] text-fg-tertiary">
-            {LOOKS.find((l) => l.value === look)?.hint ?? ""}
-          </span>
-        </div>
-        <div className="grid grid-cols-3 gap-1.5">
+    <div className="space-y-5">
+      {/* Look LUT — 3×2 grid, hairline-divided cells (no rounded chrome). */}
+      <ToolbarSection eyebrow="Look" hint={LOOKS.find((l) => l.value === look)?.hint ?? ""}>
+        <div className="grid grid-cols-3 border border-fg-tertiary/15 [&>button]:border-l [&>button]:border-t [&>button]:border-fg-tertiary/15 [&>button:nth-child(3n+1)]:border-l-0 [&>button:nth-child(-n+3)]:border-t-0">
           {LOOKS.map((l) => (
             <button
               key={l.value}
               type="button"
               onClick={() => onPatch({ look: l.value })}
               className={cn(
-                "rounded-md border px-2.5 py-1.5 text-left font-body text-[12px]",
+                "px-2.5 py-2 text-left font-body text-pill",
                 "transition-colors duration-200 ease-out",
                 look === l.value
-                  ? "border-brand-ember/70 bg-brand-ember/10 text-fg-primary"
-                  : "border-fg-tertiary/20 bg-bg-base/40 text-fg-tertiary hover:border-fg-secondary hover:text-fg-primary",
+                  ? "bg-brand-ember/10 text-brand-ember"
+                  : "text-fg-tertiary hover:text-fg-primary",
               )}
             >
               {l.label}
             </button>
           ))}
         </div>
-      </section>
+      </ToolbarSection>
 
-      {/* Music */}
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
-            Music bed
-          </span>
-          <span className="font-body text-[11.5px] text-fg-tertiary">
-            {audio ? `${audio.publicId} · ${audio.volume ?? 0}` : "off"}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
+      {/* Music bed — text-button toggle + volume slider when on. */}
+      <ToolbarSection
+        eyebrow="Music bed"
+        hint={audio ? `${audio.publicId} · ${audio.volume ?? 0}dB` : "off"}
+      >
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={() =>
@@ -92,14 +78,9 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
                   : { publicId: DEMO_MUSIC_TRACK, volume: -20, fadeInMs: 800, fadeOutMs: 1200 },
               )
             }
-            className={cn(
-              "rounded-md border px-3 py-1.5 font-body text-[12.5px] text-fg-primary",
-              audio
-                ? "border-brand-ember/60 bg-brand-ember/10"
-                : "border-fg-tertiary/30 bg-bg-base/40 hover:border-fg-secondary",
-            )}
+            className="font-body text-pill font-medium text-fg-secondary transition-colors hover:text-brand-ember"
           >
-            {audio ? "Remove music" : "Add demo bed"}
+            {audio ? "Remove" : "Add demo bed"}
           </button>
           {audio ? (
             <input
@@ -108,101 +89,92 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               max={0}
               step={1}
               value={audio.volume ?? -20}
-              onChange={(e) =>
-                setAudio({ ...audio, volume: Number(e.target.value) })
-              }
+              onChange={(e) => setAudio({ ...audio, volume: Number(e.target.value) })}
               className="flex-1 accent-brand-ember"
               aria-label="Music volume"
             />
           ) : null}
         </div>
         {audio ? (
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <DuckingToggle
-              value={decisions.duckOriginalAudioDb ?? null}
-              onChange={(v) => onPatch({ duckOriginalAudioDb: v })}
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() =>
+              onPatch({
+                duckOriginalAudioDb: decisions.duckOriginalAudioDb == null ? -12 : null,
+              })
+            }
+            className={cn(
+              "mt-2 font-body text-[12px] transition-colors",
+              decisions.duckOriginalAudioDb != null
+                ? "text-brand-ember hover:text-brand-ember/80"
+                : "text-fg-tertiary hover:text-fg-primary",
+            )}
+          >
+            Duck clip audio:{" "}
+            {decisions.duckOriginalAudioDb != null
+              ? `${decisions.duckOriginalAudioDb}dB`
+              : "off"}
+          </button>
         ) : null}
-      </section>
+      </ToolbarSection>
 
-      {/* Captions */}
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
-            Captions
-          </span>
-          <span className="font-body text-[11.5px] text-fg-tertiary">
-            anchored: {captionPosition}
-          </span>
-        </div>
-        <div className="grid grid-cols-2 gap-1.5">
+      {/* Captions — anchor toggle as inline text affordances. */}
+      <ToolbarSection eyebrow="Captions" hint={`anchored: ${captionPosition}`}>
+        <div className="flex items-center gap-4">
           {(["south", "north"] as const).map((pos) => (
             <button
               key={pos}
               type="button"
               onClick={() => onPatch({ captionPosition: pos })}
               className={cn(
-                "rounded-md border px-2.5 py-1.5 font-body text-[12px]",
+                "font-body text-pill transition-colors",
                 captionPosition === pos
-                  ? "border-brand-ember/60 bg-brand-ember/10 text-fg-primary"
-                  : "border-fg-tertiary/20 bg-bg-base/40 text-fg-tertiary hover:border-fg-secondary",
+                  ? "font-medium text-brand-ember"
+                  : "text-fg-tertiary hover:text-fg-primary",
               )}
             >
               {pos === "south" ? "Bottom" : "Top"}
             </button>
           ))}
         </div>
-      </section>
+      </ToolbarSection>
 
-      {/* Watermark */}
-      <section className="space-y-2">
-        <div className="flex items-baseline justify-between">
-          <span className="font-body text-[12.5px] font-medium text-fg-secondary">
-            Watermark
-          </span>
-          <span className="font-body text-[11.5px] text-fg-tertiary">
-            {decisions.watermarkPublicId ?? "off"}
-          </span>
-        </div>
+      {/* Watermark — single text-button toggle. */}
+      <ToolbarSection eyebrow="Watermark" hint={decisions.watermarkPublicId ?? "off"}>
         <button
           type="button"
           onClick={() =>
             onPatch({ watermarkPublicId: decisions.watermarkPublicId ? null : "sceneos-mark" })
           }
-          className={cn(
-            "w-full rounded-sm border px-3 py-1.5 text-[11px] text-fg-primary",
-            decisions.watermarkPublicId
-              ? "border-brand-ember/60 bg-brand-ember/10"
-              : "border-fg-tertiary/30 bg-bg-base/40 hover:border-fg-secondary",
-          )}
+          className="font-body text-pill font-medium text-fg-secondary transition-colors hover:text-brand-ember"
         >
-          {decisions.watermarkPublicId ? "Remove watermark" : "Add corner mark"}
+          {decisions.watermarkPublicId ? "Remove" : "Add corner mark"}
         </button>
-      </section>
+      </ToolbarSection>
     </div>
   );
 }
 
-function DuckingToggle({
-  value,
-  onChange,
+function ToolbarSection({
+  eyebrow,
+  hint,
+  children,
 }: {
-  value: number | null;
-  onChange: (v: number | null) => void;
+  eyebrow: string;
+  hint?: string;
+  children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={() => onChange(value == null ? -12 : null)}
-      className={cn(
-        "rounded-md border px-3 py-1.5 font-body text-[12px]",
-        value != null
-          ? "border-brand-ember/50 bg-brand-ember/10 text-fg-primary"
-          : "border-fg-tertiary/20 bg-bg-base/40 text-fg-tertiary hover:border-fg-secondary",
-      )}
-    >
-      Duck clip audio: {value != null ? `${value}dB` : "off"}
-    </button>
+    <section className="space-y-2 border-t border-fg-tertiary/15 pt-4 first:border-t-0 first:pt-0">
+      <div className="flex items-baseline justify-between">
+        <span className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
+          {eyebrow}
+        </span>
+        {hint ? (
+          <span className="font-body text-[11px] text-fg-tertiary/70">{hint}</span>
+        ) : null}
+      </div>
+      {children}
+    </section>
   );
 }

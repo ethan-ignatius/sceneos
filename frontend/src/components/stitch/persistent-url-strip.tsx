@@ -91,11 +91,15 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
           aria-label="Master cut — awaiting approvals. Click to open stitch tray."
         >
           <span aria-hidden className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-brand-ember/35" />
-          <span className="font-body text-xs font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
+          <span className="font-body text-pill font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
             Master cut
           </span>
           <span aria-hidden className="h-3.5 w-px flex-shrink-0 bg-fg-tertiary/20" />
-          <span className="font-display text-xs italic text-fg-tertiary">
+          {/* Roman font-body, not display italic — italics are
+              connectives-only per the typography doctrine, and display
+              font below 14px reads as a cramped wedding-invite. The
+              empty-state label is functional, not poetic. */}
+          <span className="font-body text-pill text-fg-tertiary">
             awaiting approvals
           </span>
         </button>

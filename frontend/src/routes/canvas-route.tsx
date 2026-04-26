@@ -9,7 +9,6 @@ import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
 import { Minimap } from "@/components/canvas/minimap";
-import { BeatProgressStrip } from "@/components/canvas/beat-progress-strip";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-3d";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
@@ -163,7 +162,7 @@ export function CanvasRoute() {
                   : "bg-fg-tertiary/40"
             }`}
           />
-          <span className="font-body text-[12.5px] font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
+          <span className="font-body text-pill font-medium text-fg-secondary transition-colors group-hover:text-brand-ember/90">
             Stitch
           </span>
           {/* Count toned down — was font-display italic at 14px which read
@@ -179,9 +178,11 @@ export function CanvasRoute() {
       </motion.div>
 
       {/* Decompose status — a thin self-contained bar at the top edge.
-          Floats just above the BeatProgressStrip when active; auto-
-          dismisses on success/error so the strip below isn't crowded. */}
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex justify-center md:top-4">
+          On <md viewports the Save & exit (left) and Stitch (right) pills
+          eat the full top row, so the centered indicator dropped DOWN
+          ~14px below the chrome row instead of overlapping. Desktop
+          keeps the original top-4 alignment so the row reads as one. */}
+      <div className="pointer-events-none absolute inset-x-0 top-16 z-20 flex justify-center md:top-4">
         <DecomposeIndicator />
       </div>
 
@@ -296,7 +297,7 @@ function CanvasMissingManifestFallback() {
     <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
       <div className="max-w-md space-y-5 text-center">
         <div className="font-body text-[12px] font-medium text-fg-tertiary">No active project</div>
-        <h2 className="font-display text-display-md italic leading-snug text-fg-primary">
+        <h2 className="text-balance font-display text-display-md italic leading-snug text-fg-primary">
           Start with a sentence.
         </h2>
         <p className="font-body text-body-sm leading-relaxed text-fg-secondary">
@@ -305,7 +306,7 @@ function CanvasMissingManifestFallback() {
         </p>
         <Link
           to="/"
-          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
+          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-pill font-medium text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
         >
           Back to landing
         </Link>
@@ -320,7 +321,7 @@ function CanvasEmptyBeatsFallback() {
     <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
       <div className="max-w-md space-y-5 text-center">
         <div className="font-body text-[12px] font-medium text-state-error">Stale project state</div>
-        <h2 className="font-display text-display-md italic leading-snug text-fg-primary">
+        <h2 className="text-balance font-display text-display-md italic leading-snug text-fg-primary">
           The manifest is empty.
         </h2>
         <p className="font-body text-body-sm leading-relaxed text-fg-secondary">
@@ -334,7 +335,7 @@ function CanvasEmptyBeatsFallback() {
             localStorage.removeItem("sceneos:prompt");
             location.href = "/";
           }}
-          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
+          className="btn--edge-underline inline-flex items-center gap-2 rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-pill font-medium text-fg-secondary transition-colors hover:border-brand-ember hover:text-brand-ember"
         >
           Reset and restart
         </button>

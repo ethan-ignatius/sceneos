@@ -42,7 +42,7 @@ export function ProjectsRoute() {
           <div className="font-body text-[12px] font-medium text-fg-tertiary">
             Projects · {projects.length} archived
           </div>
-          <h1 className="font-display text-display-md italic text-fg-primary">
+          <h1 className="text-balance font-display text-display-md italic text-fg-primary">
             Your reels.
           </h1>
           <p className="max-w-prose font-display italic text-lg text-fg-secondary">

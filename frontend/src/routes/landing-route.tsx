@@ -108,6 +108,44 @@ export function LandingRoute() {
         .then((res) => {
           applyDecomposition(res.clips, res.continuityBible);
           setDecomposeStatus("success");
+          // ── Speculative kickoff of beats[0] ─────────────────────────
+          // Bridge plays for 1.6s, decompose resolves around the same
+          // time, Veo dispatches in ~3s, then renders for 2-3 min. By
+          // pre-warming the FIRST beat the moment its refinedPrompt is
+          // ready, we shave 30-60s off the perceived wait — the user
+          // walks through the canvas + agent UX while Veo is already
+          // burning in the background. When they click into the first
+          // planet, the GenerationPanel re-attaches to the running job
+          // (drawer's poll-reattach effect handles this) and shows true
+          // elapsed via startedAt.
+          //
+          // Cost: one Veo call per landing. Tradeoff accepted for the
+          // hackathon demo perception. To turn off, drop this block.
+          const m2 = useBeatGraphStore.getState().manifest;
+          const firstBeat = m2?.beats[0];
+          const firstScene = firstBeat?.scenes[0];
+          if (m2 && firstBeat && firstScene?.refinedPrompt) {
+            api
+              .generate({
+                projectId: m2.projectId,
+                beatId: firstBeat.beatId,
+                sceneId: firstScene.sceneId,
+                refinedPrompt: firstScene.refinedPrompt,
+                durationSeconds:
+                  firstScene.durationSeconds ?? firstBeat.archetype.suggestedDuration,
+                beatTemplate: firstBeat.template,
+              })
+              .then((gen) => {
+                const store = useBeatGraphStore.getState();
+                store.updateScene(firstBeat.beatId, firstScene.sceneId, { jobId: gen.jobId });
+                store.updateBeat(firstBeat.beatId, { status: "generating" });
+              })
+              .catch(() => {
+                // Silent failure — the user can still trigger gen normally
+                // from the drawer. No reason to alarm them about the
+                // speculative path.
+              });
+          }
         })
         .catch((err) => {
           setDecomposeStatus("error");
@@ -220,7 +258,7 @@ export function LandingRoute() {
             <div
               className={cn(
                 "rounded-[1.75rem] border bg-bg-elev-1/80 p-3 backdrop-blur-xl transition-all duration-300",
-                "shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7)]",
+                "shadow-(--shadow-panel)",
                 focused
                   ? "border-brand-ember/45 shadow-[0_0_0_1px_rgba(240,168,104,0.22),_0_24px_60px_-20px_rgba(0,0,0,0.7)]"
                   : "border-fg-tertiary/22",
@@ -361,10 +399,10 @@ export function LandingRoute() {
                     }}
                     className="group inline-flex w-full items-center justify-between gap-3 rounded-full border border-fg-tertiary/20 bg-bg-elev-1/55 px-4 py-2 backdrop-blur-md transition-colors hover:border-brand-ember/40 hover:bg-bg-elev-1/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
                   >
-                    <span className="truncate text-left font-body text-[12.5px] text-fg-secondary transition-colors group-hover:text-fg-primary">
+                    <span className="truncate text-left font-body text-pill text-fg-secondary transition-colors group-hover:text-fg-primary">
                       {p.masterPrompt}
                     </span>
-                    <span className="flex-shrink-0 font-mono text-[10.5px] tabular-nums text-fg-tertiary/65">
+                    <span className="flex-shrink-0 font-mono text-micro tabular-nums text-fg-tertiary/65">
                       {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(p.archivedAt))}
                     </span>
                   </button>
@@ -372,7 +410,7 @@ export function LandingRoute() {
                 {projects.length > 3 ? (
                   <Link
                     to="/projects"
-                    className="mt-1 text-center font-body text-[11.5px] text-fg-tertiary transition-colors hover:text-brand-ember focus-visible:outline-none focus-visible:underline"
+                    className="mt-1 text-center font-body text-chip text-fg-tertiary transition-colors hover:text-brand-ember focus-visible:outline-none focus-visible:underline"
                   >
                     View all {projects.length} archived
                   </Link>

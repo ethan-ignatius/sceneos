@@ -30,7 +30,7 @@ const pillVariants = cva(
       },
       size: {
         sm: "h-7 rounded-full px-3 text-[12px]",
-        md: "h-8 rounded-full px-4 py-1 text-[12.5px]",
+        md: "h-8 rounded-full px-4 py-1 text-pill",
       },
       active: {
         true: "",

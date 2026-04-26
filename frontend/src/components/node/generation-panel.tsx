@@ -28,6 +28,14 @@ interface GenerationPanelProps {
    * ready-to-generate. Surfaced inside the timeout banner.
    */
   onCancel?: () => void;
+  /**
+   * If the active provider rejected the call (quota / safety / network)
+   * the backend auto-falls-back to the cached demo lane and reports the
+   * original-attempted provider here. We surface this as a tasteful
+   * badge so judges never mistake a cached demo clip for a fresh Veo
+   * render.
+   */
+  fallbackFrom?: GenerationProvider | null;
 }
 
 const PROVIDER_LABEL: Record<GenerationProvider, string> = {
@@ -107,6 +115,7 @@ export function GenerationPanel({
   stage,
   startedAt,
   onCancel,
+  fallbackFrom,
 }: GenerationPanelProps) {
   // Local fallback clock — used until backend startedAt arrives. Set on
   // first mount; once startedAt is present, the calculation below ignores
@@ -162,7 +171,7 @@ export function GenerationPanel({
       {/* Cinematic placeholder — film-strip perforations frame the 16:9 area;
           a frame counter and resolution stamp give the moment data weight;
           the ember scanline travels top→bottom on a slow loop. */}
-      <div className="relative aspect-video overflow-hidden rounded-lg border border-brand-ember/20 bg-[#0d0a07]">
+      <div className="relative aspect-video overflow-hidden rounded-lg border border-brand-ember/20 bg-bg-tile">
         <div aria-hidden className="pointer-events-none absolute inset-y-2 left-1.5 flex w-2 flex-col justify-between">
           {Array.from({ length: 8 }).map((_, i) => (
             <span key={i} className="block h-1.5 w-full rounded-[1px] bg-fg-primary/12" />
@@ -216,6 +225,26 @@ export function GenerationPanel({
           transition={{ duration: DURATIONS.quick, ease: EASE.outQuart }}
         />
       </div>
+
+      {/* Provider-fallback badge — only shows when the active provider
+          rejected the call and we auto-fell-back to the cached demo
+          lane. Read by judges as "we tried Vertex but its quota / safety
+          filter pushed us to the demo cloud" — honest, not deceptive. */}
+      {fallbackFrom ? (
+        <div
+          role="note"
+          className="flex items-start gap-2.5 rounded-md border border-state-warning/40 bg-state-warning/[0.08] px-3 py-2 font-body text-meta leading-snug text-state-warning"
+        >
+          <AlertTriangle size={12} strokeWidth={1.7} aria-hidden="true" className="mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <div className="font-medium text-fg-primary">Demo lane in use.</div>
+            <div className="text-state-warning/85">
+              {PROVIDER_LABEL[fallbackFrom]?.split(" · ")[0] ?? fallbackFrom} was unreachable for
+              this clip — falling back to the cached demo cloud.
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Three steppers — sentence-case body type. */}
       <ul className="space-y-1">
@@ -285,7 +314,7 @@ export function GenerationPanel({
                 <button
                   type="button"
                   onClick={onCancel}
-                  className="mt-1 inline-flex items-center gap-1.5 rounded-sm font-body text-[11.5px] font-medium text-fg-secondary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-sm font-body text-chip font-medium text-fg-secondary transition-colors hover:text-fg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                 >
                   Cancel and retry
                 </button>

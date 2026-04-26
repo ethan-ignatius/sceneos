@@ -72,7 +72,7 @@ export class AppErrorBoundary extends Component<Props, State> {
             <button
               type="button"
               onClick={this.reset}
-              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-pill font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
             >
               Try again
             </button>
@@ -83,7 +83,7 @@ export class AppErrorBoundary extends Component<Props, State> {
                 localStorage.removeItem("sceneos:prompt");
                 location.href = "/";
               }}
-              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-[12.5px] font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
+              className="rounded-md border border-fg-tertiary/40 px-4 py-2 font-body text-pill font-medium text-fg-secondary hover:border-brand-ember hover:text-brand-ember"
             >
               Reset session and go home
             </button>

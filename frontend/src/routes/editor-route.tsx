@@ -1,11 +1,9 @@
-import { motion, AnimatePresence } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
-  Loader2,
-  RefreshCw,
   LogOut,
   Copy,
   Check,
@@ -13,7 +11,7 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { VideoPlayer } from "@/components/ui/video-player";
+import { EditorPreview } from "@/components/editor/editor-preview";
 import { EditorAgentPanel } from "@/components/editor/editor-agent-panel";
 import { EditorTimeline } from "@/components/editor/editor-timeline";
 import { EditorClipDetail } from "@/components/editor/editor-clip-detail";
@@ -27,82 +25,29 @@ import type { BeatMood } from "@/types/manifest";
 import { toast } from "sonner";
 
 /**
- * Stage 7 — the agentic editor.
+ * Stage 7 — the editor.
  *
- * Layout (lg):
- *   ┌──────────────────────────────────────┬───────────────────┐
- *   │ Header (Save & exit · Back · Ship)                       │
- *   ├──────────────────────────────────────┬───────────────────┤
- *   │ Preview (Cloudinary live URL)         │ Director chat     │
- *   │ ── live URL strip ──                  │ (the only edit    │
- *   │                                       │  surface)         │
- *   └──────────────────────────────────────┴───────────────────┘
+ * Hybrid layout (lg+):
+ *   Left  (1fr):    Preview · URL strip · Timeline · ClipDetail
+ *   Right (24rem):  Toolbar · AgentPanel  (sticky)
  *
- * Architecture: agent-led. The director conversation IS the editor —
- * the user proposes a refinement in chat, the agent emits a kind:"propose"
- * with a new EditDecisions, and Apply edit re-bakes via /api/editor/apply.
- * No timeline scrubber, no per-clip detail panel, no global toolbar — those
- * were the NLE chrome we explicitly cut to keep the register cinematic and
- * the demo legible in 60 seconds.
+ * The agent and the direct-manipulation surfaces converge on the same
+ * EditDecisions. Every patch — chat-led OR drag-led — debounces a re-bake
+ * against /api/editor/apply, so the Cloudinary URL is always the truth.
  *
  * State flow:
  *   1. Mount → /api/editor/init seeds decisions + a baked Cloudinary URL.
- *   2. User chats → /api/editor/turn → agent returns propose|commit.
- *      Proposals are advisory; "Apply edit" queues a re-bake.
- *   3. handleAcceptProposal → queueBake → /api/editor/apply → finalUrl
- *      refreshes the preview.
- *   4. Ship the cut → setFinalCinematic → navigate /final.
+ *   2. User chats OR drags → patch decisions → queueBake → /api/editor/apply.
+ *   3. Ship the cut → setFinalCinematic → navigate /final.
  */
 export function EditorRoute() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const initialize = useBeatGraphStore((s) => s.initialize);
-  const updateBeat = useBeatGraphStore((s) => s.updateBeat);
-  const updateScene = useBeatGraphStore((s) => s.updateScene);
   const manifest = useBeatGraphStore((s) => s.manifest);
   const editor = useBeatGraphStore((s) => s.editor);
   const setEditorBaked = useBeatGraphStore((s) => s.setEditorBaked);
   const appendEditorTurn = useBeatGraphStore((s) => s.appendEditorTurn);
   const markEditorCommitted = useBeatGraphStore((s) => s.markEditorCommitted);
   const setFinalCinematic = useBeatGraphStore((s) => s.setFinalCinematic);
-
-  // Dev shortcut: ?seed=demo auto-populates an approved 3-beat manifest so the
-  // editor can be tested without walking the full landing → canvas flow.
-  // Demo-cloud publicIds resolve against Cloudinary's public `demo` cloud.
-  // Gated behind import.meta.env.DEV so production never auto-approves.
-  const seedRef = useRef(false);
-  useEffect(() => {
-    if (seedRef.current) return;
-    if (!import.meta.env.DEV) return;
-    if (searchParams.get("seed") !== "demo") return;
-    seedRef.current = true;
-    initialize({
-      masterPrompt: "a monkey steals a banana from a zoo",
-      videoType: "trailer",
-    });
-    // Approve the first 3 beats with mock-clip publicIds from Cloudinary's demo cloud.
-    const approve = (beatId: string, publicId: string, durationSeconds: number) => {
-      const m = useBeatGraphStore.getState().manifest;
-      const beat = m?.beats.find((b) => b.beatId === beatId);
-      const scene = beat?.scenes[0];
-      if (!beat || !scene) return;
-      updateScene(beatId, scene.sceneId, {
-        clipPublicId: publicId,
-        clipUrl: `https://res.cloudinary.com/demo/video/upload/${publicId}.mp4`,
-        durationSeconds,
-        approved: true,
-      });
-      updateBeat(beatId, { status: "approved" });
-    };
-    const m = useBeatGraphStore.getState().manifest;
-    if (!m) return;
-    const samples = [
-      { publicId: "dog", duration: 5 },
-      { publicId: "elephants", duration: 8 },
-      { publicId: "dog", duration: 6 },
-    ];
-    m.beats.slice(0, 3).forEach((b, i) => approve(b.beatId, samples[i].publicId, samples[i].duration));
-  }, [searchParams, initialize, updateBeat, updateScene]);
 
   const [latest, setLatest] = useState<EditorTurnResponse | null>(null);
   const [thinking, setThinking] = useState(false);
@@ -125,13 +70,25 @@ export function EditorRoute() {
   }, []);
 
   // Boot — seed editor decisions + first baked URL on mount, once.
+  // 30s client-side timeout so a hanging Vertex/Cloudinary call surfaces
+  // an explicit error instead of leaving the user staring at a blank
+  // video frame indefinitely. Vertex Gemini editor init runs ~6s warm /
+  // ~10–15s cold; 30s is a generous ceiling.
   useEffect(() => {
     if (!manifest) return;
     if (editor.decisions) return;
     let cancelled = false;
     (async () => {
       try {
-        const init = await api.editorInit(manifest);
+        const init = await Promise.race([
+          api.editorInit(manifest),
+          new Promise<never>((_, reject) =>
+            window.setTimeout(
+              () => reject(new Error("Editor init timed out after 30 seconds")),
+              30_000,
+            ),
+          ),
+        ]);
         if (cancelled || !mountedRef.current) return;
         setEditorBaked({
           decisions: init.decisions,
@@ -141,8 +98,19 @@ export function EditorRoute() {
         });
       } catch (err) {
         if (cancelled || !mountedRef.current) return;
+        // Surface the ApiError details when we have them so the user sees
+        // WHY init failed, not just that it did. Falls back to the generic
+        // line for non-API errors (network, parse, abort, timeout).
+        const detail =
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : null;
         setBootError(
-          err instanceof ApiError ? err.message : "Could not load the cut for editing.",
+          detail
+            ? `Couldn't load the cut for editing — ${detail}. Try refreshing.`
+            : "Couldn't load the cut for editing. Try refreshing.",
         );
       }
     })();
@@ -207,6 +175,16 @@ export function EditorRoute() {
       setStreamingThought("");
       const ctrl = new AbortController();
       editorAbortRef.current = ctrl;
+      // 60s ceiling — Vertex Gemini editor turns run ~6–10s warm; 60s
+      // gives a generous buffer for cold starts before we surface a
+      // timeout error and unstick the UI. Cleared in finally so a
+      // healthy turn doesn't trigger after the result lands.
+      const timeoutId = window.setTimeout(() => {
+        ctrl.abort();
+        if (mountedRef.current) {
+          toast.error("Director took too long — try again.");
+        }
+      }, 60_000);
       try {
         if (userMessage) {
           appendEditorTurn({ role: "user", content: userMessage, timestamp: nowISO() });
@@ -254,13 +232,20 @@ export function EditorRoute() {
             }
             setStreamingThought("");
           } else if (ev.type === "error") {
+            // Surface the error AND clear the thinking flag immediately so
+            // the agent panel exits its "Watching the cut" state right
+            // away rather than waiting for the finally block to fire on
+            // stream close. Toast for visibility; an inline error chip in
+            // the panel could come later if we add a setLatestError state.
             toast.error(ev.message);
+            if (mountedRef.current) setThinking(false);
           }
         }
       } catch (err) {
         if ((err as Error)?.name === "AbortError") return;
         toast.error(err instanceof ApiError ? err.message : "Agent turn failed.");
       } finally {
+        window.clearTimeout(timeoutId);
         if (mountedRef.current) setThinking(false);
       }
     },
@@ -363,15 +348,14 @@ export function EditorRoute() {
   // /edit feel identical to wherever the user landed next. Visible empty
   // states keep the user oriented — they SEE they're at /edit, just with
   // nothing to refine yet, and pick the explicit way back.
-  const seedMode = searchParams.get("seed") === "demo";
   if (!manifest) {
-    return seedMode ? <SeedingFallback /> : <EditorAwaitingApprovalsFallback hasManifest={false} />;
+    return <EditorAwaitingApprovalsFallback hasManifest={false} />;
   }
   const hasApproved = manifest.beats.some((b) =>
     b.scenes.some((s) => s.approved && s.clipPublicId),
   );
   if (!hasApproved) {
-    return seedMode ? <SeedingFallback /> : <EditorAwaitingApprovalsFallback hasManifest={true} />;
+    return <EditorAwaitingApprovalsFallback hasManifest={true} />;
   }
 
   // ── Final-step navigation ────────────────────────────────────────────
@@ -396,106 +380,78 @@ export function EditorRoute() {
   };
 
   return (
-    <main className="film-grain min-h-screen bg-bg-base px-6 py-10 md:py-14">
-      <div className="mx-auto max-w-[112rem] space-y-8">
-        {/* Header — stacks vertically on mobile so the headline + prompt
-            quote get full width, then the action row drops below. On md+
-            the row sits to the right of the headline as a flex justify
-            split. Previous flex-wrap caused two CTAs to crowd the headline
-            unevenly on narrow viewports. */}
-        <header className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between md:gap-4">
-          <div className="space-y-2">
-            <div className="font-body text-[12px] font-medium text-fg-tertiary">
-              Editing room · stitched by Cloudinary
-            </div>
-            <motion.h1
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
-              className="font-display text-display-md italic text-fg-primary"
-            >
-              The cut, take one.
-            </motion.h1>
-            <p className="max-w-prose font-display italic text-lg text-fg-secondary">
-              "{manifest.masterPrompt}"
-            </p>
+    <main className="film-grain min-h-screen bg-bg-base px-6 py-6 md:py-8">
+      <div className="mx-auto max-w-[112rem] space-y-6">
+        {/* Top bar — minimal. Status chips on the left, text actions on the
+            right. No Fraunces hero, no master-prompt quote. The cut is the
+            subject; chrome stays out of its way. */}
+        <header className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 font-body text-[11px] tabular-nums text-fg-tertiary">
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-brand-ember" />
+              Editing
+            </span>
+            {editor.durationSeconds ? (
+              <span className="font-mono">{editor.durationSeconds.toFixed(1)}s</span>
+            ) : null}
+            {bootError ? (
+              <span className="text-state-error">{bootError}</span>
+            ) : null}
           </div>
-          <div className="flex flex-shrink-0 flex-wrap items-center gap-2 self-start md:self-end">
-            <Button variant="ghost" size="md" onClick={handleSaveAndExit}>
-              <LogOut size={14} strokeWidth={1.5} aria-hidden="true" />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleSaveAndExit}
+              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-[12px] text-fg-tertiary transition-colors hover:text-fg-primary"
+            >
+              <LogOut size={13} strokeWidth={1.5} aria-hidden="true" />
               Save &amp; exit
-            </Button>
-            <Button variant="ghost" size="md" onClick={handleBackToCanvas}>
-              <ArrowLeft size={14} strokeWidth={1.5} aria-hidden="true" />
-              Back to canvas
-            </Button>
-            <Button
-              size="md"
-              variant="primary"
+            </button>
+            <button
+              type="button"
+              onClick={handleBackToCanvas}
+              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-[12px] text-fg-tertiary transition-colors hover:text-fg-primary"
+            >
+              <ArrowLeft size={13} strokeWidth={1.5} aria-hidden="true" />
+              Canvas
+            </button>
+            <button
+              type="button"
               onClick={handleShipIt}
               disabled={!editor.finalUrl || baking || thinking}
-              className="ember-pulse"
+              className="inline-flex cursor-pointer items-center gap-1.5 bg-brand-ember px-3 py-1.5 font-body text-[12px] font-medium text-black transition-colors hover:bg-brand-ember/90 disabled:pointer-events-none disabled:opacity-40"
             >
               Ship the cut
-              <ArrowRight size={14} strokeWidth={1.5} aria-hidden="true" />
-            </Button>
+              <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
+            </button>
           </div>
         </header>
 
-        {bootError ? (
-          <div className="rounded-md border border-state-error/40 bg-state-error/10 px-4 py-3 font-body text-[13px] text-state-error">
-            {bootError}
-          </div>
-        ) : null}
-
-        {/* Main grid: preview + timeline + global toolbar + agent rail.
-            The agent is still the primary surface; timeline + toolbar give
-            the user direct manipulation when they want it. Every patch
-            queues a debounced re-bake against /api/editor/apply, so all
-            three surfaces converge on the same Cloudinary URL. */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
-          <section className="space-y-6">
-            {/* Cinematic preview frame — letterbox-flavored, ember-tinted
-                hairline border, soft shadow. The video carries the moment;
-                everything around it stays out of its way. */}
-            <div className="relative overflow-hidden rounded-md border border-fg-tertiary/15 bg-black shadow-[0_30px_60px_-24px_rgba(0,0,0,0.7)]">
-              {editor.finalUrl ? (
-                <VideoPlayer
-                  src={editor.finalUrl}
-                  suggestedDurationSeconds={editor.durationSeconds ?? undefined}
-                  caption={`Live cut · ${editor.durationSeconds?.toFixed(1) ?? "—"}s`}
-                  autoPlay
-                  muted
+        {/* Hybrid grid: preview/timeline rail + sticky right rail (toolbar +
+            director chat). Both converge on the same EditDecisions; every
+            patch debounces a re-bake against /api/editor/apply. */}
+        <div className="grid grid-cols-1 gap-x-10 gap-y-7 lg:grid-cols-[minmax(0,1fr)_22rem] xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <section className="space-y-7">
+            {editor.finalUrl ? (
+              <EditorPreview
+                src={editor.finalUrl}
+                durationSeconds={editor.durationSeconds ?? undefined}
+                baking={baking}
+              />
+            ) : (
+              <div className="flex aspect-video flex-col items-center justify-center gap-3 border border-fg-tertiary/15 bg-black">
+                <span
+                  aria-hidden
+                  className="ember-pulse h-2 w-2 rounded-full bg-brand-ember shadow-[0_0_18px_rgba(240,168,104,0.55)]"
                 />
-              ) : (
-                <div className="flex aspect-video items-center justify-center bg-gradient-to-br from-bg-elev-2 to-black font-display text-[15px] italic text-fg-tertiary">
-                  Composing the cut.
-                </div>
-              )}
-              <AnimatePresence>
-                {baking ? (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: DURATIONS.quick, ease: EASE.outQuart }}
-                    className="absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-bg-base/80 px-3.5 py-1.5 font-body text-[11.5px] font-medium text-fg-tertiary backdrop-blur"
-                  >
-                    <RefreshCw size={11} strokeWidth={1.5} className="animate-spin" />
-                    Re-baking the cut
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-            </div>
+                <span className="font-body text-[12.5px] text-fg-tertiary">
+                  Cloudinary is baking the cut.
+                </span>
+              </div>
+            )}
 
-            {/* Live Cloudinary URL — THE artifact. Every edit, agent-led
-                or direct-manipulation, deterministically rewrites this
-                single CDN URL. No render server, no ffmpeg job — Cloudinary
-                evaluates the transform on demand and CDN-caches the MP4.
-                The chip rail shows the transform vocabulary baked in.
-                The poster-frame derivative under it is the same publicId
-                with `/so_auto/<id>.jpg` swapped onto the tail — proof that
-                Cloudinary owns the entire delivery surface. */}
+            {/* Live Cloudinary URL — THE artifact. Hairline section: eyebrow
+                + URL block + transform-vocabulary chips + poster-frame link. */}
             {editor.finalUrl ? <CloudinaryArtifactStrip url={editor.finalUrl} decisions={editor.decisions} thumbnailUrl={editor.thumbnailUrl} urlCopied={urlCopied} setUrlCopied={setUrlCopied} /> : null}
 
             {/* Timeline — scrubber + per-beat trim handles. Click a beat
@@ -539,10 +495,9 @@ export function EditorRoute() {
             </AnimatePresence>
           </section>
 
-          {/* Right column — global toolbar above, agent panel below. The
-              column scrolls naturally; the agent's flex-1 inner scroller
-              keeps long chats out of the page scroll. */}
-          <div className="space-y-5 lg:sticky lg:top-10 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
+          {/* Right column — toolbar above, director chat below. The column
+              is hairline-divided; no card chrome wraps either section. */}
+          <aside className="space-y-8 lg:sticky lg:top-10 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto lg:overflow-x-hidden lg:[scrollbar-width:thin]">
             {editor.decisions ? (
               <EditorToolbar decisions={editor.decisions} onPatch={patchGlobal} />
             ) : null}
@@ -560,19 +515,8 @@ export function EditorRoute() {
                 livingDecisions={editor.decisions}
               />
             </div>
-          </div>
+          </aside>
         </div>
-      </div>
-    </main>
-  );
-}
-
-function SeedingFallback() {
-  return (
-    <main className="grid min-h-screen place-items-center bg-bg-base">
-      <div className="flex items-center gap-2 font-mono text-[11px] text-fg-tertiary">
-        <Loader2 size={12} className="animate-spin" aria-hidden="true" />
-        Seeding demo…
       </div>
     </main>
   );
@@ -592,10 +536,10 @@ function EditorAwaitingApprovalsFallback({ hasManifest }: { hasManifest: boolean
   return (
     <main className="film-grain min-h-screen bg-bg-base px-6 py-10 md:py-14">
       <div className="mx-auto flex min-h-[70vh] max-w-[60rem] flex-col items-start justify-center gap-6">
-        <div className="font-body text-[12px] font-medium text-fg-tertiary">
+        <div className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
           Editor · Awaiting cut
         </div>
-        <h1 className="font-display text-display-md italic text-fg-primary">
+        <h1 className="text-balance font-display text-display-md italic text-fg-primary">
           {hasManifest ? "Nothing to refine yet." : "No project in flight."}
         </h1>
         <p className="max-w-prose font-display italic text-lg text-fg-secondary">
@@ -630,24 +574,16 @@ function EditorAwaitingApprovalsFallback({ hasManifest }: { hasManifest: boolean
 }
 
 /**
- * The Cloudinary artifact panel.
+ * The Cloudinary artifact strip.
  *
- * Every edit — agent-led or direct-manipulation — deterministically rewrites
- * the URL shown here. There is no render server. Cloudinary's CDN evaluates
- * the transform pipeline on demand and caches the result.
+ * Every edit — agent-led or drag-led — deterministically rewrites the URL
+ * shown here. No render server, no ffmpeg job. Cloudinary's CDN evaluates
+ * the transform pipeline on demand and caches the MP4.
  *
- * Layout:
- *   - Header: "Master cut · live URL" + Copy + Open
- *   - Mono URL block (break-all)
- *   - Transform-vocabulary chip rail derived from the current EditDecisions —
- *     so the user can SEE which Cloudinary capabilities they're touching
- *     (fl_splice, e_fade, l_text, l_audio, look LUT, watermark, ducking).
- *   - Poster-frame thumbnail derivative — same publicId, /so_auto/<id>.jpg
- *     swapped onto the tail. Click-to-open in a new tab.
- *
- * This is the prize-winning surface for the Cloudinary Company Challenge:
- * the URL IS the artifact, the transform chips name the capabilities, and
- * the thumbnail proves Cloudinary owns the entire delivery layer.
+ * Hairline-anchored section, no card chrome. The eyebrow names the surface
+ * ("Cloudinary · single-URL bake"), the mono block carries the URL, the
+ * chips name the transform vocabulary, and the poster-frame derivative is
+ * a one-line text link below.
  */
 function CloudinaryArtifactStrip({
   url,
@@ -664,17 +600,12 @@ function CloudinaryArtifactStrip({
 }) {
   const chips = useMemo(() => deriveTransformChips(decisions), [decisions]);
   return (
-    <section className="space-y-3 rounded-md border border-brand-ember-dim/30 bg-bg-elev-1/40 p-4">
+    <section className="space-y-3">
       <div className="flex items-baseline justify-between">
-        <div className="space-y-0.5">
-          <div className="font-body text-[11px] font-medium uppercase tracking-[0.08em] text-brand-ember">
-            Cloudinary · single-URL bake
-          </div>
-          <div className="font-display text-[15px] italic text-fg-primary">
-            Master cut · live URL
-          </div>
+        <div className="font-body text-micro font-medium uppercase tracking-[0.08em] text-brand-ember">
+          Cloudinary · single-URL bake
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <button
             type="button"
             onClick={async () => {
@@ -715,17 +646,17 @@ function CloudinaryArtifactStrip({
         </div>
       </div>
 
-      <div className="break-all rounded-md border border-fg-tertiary/15 bg-bg-base/50 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
+      <div className="break-all border border-fg-tertiary/15 bg-bg-base/40 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
         {url}
       </div>
 
       {chips.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-x-3 gap-y-1.5">
           {chips.map((c) => (
             <span
               key={c.label}
               title={c.hint}
-              className="inline-flex items-center gap-1 rounded-full border border-brand-ember-dim/40 bg-brand-ember/[0.06] px-2.5 py-1 font-mono text-[10.5px] text-brand-ember"
+              className="font-mono text-micro tabular-nums text-brand-ember/85"
             >
               {c.label}
             </span>
@@ -743,7 +674,7 @@ function CloudinaryArtifactStrip({
         >
           <ImageIcon size={11} strokeWidth={1.5} aria-hidden="true" />
           Poster-frame derivative
-          <span className="font-mono text-[10.5px] text-fg-tertiary/70 group-hover:text-brand-ember">
+          <span className="font-mono text-micro text-fg-tertiary/70 group-hover:text-brand-ember">
             /so_auto/&lt;id&gt;.jpg
           </span>
         </a>

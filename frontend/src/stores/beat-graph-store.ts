@@ -43,6 +43,15 @@ export interface ArchivedProject {
   masterPrompt: string;
   /** Full manifest snapshot — restored verbatim on resume. */
   manifest: Manifest;
+  /**
+   * Editor slice snapshot. Restored on resume so a user who started
+   * refining and then jumped away (Save & exit) picks up exactly where
+   * they left off — same baked URL, same conversation, same proposal
+   * card. Optional: projects archived before this field was added (or
+   * never reaching the editor) won't have it; resume falls back to
+   * EDITOR_INITIAL in that case.
+   */
+  editor?: BeatGraphState["editor"];
 }
 
 const PROJECTS_CAP = 12;
@@ -322,6 +331,8 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         // Archive any current manifest first so resuming never silently
         // drops in-progress work. The target is then promoted, deduped from
         // the projects list (so it doesn't appear twice), and capped.
+        // Editor slice is also archived alongside the manifest so the
+        // current project's mid-edit state survives a hop into another.
         const archivedHead = state.manifest
           ? [
               {
@@ -329,6 +340,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
                 archivedAt: nowISO(),
                 masterPrompt: state.manifest.masterPrompt,
                 manifest: state.manifest,
+                editor: state.editor.decisions ? state.editor : undefined,
               },
               ...state.projects.filter(
                 (p) => p.id !== state.manifest!.projectId && p.id !== projectId,
@@ -339,7 +351,9 @@ export const useBeatGraphStore = create<BeatGraphState>()(
           manifest: target.manifest,
           activeBeatId: null,
           decomposeStatus: "idle",
-          editor: EDITOR_INITIAL,
+          // Restore the target's editor session if one was archived. Falls
+          // back to fresh state for older projects that pre-date this field.
+          editor: target.editor ?? EDITOR_INITIAL,
           stitchTrayOpen: false,
           minimapOpen: false,
           projects: archivedHead.slice(0, PROJECTS_CAP),
