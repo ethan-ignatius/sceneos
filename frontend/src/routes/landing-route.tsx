@@ -65,7 +65,17 @@ export function LandingRoute() {
   // their idea without reaching for the mic button. The button then
   // serves as a MUTE control — only mouse action needed is to silence
   // it. Falls back gracefully if unsupported (Firefox).
-  const speech = useSpeechRecognition({ lang: "en-US" });
+  //
+  // onSettle fires after 3s of silence (set in the hook) — at that
+  // point the form auto-submits, so the user never has to reach for
+  // the keyboard or click Send. submitRef is kept fresh so onSettle
+  // sees the latest closure (it runs from inside a hook timer).
+  const submitRef = useRef<((text: string) => void) | null>(null);
+  const speech = useSpeechRecognition({
+    lang: "en-US",
+    silenceMs: 3000,
+    onSettle: (text) => submitRef.current?.(text),
+  });
   const autoStartedMicRef = useRef(false);
   useEffect(() => {
     if (autoStartedMicRef.current) return;
@@ -77,6 +87,14 @@ export function LandingRoute() {
   useEffect(() => {
     if (speech.listening && speech.transcript) setDraft(speech.transcript);
   }, [speech.listening, speech.transcript]);
+  // Keep the ref pointed at the LATEST submit closure so onSettle calls
+  // back into the current draft + masterPrompt path. Done as an effect
+  // since submit is recreated on every render with fresh state captures.
+  // The ref is the bridge between the hook's silence timer (which fires
+  // outside React's render cycle) and the form-submit logic.
+  useEffect(() => {
+    submitRef.current = (text: string) => submit(text);
+  });
 
   const toggleVoice = () => {
     if (speech.listening) speech.stop();
@@ -106,9 +124,17 @@ export function LandingRoute() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [draft]);
 
-  const submit = (e?: FormEvent) => {
-    e?.preventDefault();
-    const trimmed = draft.trim();
+  const submit = (e?: FormEvent | string) => {
+    // Two call shapes:
+    //   - form submit  → e is FormEvent
+    //   - voice settle → e is the final transcript string
+    let voiceText: string | undefined;
+    if (typeof e === "string") {
+      voiceText = e;
+    } else if (e) {
+      e.preventDefault();
+    }
+    const trimmed = (voiceText ?? draft).trim();
     if (!trimmed) return;
     setMasterPrompt(trimmed);
     initialize({ masterPrompt: trimmed, videoType });

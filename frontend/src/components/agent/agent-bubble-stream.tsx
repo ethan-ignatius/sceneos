@@ -68,7 +68,16 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // reason to touch the mic button is to MUTE it. While recording,
   // transcript replaces draft; user can edit before submitting. Falls
   // back gracefully if unsupported (e.g. Firefox).
-  const speech = useSpeechRecognition({ lang: "en-US" });
+  //
+  // onSettle fires after 3s of silence — at that point we auto-submit
+  // the user turn so the conversation flows hands-free. submitVoiceRef
+  // is the bridge between the hook's timer and the latest submit closure.
+  const submitVoiceRef = useRef<((text: string) => void) | null>(null);
+  const speech = useSpeechRecognition({
+    lang: "en-US",
+    silenceMs: 3000,
+    onSettle: (text) => submitVoiceRef.current?.(text),
+  });
   // Auto-start once when the engine reports support. Re-running on
   // `supported` covers the brief tick where the hook hydrates the
   // browser-detect state. We deliberately don't restart after the user
@@ -293,12 +302,18 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     }
   };
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    const trimmed = draft.trim();
+  const submit = async (e: FormEvent | string) => {
+    // Two call shapes: form submit (FormEvent) or voice settle (string).
+    let voiceText: string | undefined;
+    if (typeof e === "string") {
+      voiceText = e;
+    } else {
+      e.preventDefault();
+    }
+    const trimmed = (voiceText ?? draft).trim();
     if (!trimmed || inFlight || !manifest) return;
 
-    if (speech.transcript && trimmed === speech.transcript.trim()) {
+    if (voiceText !== undefined || (speech.transcript && trimmed === speech.transcript.trim())) {
       lastSubmitWasVoiceRef.current = true;
     }
 
@@ -311,6 +326,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     setLatestSuggestions(null);
     await callAgent(trimmed);
   };
+
+  // Bridge the hook's silence timer to the latest submit closure.
+  useEffect(() => {
+    submitVoiceRef.current = (text: string) => void submit(text);
+  });
 
   const retry = async () => {
     if (!pendingRetryMessage || inFlight) return;
