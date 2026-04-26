@@ -304,6 +304,13 @@
     }
   }
 
+  /* Approval-ready bubble — soft vertical bob mimicking Monster Legends'
+     harvest pip. Paired with .ember-pulse for the glow ring. */
+  @keyframes approval-bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+
   /* ──────────────────────────────────────────────────────────────────
    * Edge-underline hover (Unseen Studio pattern).
    * Two short underlines slide in from the left + right edges to meet
@@ -442,7 +449,8 @@
     .magnetic-button[data-ready="true"],
     .magnetic-button:hover .magnetic-button-tick,
     .animate-blur-pulse,
-    .film-grain::before {
+    .film-grain::before,
+    [style*="approval-bob"] {
       animation: none !important;
     }
     .flicker-on-mount [data-index],

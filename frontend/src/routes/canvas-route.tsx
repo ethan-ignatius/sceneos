@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, AnimatePresence } from "motion/react";
 import { LogOut, FolderClock } from "lucide-react";
@@ -124,22 +124,28 @@ export function CanvasRoute() {
     };
   }, [manifest]);
 
-  // Auto-advance through pending beats. Whenever the user is on the
-  // overview (no active beat, no stitch tray) and at least one beat is
-  // still pending, after a 2s breath the camera glides into the next
-  // pending beat and opens its drawer.
-  //
-  // Lifecycle:
-  //   - First mount → 2s breath → first pending beat opens.
-  //   - User approves a beat → drawer auto-closes (effect below) →
-  //     2s breath → next pending beat opens.
-  //   - User can hit Esc, click empty canvas, or click another beat to
-  //     break the loop; the next overview moment re-arms it.
-  //
-  // We only advance to beats whose status is "pending" or "questioning"
-  // — anything past "ready-to-generate" already has a clip in flight or
+  // Auto-arc gating. The arc is intentionally *armed* in only two
+  // moments: (a) first canvas mount, and (b) right after a beat is
+  // approved (so the user rolls smoothly into the next planet). Any
+  // manual escape — Esc, drawer X, click on empty canvas — disarms the
+  // arc; we will not snap the user back into a beat they walked away
+  // from. The next post-approval auto-close will re-arm.
+  const [arcArmed, setArcArmed] = useState(true);
+
+  // Disarm the moment any beat becomes active, regardless of source
+  // (auto-arc, manual click, ⌘K jump). The auto-arc itself sets armed
+  // false on fire too, so this is belt-and-suspenders for the manual-
+  // click case where the user beat the 2s timer.
+  useEffect(() => {
+    if (activeBeatId) setArcArmed(false);
+  }, [activeBeatId]);
+
+  // Auto-arc into the next pending beat — only when armed. We only
+  // advance to beats whose status is "pending" or "questioning";
+  // anything past "ready-to-generate" already has a clip in flight or
   // approved, so re-opening it would feel like a regression.
   useEffect(() => {
+    if (!arcArmed) return;
     if (!manifest) return;
     if (activeBeatId) return; // drawer is already open
     if (stitchOpen) return; // stitch tray is open, hold off
@@ -153,13 +159,13 @@ export function CanvasRoute() {
       const live = useBeatGraphStore.getState();
       if (live.activeBeatId || live.stitchTrayOpen) return;
       setActiveBeat(nextPending.beatId);
+      setArcArmed(false); // single-shot — re-armed by post-approval below
     }, 2000);
     return () => window.clearTimeout(t);
-  }, [manifest, activeBeatId, stitchOpen, setActiveBeat]);
+  }, [arcArmed, manifest, activeBeatId, stitchOpen, setActiveBeat]);
 
-  // Auto-close the drawer once the active beat is approved. Pairs with
-  // the auto-advance above: approve → 1.2s breath on the preview →
-  // drawer closes → 2s on the overview → next pending beat opens.
+  // Auto-close the drawer once the active beat is approved AND re-arm
+  // the arc, so the next pending beat will open after a 2s breath.
   // The 1.2s lets the approval animation land before we whisk away.
   useEffect(() => {
     if (!manifest) return;
@@ -171,14 +177,17 @@ export function CanvasRoute() {
       // Bail if the user already navigated elsewhere themselves.
       if (live.activeBeatId !== activeBeatId) return;
       setActiveBeat(null);
+      setArcArmed(true);
     }, 1200);
     return () => window.clearTimeout(t);
   }, [manifest, activeBeatId, setActiveBeat]);
 
   // Re-center: clear active beat AND fire the camera-reset event so
-  // BeatMap3D zeros any pan offset. One operation, two effects.
+  // BeatMap3D zeros any pan offset. Also disarms the auto-arc — the
+  // user explicitly asked to be on the overview; don't snap them back.
   const recenterCamera = useCallback(() => {
     if (activeBeatId) setActiveBeat(null);
+    setArcArmed(false);
     window.dispatchEvent(new CustomEvent(RESET_CAMERA_EVENT));
   }, [activeBeatId, setActiveBeat]);
 

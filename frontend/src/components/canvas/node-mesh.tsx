@@ -443,6 +443,38 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
         <Sparkles count={10} scale={1.6} size={2.4} speed={0.3} opacity={0.4} color="#f0a868" noise={0.3} />
       ) : null}
 
+      {/* Approval-ready bubble — Monster Legends harvest pattern. Floats
+          above the planet's label when the clip is rendered + awaiting
+          approval (status === "preview"). Pulses + bobs to draw the eye,
+          tapping it opens the drawer so the user can approve the take.
+          Disappears the moment the beat flips to approved. */}
+      {!labelsHidden && isPreviewState && !isActive ? (
+        <Html
+          center
+          position={[0, 1.62, 0]}
+          style={{ pointerEvents: "auto" }}
+          zIndexRange={[9, 0]}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveBeat(beat.beatId);
+            }}
+            aria-label={`${beat.beatName} ready to approve`}
+            title={`${beat.beatName} — ready to approve`}
+            className="ember-pulse inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-brand-ember bg-brand-ember/95 px-2.5 py-1 font-body text-pill font-semibold text-bg-base shadow-[0_0_18px_rgba(240,168,104,0.55)] transition-transform duration-200 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+            style={{ animation: "approval-bob 2.4s ease-in-out infinite" }}
+          >
+            <span
+              aria-hidden="true"
+              className="inline-flex h-1.5 w-1.5 rounded-full bg-bg-base"
+            />
+            Ready
+          </button>
+        </Html>
+      ) : null}
+
       {/* Floating label — hidden whenever an overlay is layered above the
           canvas, since drei <Html> renders DOM siblings of the Canvas and
           would otherwise bleed through translucent panels. Untouched beats

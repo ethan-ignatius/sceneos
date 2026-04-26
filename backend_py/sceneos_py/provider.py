@@ -70,22 +70,24 @@ def _autodetect_default_provider() -> GenerationProvider:
     """
     Pick a sane default provider when GENERATION_PROVIDER is unset.
 
-    Preference order:
-      1. Vertex if GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS are
-         present (the user's setup as of 2026-04-25).
-      2. Higgsfield if HIGGSFIELD_API_KEY + HIGGSFIELD_API_SECRET are set.
+    Preference order (Higgsfield-prominent — see SceneOS submission story):
+      1. Higgsfield if HIGGSFIELD_API_KEY is present. Soul mode is the
+         architectural moat — character + location reference URLs flow
+         through every beat to keep identity stable across the cut.
+         The legacy key+secret pair routes to platform.higgsfield.ai;
+         a lone bearer key routes to higgsfieldapi.com.
+      2. Vertex if GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS
+         are present. Veo is the no-Higgsfield alternate lane.
       3. cached as a no-credential fallback so unsupervised real-mode
          boots can never crash on the first generate() call — the
          orchestrator's provider-fallback logic will surface a clean
          "fallbackReason" to the frontend.
     """
+    if env("HIGGSFIELD_API_KEY"):
+        return "higgsfield"
     project_id = env("GOOGLE_PROJECT_ID") or env("GCP_PROJECT_ID")
     if project_id and env("GOOGLE_APPLICATION_CREDENTIALS"):
         return "vertex"
-    # Public Higgsfield API uses a single bearer key — the legacy secret
-    # is no longer required (see higgsfield.py docstring).
-    if env("HIGGSFIELD_API_KEY"):
-        return "higgsfield"
     return "cached"
 
 
@@ -111,31 +113,51 @@ async def dispatch_with_fallback(
     params: GenerateClipParams,
 ) -> tuple[GenerationProvider, dict, GenerationProvider | None, str | None]:
     """
-    Try the active provider, fall back to `cached` on submission failure.
+    Try the active provider, then a sibling tier, then `cached`. Returns
+    (provider_name_used, generate_result, original_provider, fallback_reason).
 
-    Returns (provider_name_used, generate_result, original_provider_or_None, fallback_reason_or_None).
+    Cascade rules:
+      - Higgsfield primary → Vertex sibling → cached
+      - Vertex primary    → Higgsfield sibling (if creds) → cached
+      - Anything else     → cached
+      - Already cached    → no fallback, raise
 
-    Live demo guarantee: if Veo / Higgsfield rejects the request (quota,
-    safety, network), the orchestrator and `/api/generate` automatically
-    swap in the cached tier and surface the reason. The caller should
-    use the RETURNED provider name (not active_provider_name()) when
-    encoding the jobId so /api/status routes to the right tier.
-
-    No-op for an active provider that is already `cached`.
+    Live-demo guarantee: a single provider 5xx never dead-ends the user.
+    The caller MUST use the RETURNED provider name (not
+    active_provider_name()) when encoding the jobId so /api/status routes
+    to the right tier.
     """
     primary, primary_impl = get_provider()
     try:
         result = await primary_impl.generate(params)
         return primary, result, None, None
-    except Exception as exc:
+    except Exception as primary_exc:
         if primary == "cached":
             raise
-        cached_impl = get_named_provider("cached")
+
+        # Sibling tier: try the OTHER real provider before falling back to
+        # cached. Higgsfield ↔ Vertex; the rest go straight to cached.
+        sibling: GenerationProvider | None = None
+        if primary == "higgsfield":
+            project_id = env("GOOGLE_PROJECT_ID") or env("GCP_PROJECT_ID")
+            if project_id and env("GOOGLE_APPLICATION_CREDENTIALS"):
+                sibling = "vertex"
+        elif primary == "vertex":
+            if env("HIGGSFIELD_API_KEY"):
+                sibling = "higgsfield"
+
+        if sibling:
+            try:
+                result = await get_named_provider(sibling).generate(params)
+                return sibling, result, primary, str(primary_exc)
+            except Exception:
+                pass  # fall through to cached
+
         try:
-            result = await cached_impl.generate(params)
+            result = await get_named_provider("cached").generate(params)
         except Exception:
-            raise exc
-        return "cached", result, primary, str(exc)
+            raise primary_exc
+        return "cached", result, primary, str(primary_exc)
 
 
 def encode_job_id(provider: GenerationProvider, provider_job_id: str) -> str:

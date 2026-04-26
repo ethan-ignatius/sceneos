@@ -463,27 +463,20 @@ export function NodeDetailDrawer() {
                   .filter(Boolean)
                   .join(" ");
                 const scene = beat.scenes[0];
+                // Lock-it-in folds the user's answers into a richer
+                // refinedPrompt — same contract as the agent's
+                // markSufficient. Mandatory re-bake: invalidate the
+                // speculative clip + jobs so Roll camera dispatches a
+                // fresh Veo with this prompt, not the decompose draft.
                 updateScene(beat.beatId, scene.sceneId, {
                   refinedPrompt: refined,
                   durationSeconds: beat.archetype.suggestedDuration,
+                  speculativeJobId: undefined,
+                  jobId: undefined,
+                  clipPublicId: undefined,
+                  clipUrl: undefined,
+                  lastFrameUrl: undefined,
                 });
-                // Speculative-result fast paths (mirror handleGenerate):
-                //   1. Clip already done → straight to preview, no Veo
-                //   2. Clip still running → attach to speculative job
-                //   3. No speculative → fall through to ready-to-generate
-                //      and let the user click Roll camera (which will
-                //      then dispatch a fresh Veo with the refined prompt)
-                if (scene.clipPublicId && scene.clipUrl) {
-                  updateBeat(beat.beatId, { status: "preview" });
-                  return;
-                }
-                if (scene.speculativeJobId) {
-                  updateScene(beat.beatId, scene.sceneId, {
-                    jobId: scene.speculativeJobId,
-                  });
-                  updateBeat(beat.beatId, { status: "generating" });
-                  return;
-                }
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               };
               return (

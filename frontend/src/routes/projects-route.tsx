@@ -1,8 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Trash2, Play } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
+import { cn } from "@/lib/utils";
 
 /**
  * The reel cabinet. Every project the user has ever started is archived
@@ -23,6 +25,39 @@ export function ProjectsRoute() {
   const handleResume = (id: string) => {
     resumeProject(id);
     navigate("/canvas");
+  };
+
+  // Two-step delete confirmation. First click arms the row (icon goes
+  // ember + label flips to "Confirm?"); second click within 3s actually
+  // discards. Auto-disarms after 3s of inactivity so the user can't
+  // accidentally double-tap and lose work, but they can also cancel
+  // by clicking ANY other row's trash (which re-arms that row instead).
+  const [armedDeleteId, setArmedDeleteId] = useState<string | null>(null);
+  const armTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    };
+  }, []);
+
+  const handleDelete = (id: string) => {
+    if (armedDeleteId === id) {
+      // Second click on the same row → actually delete.
+      if (armTimerRef.current) {
+        window.clearTimeout(armTimerRef.current);
+        armTimerRef.current = null;
+      }
+      setArmedDeleteId(null);
+      discardProject(id);
+      return;
+    }
+    // First click → arm this row, disarm any other.
+    if (armTimerRef.current) window.clearTimeout(armTimerRef.current);
+    setArmedDeleteId(id);
+    armTimerRef.current = window.setTimeout(() => {
+      setArmedDeleteId(null);
+      armTimerRef.current = null;
+    }, 3000);
   };
 
   return (
@@ -103,15 +138,31 @@ export function ProjectsRoute() {
                       <Play size={11} strokeWidth={2} aria-hidden="true" />
                       Resume
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => discardProject(p.id)}
-                      aria-label={`Discard project: ${p.masterPrompt}`}
-                      title="Discard"
-                      className="grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary transition-colors hover:text-state-error focus-visible:outline-none"
-                    >
-                      <Trash2 size={11} strokeWidth={1.5} aria-hidden="true" />
-                    </button>
+                    {armedDeleteId === p.id ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(p.id)}
+                        aria-label={`Confirm discard: ${p.masterPrompt}`}
+                        title="Click again to confirm"
+                        className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill font-medium text-state-error transition-colors hover:text-state-error/80 focus-visible:outline-none"
+                      >
+                        <Trash2 size={11} strokeWidth={1.75} aria-hidden="true" />
+                        Confirm
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(p.id)}
+                        aria-label={`Discard project: ${p.masterPrompt}`}
+                        title="Discard"
+                        className={cn(
+                          "grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary",
+                          "transition-colors hover:text-state-error focus-visible:outline-none",
+                        )}
+                      >
+                        <Trash2 size={11} strokeWidth={1.5} aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 </motion.li>
               );

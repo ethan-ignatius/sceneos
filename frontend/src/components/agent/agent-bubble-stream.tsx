@@ -78,18 +78,22 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     silenceMs: 3000,
     onSettle: (text) => submitVoiceRef.current?.(text),
   });
-  // Auto-start once when the engine reports support. Re-running on
-  // `supported` covers the brief tick where the hook hydrates the
-  // browser-detect state. We deliberately don't restart after the user
-  // explicitly stops it — that would defeat the mute affordance.
+  // Auto-start once when the engine reports support AND the agent is
+  // done composing — otherwise the user might start speaking before
+  // they've heard / read the question, and the transcript would
+  // capture half-formed thoughts. Holding off until inFlight=false
+  // means the mic only opens at the moment the user is meant to reply.
+  // We deliberately don't restart after the user explicitly stops it
+  // — that would defeat the mute affordance.
   const autoStartedRef = useRef(false);
   useEffect(() => {
     if (autoStartedRef.current) return;
     if (!speech.supported) return;
     if (speech.listening) return;
+    if (inFlight) return;
     autoStartedRef.current = true;
     speech.start();
-  }, [speech.supported, speech.listening, speech]);
+  }, [speech.supported, speech.listening, speech, inFlight]);
   useEffect(() => {
     if (speech.listening && speech.transcript) {
       setDraft(speech.transcript);
@@ -193,10 +197,20 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           setLatestSuggestions(ev.suggestedAnswers ?? null);
         } else {
           // Edge case: agent considers itself sufficient on first turn.
+          // Invalidate any speculative pre-bake — the refinedPrompt the
+          // landing route fired with is now superseded by the agent's
+          // sufficient payload, and Roll camera MUST re-render with the
+          // user's voice in the prompt rather than short-circuit to the
+          // stale clip.
           updateScene(beat.beatId, scene.sceneId, {
             refinedPrompt: ev.refinedPrompt,
             durationSeconds: ev.suggestedDuration,
             beatFacts: ev.beatFacts,
+            speculativeJobId: undefined,
+            jobId: undefined,
+            clipPublicId: undefined,
+            clipUrl: undefined,
+            lastFrameUrl: undefined,
           });
           updateBeat(beat.beatId, { status: "ready-to-generate" });
         }
@@ -269,10 +283,21 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             });
             setLatestSuggestions(ev.suggestedAnswers ?? null);
           } else {
+            // Mandatory re-bake on markSufficient: invalidate the
+            // speculative clip + jobs so handleGenerate dispatches a
+            // fresh /api/generate using the AGENT's refinedPrompt
+            // (subject + setting + voiceLine etc) rather than the
+            // decompose-time draft. Without this the user's
+            // conversation has no effect on what Veo renders.
             updateScene(beat.beatId, scene.sceneId, {
               refinedPrompt: ev.refinedPrompt,
               durationSeconds: ev.suggestedDuration,
               beatFacts: ev.beatFacts,
+              speculativeJobId: undefined,
+              jobId: undefined,
+              clipPublicId: undefined,
+              clipUrl: undefined,
+              lastFrameUrl: undefined,
             });
             updateBeat(beat.beatId, { status: "ready-to-generate" });
             appendAgentTurn(beat.beatId, scene.sceneId, {
@@ -416,7 +441,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               transition={{ duration: 0.24, ease: [0.25, 1, 0.5, 1] }}
               className="rounded-md border border-fg-tertiary/15 bg-bg-base/40 px-4 py-3"
             >
-              <div className="caption-track mb-2 flex items-center gap-1.5 text-overline text-fg-tertiary">
+              <div className="mb-2 flex items-center gap-1.5 font-body text-overline font-medium uppercase tracking-[0.08em] text-fg-tertiary">
                 <motion.span
                   aria-hidden="true"
                   className="h-1.5 w-1.5 rounded-full bg-brand-ember"
@@ -429,7 +454,12 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 {renderThoughtMarkdown(streamingThought)}
               </p>
             </motion.div>
-          ) : scene.conversation.length === 0 ? (
+          ) : (
+            // Visible on EVERY in-flight turn (first OR follow-up). Used
+            // to be gated to scene.conversation.length === 0, which left
+            // the user staring at a frozen drawer for the 1-2s before the
+            // first thought chunk arrives on a follow-up. Now they
+            // always see motion.
             <div
               role="status"
               aria-live="polite"
@@ -438,7 +468,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
               Composing the shot.
             </div>
-          ) : null
+          )
         ) : null}
         {error ? (
           <div

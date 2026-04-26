@@ -333,11 +333,21 @@ async def run_beat_pipeline(
         # Last-resort fallback: no project refs, no chain. Generate per-beat
         # refs concurrently. Older callers (tests, ad-hoc /api/orchestrate
         # without /api/session/start) take this path.
+        #
+        # Provider-aware ref source: when Higgsfield is the active provider
+        # we generate refs via Higgsfield Soul T2I so the same model that
+        # creates the soul anchor also bakes the per-beat video — identity
+        # stays stable. Otherwise (Vertex / cached / unknown) we use Imagen
+        # since the Vertex Veo path expects Imagen-compatible refs.
+        from .provider import active_provider_name
+        from . import higgsfield_soul
+        ref_provider = active_provider_name()
+        ref_module = higgsfield_soul if ref_provider == "higgsfield" else vertex_imagen
         coros = []
         kinds = []
         if beat_facts.get("characterDescription"):
             kinds.append("character")
-            coros.append(vertex_imagen.generate_reference(
+            coros.append(ref_module.generate_reference(
                 kind="character",
                 description=beat_facts["characterDescription"],
                 project_id=manifest.get("projectId"),
@@ -346,7 +356,7 @@ async def run_beat_pipeline(
             ))
         if beat_facts.get("locationDescription"):
             kinds.append("location")
-            coros.append(vertex_imagen.generate_reference(
+            coros.append(ref_module.generate_reference(
                 kind="location",
                 description=beat_facts["locationDescription"],
                 project_id=manifest.get("projectId"),
