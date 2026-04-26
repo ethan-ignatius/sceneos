@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Play, Pause, SkipBack, SkipForward } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, RotateCcw, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface EditorPreviewProps {
@@ -39,11 +39,20 @@ export function EditorPreview({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState<number>(durationSeconds ?? 0);
+  // Load failure overlay. Editor's bake URL points at Cloudinary; on
+  // resumed projects the asset can be rotated/deleted, and during a bake
+  // race the URL can briefly 404 before the new derivative is ready.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    if (!src) return;
     setCurrentTime(0);
+    setLoadError(null);
+    setAutoplayBlocked(false);
     v.load();
     // Cached video may have v.duration ready synchronously and never
     // re-fire loadedmetadata on src swap — seed from the element so
@@ -58,11 +67,29 @@ export function EditorPreview({
       const d = v.duration;
       if (Number.isFinite(d) && d > 0) setDuration(d);
     };
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      setAutoplayBlocked(false);
+    };
     const onPause = () => setPlaying(false);
     const onEnded = () => {
       setPlaying(false);
       setCurrentTime(v.duration ?? 0);
+    };
+    // MediaError codes mapped to human messages — same vocabulary as
+    // VideoPlayer so the two surfaces feel consistent.
+    const onError = () => {
+      const code = v.error?.code;
+      const msg =
+        code === 4
+          ? "Couldn't load this cut — the source may have moved."
+          : code === 2
+            ? "Network hiccup loading the cut."
+            : code === 3
+              ? "This cut can't be decoded in your browser."
+              : "Couldn't load this cut.";
+      setLoadError(msg);
+      setPlaying(false);
     };
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("loadedmetadata", updateDuration);
@@ -70,6 +97,19 @@ export function EditorPreview({
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("ended", onEnded);
+    v.addEventListener("error", onError);
+    // Autoplay-blocked recovery: catch NotAllowedError so we can show
+    // the play overlay instead of leaving the user staring at a frozen
+    // first frame.
+    const tryPlay = () => {
+      const p = v.play();
+      if (p && typeof p.then === "function") {
+        p.catch((err: Error) => {
+          if (err.name === "NotAllowedError") setAutoplayBlocked(true);
+        });
+      }
+    };
+    v.addEventListener("canplay", tryPlay, { once: true });
     return () => {
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("loadedmetadata", updateDuration);
@@ -77,13 +117,15 @@ export function EditorPreview({
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("ended", onEnded);
+      v.removeEventListener("error", onError);
       try {
         v.pause();
       } catch {
         /* noop */
       }
     };
-  }, [src]);
+    // reloadCount is the Retry hook — bumping re-runs load().
+  }, [src, reloadCount]);
 
   // Late-arriving prop. /api/editor/apply returns durationSeconds but
   // the URL bake can land first (e.g., demo lookup hit) — promote the
