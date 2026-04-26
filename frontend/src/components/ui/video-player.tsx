@@ -55,12 +55,23 @@ export function VideoPlayer({
     setProgress(0);
     setCurrentTime(0);
     v.load();
+    // Some browsers (Safari especially) populate v.duration synchronously
+    // for cached videos and never re-fire loadedmetadata on src swap. Seed
+    // from v.duration if it's already known so the readout never sticks
+    // at "0:00" for a freshly-mounted cached clip.
+    const seed = v.duration;
+    if (Number.isFinite(seed) && seed > 0) setDuration(seed);
     const onTime = () => {
       setCurrentTime(v.currentTime);
       setProgress(v.duration ? v.currentTime / v.duration : 0);
     };
-    const onMeta = () => {
-      if (!Number.isNaN(v.duration)) setDuration(v.duration);
+    // loadedmetadata fires once metadata is parsed; durationchange fires
+    // any time duration becomes known or refines (some MP4 muxers emit
+    // metadata before duration is computed). Listening to both means the
+    // "/ X:XX" denominator stops reading 0:00 the moment it can.
+    const updateDuration = () => {
+      const d = v.duration;
+      if (Number.isFinite(d) && d > 0) setDuration(d);
     };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
@@ -69,13 +80,15 @@ export function VideoPlayer({
       setProgress(1);
     };
     v.addEventListener("timeupdate", onTime);
-    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("loadedmetadata", updateDuration);
+    v.addEventListener("durationchange", updateDuration);
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("ended", onEnded);
     return () => {
       v.removeEventListener("timeupdate", onTime);
-      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("loadedmetadata", updateDuration);
+      v.removeEventListener("durationchange", updateDuration);
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("ended", onEnded);
@@ -88,6 +101,17 @@ export function VideoPlayer({
       }
     };
   }, [src]);
+
+  // Late-arriving suggested duration — manifest can hydrate after mount
+  // (e.g., resumed project rebuilds the Cloudinary URL before the
+  // durationSeconds field comes back from /api/editor/apply). Promote the
+  // suggested value into local state when it firms up, but only while
+  // the video itself hasn't reported a real duration yet.
+  useEffect(() => {
+    if (typeof suggestedDurationSeconds !== "number") return;
+    if (!Number.isFinite(suggestedDurationSeconds) || suggestedDurationSeconds <= 0) return;
+    setDuration((prev) => (prev > 0 ? prev : suggestedDurationSeconds));
+  }, [suggestedDurationSeconds]);
 
   const togglePlay = () => {
     const v = videoRef.current;

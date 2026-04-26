@@ -45,9 +45,18 @@ export function EditorPreview({
     if (!v) return;
     setCurrentTime(0);
     v.load();
+    // Cached video may have v.duration ready synchronously and never
+    // re-fire loadedmetadata on src swap — seed from the element so
+    // the readout doesn't stick at "0:00".
+    const seed = v.duration;
+    if (Number.isFinite(seed) && seed > 0) setDuration(seed);
     const onTime = () => setCurrentTime(v.currentTime);
-    const onMeta = () => {
-      if (!Number.isNaN(v.duration)) setDuration(v.duration);
+    // loadedmetadata + durationchange together: some MP4 muxers report
+    // metadata before duration is computed, so durationchange catches
+    // the firmer value once it's known.
+    const updateDuration = () => {
+      const d = v.duration;
+      if (Number.isFinite(d) && d > 0) setDuration(d);
     };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
@@ -56,13 +65,15 @@ export function EditorPreview({
       setCurrentTime(v.duration ?? 0);
     };
     v.addEventListener("timeupdate", onTime);
-    v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("loadedmetadata", updateDuration);
+    v.addEventListener("durationchange", updateDuration);
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("ended", onEnded);
     return () => {
       v.removeEventListener("timeupdate", onTime);
-      v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("loadedmetadata", updateDuration);
+      v.removeEventListener("durationchange", updateDuration);
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("ended", onEnded);
@@ -73,6 +84,16 @@ export function EditorPreview({
       }
     };
   }, [src]);
+
+  // Late-arriving prop. /api/editor/apply returns durationSeconds but
+  // the URL bake can land first (e.g., demo lookup hit) — promote the
+  // prop into local state once it firms up, preserving any larger value
+  // the video element has already reported.
+  useEffect(() => {
+    if (typeof durationSeconds !== "number") return;
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return;
+    setDuration((prev) => (prev > 0 ? prev : durationSeconds));
+  }, [durationSeconds]);
 
   const togglePlay = () => {
     const v = videoRef.current;
