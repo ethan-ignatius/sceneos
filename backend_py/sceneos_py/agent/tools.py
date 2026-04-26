@@ -17,11 +17,11 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
         "name": "askQuestion",
         "description": (
             "Ask one focused question about the most charged, naturally curious thing "
-            "in the story so far. Reflect the story back before asking. Suggested answers "
-            "are OPTIONAL nudges (0-4 of them) — emit fewer (or zero with openEnded=true) "
-            "when the question genuinely wants the user's invention; emit 3-4 only when "
-            "they cover meaningfully different movies. Never use suggestions to constrain "
-            "the user's choices."
+            "in the story so far. Reflect the story back before asking. ALWAYS emit "
+            "2-4 suggested answers — these are nudges that surface as clickable pills "
+            "in the UI alongside the text input. The user can click one, type their own, "
+            "or speak. Each suggestion must imply a meaningfully different movie. Never "
+            "use them to constrain — use them to invite."
         ),
         "parameters": {
             "type": "object",
@@ -38,8 +38,8 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
                 "suggestedAnswers": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "0-4 first-person-adjacent answer nudges. Each must imply a different movie if chosen. Use 0 (with openEnded=true) when the question genuinely wants the user's invention. Use 3-4 only when each one is a meaningfully different direction.",
-                    "min_items": 0,
+                    "description": "2-4 first-person-adjacent answer nudges, ALWAYS at least 2. Each must imply a meaningfully different movie if chosen. The user can click one OR type their own — these are invitations, not constraints. Vary the count: 2 for tightly-scoped questions, 3-4 when the contrasts genuinely help.",
+                    "min_items": 2,
                     "max_items": 4,
                 },
                 "openEnded": {
