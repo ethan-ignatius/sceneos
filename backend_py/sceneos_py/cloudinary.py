@@ -164,18 +164,24 @@ def _static_caption_overlay(text: str) -> str | None:
     for legibility on any clip. Font: Arial — ships on every Cloudinary
     cloud out of the box. Custom fonts require uploading a TTF first which
     we don't want as a hackathon dependency.
+
+    URL-syntax note (load-bearing): Cloudinary's text-overlay positioning
+    (`g_<gravity>`, `x_`, `y_`) MUST live in the `fl_layer_apply` segment,
+    not the `l_text:` opener. Putting `g_south,y_120` next to `l_text:`
+    silently centers the caption on the canvas — the bug that made the
+    first lighthouse bake unwatchable (text covering the keeper's chest
+    and face for 6 seconds at a time). Splitting into two segments fixes it.
     """
     if not text or not text.strip():
         return None
     safe = text.strip().replace(",", " ").replace("/", " ").replace("\n", " ")
     safe = safe[:120]
     encoded = quote(safe, safe="")
-    # font_size 60 reads at 1080p; co_rgb:F4F1E8 = warm cream off-white (less
-    # harsh than pure white); g_south + y_120 places it lower-third; e_outline
-    # adds a 4px black stroke so it's legible over any background.
+    # Segment 1 — declare the text layer (font, color, stroke).
+    # Segment 2 — apply the layer with positioning (gravity + offset).
     return (
-        f"l_text:Arial_60_bold:{encoded},"
-        f"co_rgb:F4F1E8,e_outline:4:000000,g_south,y_120/fl_layer_apply"
+        f"l_text:Arial_60_bold:{encoded},co_rgb:F4F1E8,e_outline:4:000000"
+        f"/fl_layer_apply,g_south,y_120"
     )
 
 
@@ -290,12 +296,17 @@ def _caption_overlay(text: str, start_at: float, duration: float, position: str 
     safe zone (broadcast convention). Arial is one of Cloudinary's built-in
     fonts — no TTF upload required, ships on every cloud. e_outline gives a
     4px black stroke so the text is legible over any frame.
+
+    URL-syntax note (load-bearing): Cloudinary's text-overlay positioning
+    (`g_*`, `x_`, `y_`) MUST be in the `fl_layer_apply` segment alongside
+    `so_/du_`, NOT in the `l_text:` opener. Inline positioning silently
+    falls back to canvas-center, which is what broke the first bake.
     """
     safe = _escape_caption(text)
     return (
-        f"l_text:Arial_56_bold:{safe},co_rgb:F4F1E8,e_outline:4:000000,"
-        f"g_{position},y_120/"
-        f"fl_layer_apply,so_{round(start_at, 2)},du_{round(duration, 2)}"
+        f"l_text:Arial_56_bold:{safe},co_rgb:F4F1E8,e_outline:4:000000"
+        f"/fl_layer_apply,g_{position},y_120,"
+        f"so_{round(start_at, 2)},du_{round(duration, 2)}"
     )
 
 
@@ -375,7 +386,13 @@ def build_editor_url(decisions: dict, cloud_name: str | None = None) -> str | No
         cumulative_duration = max(contributed, 0)
 
     for clip in overlays:
-        layer = f"l_video:{_layer_id(clip['publicId'])}"
+        # CRITICAL Cloudinary URL-syntax rule: `fl_splice` MUST live in the
+        # OPENER (l_video:<id>,fl_splice), NOT the closer (fl_layer_apply,
+        # fl_splice). Putting it in the closer silently produces the base
+        # clip alone — Cloudinary treats the overlay as a regular layer
+        # without splicing it onto the timeline. Same rule as
+        # `build_splice_url` above; see the comment there for context.
+        layer = f"l_video:{_layer_id(clip['publicId'])},fl_splice"
         transforms: list[str] = [_NORMALIZE]
         trim = _trim_segment(clip.get("trimStart"), clip.get("trimEnd"))
         if trim:
@@ -384,11 +401,11 @@ def build_editor_url(decisions: dict, cloud_name: str | None = None) -> str | No
             transforms.append(clip["colorGrade"])
         transition = clip.get("transitionMs")
         if transition:
-            # e_fade:NNN before fl_splice gives a cross-fade INTO this layer.
+            # e_fade:NNN gives a cross-fade INTO this spliced layer.
             transforms.append(f"e_fade:{int(transition)}")
         segments.append(layer)
         segments.append(",".join(transforms))
-        segments.append("fl_layer_apply,fl_splice")
+        segments.append("fl_layer_apply")
 
         contributed = (clip.get("trimEnd") or clip.get("durationSeconds") or 0) - (clip.get("trimStart") or 0)
         cumulative_duration += max(contributed, 0)
