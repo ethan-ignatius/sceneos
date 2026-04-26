@@ -39,7 +39,7 @@ def make_genai_client() -> Any | None:
 
 def default_gemini_model_for(kind: str) -> str:
     if kind == "agent":
-        return env("GEMINI_AGENT_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        return env("GEMINI_AGENT_MODEL", "gemini-2.5-pro") or "gemini-2.5-pro"
     if kind == "decompose":
         return env("GEMINI_DECOMPOSE_MODEL", "gemini-2.5-pro") or "gemini-2.5-pro"
     return env("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"

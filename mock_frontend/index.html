@@ -217,6 +217,38 @@
     </div>
   </header>
 
+  <!-- Lightweight observability dashboard -->
+  <section class="relative z-10 px-6 py-3 border-b border-white/5 bg-black/20">
+    <div class="max-w-7xl mx-auto panel p-3">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-4 text-[11px] mono">
+          <span class="label">observability</span>
+          <span id="obsReqCount" class="text-zinc-400">req: 0</span>
+          <span id="obsErrCount" class="text-zinc-400">errors: 0</span>
+          <span id="obsLastReq" class="text-zinc-500 truncate max-w-[50vw]">last: —</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="obsRefreshBtn" class="text-[10px] px-2 py-1 border border-white/[.10] rounded mono text-cyan-300 hover:border-cyan-400/60">refresh project ops</button>
+          <button id="obsClearBtn" class="text-[10px] px-2 py-1 border border-white/[.10] rounded mono text-zinc-400 hover:text-zinc-200">clear</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-12 gap-3 mt-3">
+        <div class="col-span-12 lg:col-span-7">
+          <div class="label mb-1">recent api calls</div>
+          <div id="obsReqLog" class="mono text-[10px] text-zinc-400 max-h-28 overflow-y-auto whitespace-pre-wrap">empty</div>
+        </div>
+        <div class="col-span-12 lg:col-span-5">
+          <div class="label mb-1">project ops snapshot</div>
+          <div id="obsProjectLog" class="mono text-[10px] text-zinc-500 max-h-28 overflow-y-auto whitespace-pre-wrap">no project loaded yet</div>
+        </div>
+      </div>
+      <div class="mt-3">
+        <div class="label mb-1">jobs table</div>
+        <div id="obsJobsTable" class="mono text-[10px] text-zinc-400 max-h-40 overflow-y-auto whitespace-pre-wrap">no jobs yet</div>
+      </div>
+    </div>
+  </section>
+
   <!-- BOOT — pick a mode ───────────────────────────────────────────────── -->
   <section id="boot" class="relative z-10 px-6 py-16 max-w-4xl mx-auto">
     <p class="label label-accent mb-4">step 0 · pick a mode</p>
@@ -334,6 +366,11 @@
       <div class="col-span-12 lg:col-span-8">
         <div class="panel p-3">
           <video id="bakedVideo" class="w-full rounded-md bg-black border border-white/[.06]" controls preload="metadata"></video>
+          <div class="mt-2 flex items-center gap-3">
+            <button id="bakedPlayBtn" class="text-[10px] px-2 py-1 border border-white/[.10] rounded mono text-emerald-300 hover:border-emerald-400/60">play now</button>
+            <a id="bakedOpenLink" href="#" target="_blank" rel="noreferrer noopener" class="text-[10px] text-amber-300 mono hover:underline">open video URL ↗</a>
+            <span id="bakedVideoStatus" class="text-[10px] text-zinc-600 mono">idle</span>
+          </div>
           <div id="bakedMeta" class="grid grid-cols-4 gap-3 mt-3 text-[11px]"></div>
         </div>
 
@@ -522,6 +559,15 @@
     let demoStartedAt = null;
     let demoTimerHandle = null;
     let finalCutKicked = false;       // guard — stitch fires once per session
+    let obsProjectPoller = null;
+    let bakedVideoDiagBound = false;
+
+    const obsState = {
+      requests: [],
+      errors: 0,
+      projectId: null,
+      lastOps: null,
+    };
 
     const $ = (id) => document.getElementById(id);
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -536,11 +582,106 @@
     function escapeHtml(s) {
       return String(s ?? '').replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
     }
+    function _stamp() { return new Date().toISOString().slice(11, 19); }
+    function logRequest(entry) {
+      obsState.requests.push({ t: _stamp(), ...entry });
+      if (!entry.ok) obsState.errors += 1;
+      if (obsState.requests.length > 120) obsState.requests = obsState.requests.slice(-120);
+      renderObs();
+    }
+    function renderObs() {
+      const reqs = obsState.requests;
+      $('obsReqCount').textContent = `req: ${reqs.length}`;
+      $('obsErrCount').textContent = `errors: ${obsState.errors}`;
+      const last = reqs[reqs.length - 1];
+      $('obsLastReq').textContent = last
+        ? `last: ${last.method} ${last.path} ${last.ok ? 'ok' : 'err'} ${last.ms}ms`
+        : 'last: —';
+      $('obsReqLog').textContent = reqs.length
+        ? reqs.slice(-20).map((r) => `${r.t}  ${r.method} ${r.path}  ${r.ok ? `OK ${r.status}` : `ERR ${r.status || '-'}`}  ${r.ms}ms${r.error ? `  ${r.error}` : ''}`).join('\n')
+        : 'empty';
+      if (obsState.lastOps) {
+        const j = obsState.lastOps;
+        const jobs = Array.isArray(j.orchestrateJobs) ? j.orchestrateJobs.length : 0;
+        const beats = Array.isArray(j.beats) ? j.beats.length : 0;
+        $('obsProjectLog').textContent = [
+          `projectId=${j.projectId || 'n/a'}`,
+          `mode=${j.mode || 'n/a'} videoType=${j.videoType || 'n/a'}`,
+          `orchestrateJobs=${jobs} beats=${beats}`,
+          `projectRefsPresent=${Boolean(j.projectRefsPresent)} keyframesPresent=${Boolean(j.projectKeyframesPresent)}`,
+          '',
+          JSON.stringify(j, null, 2).slice(0, 5000),
+        ].join('\n');
+        const rows = [];
+        const byBeat = new Map((Array.isArray(j.beats) ? j.beats : []).map((b) => [b.beatId, b]));
+        for (const oj of (Array.isArray(j.orchestrateJobs) ? j.orchestrateJobs : [])) {
+          const b = byBeat.get(oj.beatId);
+          rows.push([
+            oj.beatId || '-',
+            oj.status || '-',
+            oj.stage || '-',
+            oj.jobId || '-',
+            oj.providerJobId || '-',
+            (b && b.status) || '-',
+          ]);
+        }
+        if (!rows.length) {
+          $('obsJobsTable').textContent = 'no jobs yet';
+        } else {
+          const header = ['beat', 'orchStatus', 'stage', 'orchJob', 'providerJob', 'beatStatus'];
+          const all = [header, ...rows];
+          const widths = header.map((_, i) => Math.max(...all.map((r) => String(r[i]).length), 4));
+          const fmt = (r) => r.map((v, i) => String(v).padEnd(widths[i], ' ')).join('  ');
+          $('obsJobsTable').textContent = all.map(fmt).join('\n');
+        }
+      } else {
+        $('obsJobsTable').textContent = 'no jobs yet';
+      }
+    }
+    async function apiFetch(path, init) {
+      const started = performance.now();
+      let res = null;
+      try {
+        res = await fetch(`${apiBase()}${path}`, init);
+        const ms = Math.round(performance.now() - started);
+        logRequest({
+          method: (init && init.method) || 'GET',
+          path,
+          status: res.status,
+          ok: res.ok,
+          ms,
+        });
+        return res;
+      } catch (err) {
+        const ms = Math.round(performance.now() - started);
+        logRequest({
+          method: (init && init.method) || 'GET',
+          path,
+          status: 0,
+          ok: false,
+          ms,
+          error: (err && err.message) || String(err),
+        });
+        throw err;
+      }
+    }
+    async function refreshProjectOps() {
+      const projectId = obsState.projectId || (manifest && manifest.projectId);
+      if (!projectId) return;
+      try {
+        const res = await apiFetch(`/api/ops/project/${encodeURIComponent(projectId)}`);
+        if (!res.ok) throw new Error(`/api/ops/project/${projectId} ${res.status}`);
+        obsState.lastOps = await res.json();
+        renderObs();
+      } catch (err) {
+        $('obsProjectLog').textContent = `ops fetch failed: ${(err && err.message) || err}`;
+      }
+    }
 
     /* ── Health ping ───────────────────────────────────────────────────── */
     async function pingHealth() {
       try {
-        const res = await fetch(`${apiBase()}/api/health`);
+        const res = await apiFetch('/api/health');
         $('connDot').className = 'w-2 h-2 rounded-full transition-colors ' + (res.ok ? 'bg-emerald-500' : 'bg-rose-500');
       } catch {
         $('connDot').className = 'w-2 h-2 rounded-full bg-rose-500 transition-colors';
@@ -549,7 +690,7 @@
 
     /* ── Plain JSON POST (for /api/orchestrate) ──────────────────────── */
     async function postJson(path, body) {
-      const res = await fetch(`${apiBase()}${path}`, {
+      const res = await apiFetch(path, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -567,7 +708,7 @@
       // The old 10x800ms window (8s) falsely looked like "video never generated".
       let nextInterval = intervalMs;
       for (let i = 0; i < maxAttempts; i++) {
-        const res = await fetch(`${apiBase()}/api/status/${encodeURIComponent(jobId)}`);
+        const res = await apiFetch(`/api/status/${encodeURIComponent(jobId)}`);
         if (!res.ok) throw new Error(`status ${res.status}`);
         const body = await res.json();
         if (body.status === 'succeeded') return body;
@@ -581,7 +722,7 @@
 
     /* ── SSE consumer ──────────────────────────────────────────────────── */
     async function streamAgent(body, onEvent) {
-      const res = await fetch(`${apiBase()}/api/agent/stream`, {
+      const res = await apiFetch('/api/agent/stream', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -593,19 +734,25 @@
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      const parseSseDataLine = (line) => {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) return;
+        const payload = trimmed.slice(trimmed.indexOf(':') + 1).trim();
+        if (!payload) return;
+        try { onEvent(JSON.parse(payload)); }
+        catch (err) { console.error('SSE parse error', err, payload); }
+      };
       while (true) {
         const { value, done } = await reader.read();
-        if (done) break;
+        if (done) {
+          if (buffer.trim()) parseSseDataLine(buffer);
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
         const events = buffer.split('\n\n');
         buffer = events.pop() || '';
         for (const ev of events) {
-          const line = ev.trim();
-          if (!line.startsWith('data:')) continue;
-          const payload = line.slice(line.indexOf(':') + 1).trim();
-          if (!payload) continue;
-          try { onEvent(JSON.parse(payload)); }
-          catch (err) { console.error('SSE parse error', err, payload); }
+          parseSseDataLine(ev);
         }
       }
     }
@@ -924,6 +1071,7 @@
       }
 
       manifest = session.manifest;
+      obsState.projectId = manifest.projectId;
       sessionMode = session.mode;
       speculativeJobs = session.speculativeJobs || {};
       projectRefs = session.projectRefs || null;
@@ -949,6 +1097,9 @@
       clearPipeline();
 
       await advance(undefined);
+      if (obsProjectPoller) clearInterval(obsProjectPoller);
+      obsProjectPoller = setInterval(() => { refreshProjectOps(); }, 2500);
+      refreshProjectOps();
     }
 
     function paintModeBadge(mode) {
@@ -1350,6 +1501,10 @@
       $('projectRefsRow').classList.add('hidden');
       $('finalCutRow').classList.add('hidden');
       $('finalCutBody').innerHTML = `<p class="text-zinc-700 italic text-sm">stitching kicks off automatically when all 7 clips are ready.</p>`;
+      if (obsProjectPoller) clearInterval(obsProjectPoller);
+      obsProjectPoller = null;
+      obsState.projectId = null;
+      obsState.lastOps = null;
       $('loop').classList.add('hidden');
       $('bakedView').classList.add('hidden');
       $('editorPanel').classList.add('hidden');
@@ -1383,7 +1538,7 @@
       $('playBakedBtn').setAttribute('disabled', 'true');
       $('playBakedBtn').textContent = 'loading…';
       try {
-        const res = await fetch(`${apiBase()}/api/cached/lighthouse`);
+        const res = await apiFetch('/api/cached/lighthouse');
         if (!res.ok) throw new Error(`/api/cached/lighthouse ${res.status}`);
         bakedCut = await res.json();
         renderBakedCut();
@@ -1414,11 +1569,12 @@
         // the user sees thinking → proposal without typing anything.
         editorConversation = [];
         editorDecisions = null;
-        await editorTurn(null);
+        editorTurn(null);
       } catch (err) {
+        alert('Could not load the baked demo. Is the backend up?\n\n' + (err && err.message || err));
+      } finally {
         $('playBakedBtn').textContent = '▶ play baked cut';
         $('playBakedBtn').removeAttribute('disabled');
-        alert('Could not load the baked demo. Is the backend up?\n\n' + (err && err.message || err));
       }
     }
 
@@ -1427,6 +1583,32 @@
       const v = $('bakedVideo');
       v.src = bakedCut.finalUrl;
       v.poster = bakedCut.thumbnailUrl || '';
+      $('bakedOpenLink').href = bakedCut.finalUrl || '#';
+      $('bakedVideoStatus').textContent = 'loading metadata…';
+      v.load();
+      const tryPlay = () => { v.play().catch(() => {}); };
+      v.addEventListener('loadeddata', tryPlay, { once: true });
+      tryPlay();
+      if (!bakedVideoDiagBound) {
+        bakedVideoDiagBound = true;
+        v.addEventListener('loadedmetadata', () => {
+          $('bakedVideoStatus').textContent = `ready · ${Math.round(v.duration || 0)}s`;
+        });
+        v.addEventListener('playing', () => {
+          $('bakedVideoStatus').textContent = 'playing';
+        });
+        v.addEventListener('pause', () => {
+          $('bakedVideoStatus').textContent = 'paused';
+        });
+        v.addEventListener('waiting', () => {
+          $('bakedVideoStatus').textContent = 'buffering…';
+        });
+        v.addEventListener('error', () => {
+          const src = v.currentSrc || bakedCut.finalUrl || '';
+          $('bakedVideoStatus').textContent = 'video error · use open URL';
+          console.error('baked video error', v.error, src);
+        });
+      }
       $('bakedMeta').innerHTML = `
         <div><div class="label text-[9px] mb-1">duration</div><div class="text-zinc-300 mono">${bakedCut.durationSeconds}s</div></div>
         <div><div class="label text-[9px] mb-1">resolution</div><div class="text-zinc-300 mono">${bakedCut.bake.resolution}</div></div>
@@ -1512,7 +1694,7 @@
 
       let result = null;
       try {
-        const res = await fetch(`${apiBase()}/api/editor/stream`, {
+        const res = await apiFetch('/api/editor/stream', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(body),
@@ -1521,21 +1703,29 @@
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = '';
+        const parseSseDataLine = (line) => {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) return;
+          try {
+            const payload = JSON.parse(trimmed.slice(trimmed.indexOf(':') + 1).trim());
+            if (payload.type === 'thought') appendEditorThought(payload.chunk);
+            if (payload.type === 'result') result = payload;
+            if (payload.type === 'error') throw new Error(payload.message || 'editor error');
+          } catch (_err) {
+            // Keep stream alive on parse noise.
+          }
+        };
         while (true) {
           const { value, done } = await reader.read();
-          if (done) break;
+          if (done) {
+            if (buf.trim()) parseSseDataLine(buf);
+            break;
+          }
           buf += decoder.decode(value, { stream: true });
           const events = buf.split('\n\n');
           buf = events.pop() || '';
           for (const ev of events) {
-            const line = ev.trim();
-            if (!line.startsWith('data:')) continue;
-            try {
-              const payload = JSON.parse(line.slice(line.indexOf(':') + 1).trim());
-              if (payload.type === 'thought') appendEditorThought(payload.chunk);
-              if (payload.type === 'result') result = payload;
-              if (payload.type === 'error') throw new Error(payload.message || 'editor error');
-            } catch (err) { /* ignore parse errors */ }
+            parseSseDataLine(ev);
           }
         }
       } catch (err) {
@@ -1589,10 +1779,26 @@
     $('apiBase').value = defaultApiBase();
     pingHealth();
     setInterval(pingHealth, 6000);
+    $('obsRefreshBtn').addEventListener('click', refreshProjectOps);
+    $('obsClearBtn').addEventListener('click', () => {
+      obsState.requests = [];
+      obsState.errors = 0;
+      renderObs();
+    });
+    renderObs();
 
     $('demoBtn').addEventListener('click', () => begin('demo'));
     $('normalBtn').addEventListener('click', () => begin('normal'));
     $('playBakedBtn').addEventListener('click', loadBakedCut);
+    $('bakedPlayBtn').addEventListener('click', async () => {
+      const v = $('bakedVideo');
+      try {
+        await v.play();
+        $('bakedVideoStatus').textContent = 'playing';
+      } catch (err) {
+        $('bakedVideoStatus').textContent = 'play blocked · open URL';
+      }
+    });
     $('bakedBackBtn').addEventListener('click', () => { setBakedView(false); $('boot').classList.remove('hidden'); $('playBakedBtn').textContent = '▶ play baked cut'; $('playBakedBtn').removeAttribute('disabled'); });
     $('editorSendBtn').addEventListener('click', () => {
       const txt = $('editorInput').value.trim();

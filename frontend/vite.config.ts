@@ -14,6 +14,15 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Same-origin `/api/*` in dev → backend :8787 so fetch works whether the
+    // user opens localhost or 127.0.0.1 (avoids "Failed to fetch" when
+    // VITE_API_BASE_URL pointed at the other hostname).
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:8787",
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     // 1700kB sits just above the canvas-only WebGL vendor chunk

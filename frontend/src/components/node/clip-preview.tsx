@@ -36,9 +36,13 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   const regenerateScene = useBeatGraphStore((s) => s.regenerateScene);
   const isApproved = beat.status === "approved" || scene.approved;
 
-  const src = scene.clipPublicId
-    ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
-    : "";
+  // Mood-graded Cloudinary URL when a publicId exists. The real backend
+  // always emits a publicId on success — null = an actual no-clip state,
+  // which the empty render below handles.
+  const src = scene.clipUrl
+    || (scene.clipPublicId
+      ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
+      : "");
 
   if (!src) {
     return (

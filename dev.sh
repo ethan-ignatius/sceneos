@@ -38,7 +38,12 @@ echo "── booting backend on :8787 ──────────────
     . .venv/bin/activate
   fi
   export MOCK_MODE=false
-  exec python -m uvicorn sceneos_py.app:app --reload --port 8787
+  # Only watch our source tree — .venv changes must NOT restart the server
+  # because every restart wipes the in-memory _JOBS dict and every Veo job
+  # in flight becomes "Unknown vertex jobId".
+  exec python -m uvicorn sceneos_py.app:app --reload --port 8787 \
+    --reload-dir sceneos_py \
+    --reload-dir tests
 ) &
 BACKEND_PID=$!
 

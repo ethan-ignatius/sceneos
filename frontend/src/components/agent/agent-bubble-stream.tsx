@@ -5,7 +5,7 @@ import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import type { Beat } from "@/types/manifest";
 import { AgentBubble } from "./agent-bubble";
 import { Button } from "@/components/ui/button";
-import { api, ApiError } from "@/lib/api";
+import { api, formatDirectorReachabilityError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { useSpeechSynthesis } from "@/lib/use-speech-synthesis";
 import { isAudioMuted } from "@/lib/audio-cues";
@@ -54,14 +54,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // Collapse old turns by default — only the last few are visible. The user
   // can opt to expand via the button at the top of the scroller.
   const [showAllTurns, setShowAllTurns] = useState(false);
-  // The latest agent question's three "or pick one" suggestions, surfaced
-  // as clickable pills above the input. Cleared on user submit and
-  // replaced when the next agent turn arrives. The data is on the wire
-  // via AgentResponse.suggestedAnswers; the editor renders the same
-  // shape via suggestedFollowups.
-  const [latestSuggestions, setLatestSuggestions] = useState<
-    readonly [string, string, string] | null
-  >(null);
+  // Latest quick replies from the agent. Can be:
+  //   - null: no suggestion payload
+  //   - []: explicit open-ended
+  //   - 1..4 items: clickable pre-answers
+  const [latestSuggestions, setLatestSuggestions] = useState<readonly string[] | null>(null);
 
   // Voice input — Web Speech API. Auto-starts on mount so the user
   // doesn't reach for the mouse just to talk to the director; the only
@@ -218,7 +215,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       } catch (err) {
         if (!active || cancelledRef.current) return;
         if ((err as Error)?.name === "AbortError") return;
-        setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
+        const msg = formatDirectorReachabilityError(err);
+        if (msg) setError(msg);
       } finally {
         window.clearTimeout(seedTimeoutId);
         window.clearTimeout(safetyTimer);
@@ -281,7 +279,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               content: ev.question,
               timestamp: nowISO(),
             });
-            setLatestSuggestions(ev.suggestedAnswers ?? null);
+            setLatestSuggestions(Array.isArray(ev.suggestedAnswers) ? ev.suggestedAnswers : null);
           } else {
             // Mandatory re-bake on markSufficient: invalidate the
             // speculative clip + jobs so handleGenerate dispatches a
@@ -319,8 +317,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     } catch (err) {
       if (cancelledRef.current) return;
       if ((err as Error)?.name === "AbortError") return;
-      setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
-      setPendingRetryMessage(userMessage);
+      const msg = formatDirectorReachabilityError(err);
+      if (msg) {
+        setError(msg);
+        setPendingRetryMessage(userMessage);
+      }
     } finally {
       window.clearTimeout(safetyTimer);
       if (!cancelledRef.current) setInFlight(false);
@@ -493,8 +494,9 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         ) : null}
       </div>
 
-      {/* Suggested answers — three options the agent emitted with its
-          latest question. Hairline-divided rows, no card chrome, no
+      {/* Suggested answers — optional quick replies from the latest
+          question. The agent may return 0..4 based on context quality.
+          Hairline-divided rows, no card chrome, no
           icon, no helper-text eyebrow — the affordance reads itself
           (clickable text rows beneath a hairline). Group fades in;
           clicking a row submits it as a user turn. Cleared on user
@@ -512,7 +514,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             role="group"
             aria-label="Agent suggestions — pick one or keep typing"
           >
-            {latestSuggestions.map((s, i) => (
+            {latestSuggestions.length > 0 ? latestSuggestions.map((s, i) => (
               <button
                 key={i}
                 type="button"
@@ -528,7 +530,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               >
                 {s}
               </button>
-            ))}
+            )) : (
+              <div className="px-1 py-2.5 font-body text-pill text-fg-tertiary">
+                Open response for this one - type your answer below.
+              </div>
+            )}
           </motion.div>
         ) : null}
       </AnimatePresence>

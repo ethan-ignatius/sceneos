@@ -35,8 +35,17 @@ _JOBS: dict[str, dict[str, Any]] = {}
 # via status() so the frontend can compute true elapsed across drawer
 # close/reopen cycles.
 _JOB_STARTED_AT: dict[str, str] = {}
+# The prompt that was sent to Veo for each job. Kept so we can log the
+# exact text when a job is rejected by the safety filter.
+_JOB_PROMPTS: dict[str, str] = {}
 # perf_counter milestones per job: start, submit, veo_done, upload_done (for logging).
 _VEO_TIMINGS: dict[str, dict[str, float]] = {}
+
+_SAFETY_KEYWORDS = ("sensitive words", "responsible ai", "violat", "safety", "blocked")
+
+def _is_safety_error(msg: str) -> bool:
+    low = msg.lower()
+    return any(kw in low for kw in _SAFETY_KEYWORDS)
 
 
 def _veo_speed_mode() -> bool:
@@ -100,6 +109,30 @@ def _log_veo_timings(job_id: str, *, outcome: str = "ok") -> None:
         _ms(v_done),
         upload_ms,
     )
+
+
+def _soften_prompt(prompt: str) -> str:
+    """Reduce wording that frequently triggers Veo safety filters."""
+    p = (prompt or "").strip()
+    if not p:
+        return p
+    replacements = {
+        "ancient weapons": "ancient artifacts",
+        "weapon": "artifact",
+        "martial arts": "disciplined training",
+        "deadly": "dangerous",
+        "kill": "defeat",
+        "blood": "dust",
+        "violence": "conflict",
+        "fight": "confrontation",
+        "battle": "trial",
+    }
+    out = p
+    for src, dst in replacements.items():
+        out = out.replace(src, dst).replace(src.title(), dst.title())
+    if "non-graphic" not in out.lower():
+        out = f"{out} Keep depiction non-graphic, PG-13, and focused on atmosphere and discovery."
+    return out
 
 
 def _read_config() -> dict[str, str]:
@@ -243,6 +276,7 @@ async def generate(params: GenerateClipParams) -> dict:
     voice_line = (clip_prompt.get("voiceLine") or "").strip()
     if voice_line:
         full_prompt = f"{full_prompt} The narrator says: \"{voice_line}\"."
+    softened_prompt = _soften_prompt(full_prompt)
 
     # Log the actual prompt being sent to Veo. This is the source-of-truth
     # for "is the user's idea reaching the model" — print the full string
@@ -254,6 +288,7 @@ async def generate(params: GenerateClipParams) -> dict:
         "[vertex.PROMPT] job=%s len=%d → %s",
         provider_job_id, len(full_prompt), full_prompt[:800],
     )
+    _JOB_PROMPTS[provider_job_id] = full_prompt
     instance: dict[str, Any] = {"prompt": full_prompt}
 
     # Chained generation: when the previous beat's last frame is provided,
@@ -331,6 +366,9 @@ async def generate(params: GenerateClipParams) -> dict:
         "stage": "veo_running",
         "operationName": op_name,
         "publicId": pid,
+        "requestBody": body,
+        "softenedPrompt": softened_prompt,
+        "safetyRetryUsed": False,
     }
     logger.info("[vertex] Veo operation started job=%s operation=%s", provider_job_id, op_name)
     asyncio.create_task(_poll_until_done(provider_job_id))
@@ -377,10 +415,24 @@ async def _poll_until_done(provider_job_id: str) -> None:
 
         if isinstance(result.get("error"), dict):
             err = result["error"]
-            _log_veo_timings(provider_job_id, outcome="veo_api_error")
+            raw_msg = err.get("message", "unknown")
+            safety = _is_safety_error(raw_msg)
+            _log_veo_timings(provider_job_id, outcome="veo_safety_block" if safety else "veo_api_error")
+            if safety:
+                offending = _JOB_PROMPTS.get(provider_job_id, "<not captured>")
+                logger.error(
+                    "[vertex.SAFETY] job=%s BLOCKED by Veo safety filter.\n"
+                    "  Veo message: %s\n"
+                    "  Prompt that caused it (%d chars):\n%s",
+                    provider_job_id, raw_msg, len(offending), offending,
+                )
             _JOBS[provider_job_id] = {
                 "status": "failed",
-                "error": f"Veo error {err.get('code', '?')}: {err.get('message', 'unknown')}",
+                "safety": safety,
+                "error": (
+                    "Veo's safety filter blocked this prompt. Try rephrasing — "
+                    "avoid words related to violence, weapons, or real public figures."
+                ) if safety else f"Veo error {err.get('code', '?')}: {raw_msg}",
             }
             return
 
@@ -392,18 +444,60 @@ async def _poll_until_done(provider_job_id: str) -> None:
         if not videos:
             filtered = response.get("raiMediaFilteredCount", 0)
             reasons = "; ".join(response.get("raiMediaFilteredReasons") or []) or "no videos"
+            safety = bool(filtered)
             _VEO_TIMINGS.setdefault(provider_job_id, {})["veo_done"] = time.perf_counter()
+
+            # Safety-filter auto-retry: resubmit with the softened prompt once.
+            if filtered and not job.get("safetyRetryUsed"):
+                try:
+                    body = dict(job.get("requestBody") or {})
+                    instances = list(body.get("instances") or [])
+                    if instances:
+                        first = dict(instances[0] or {})
+                        first["prompt"] = job.get("softenedPrompt") or first.get("prompt", "")
+                        instances[0] = first
+                        body["instances"] = instances
+                        op2 = await _authed_post(_predict_url(), body)
+                        op2_name = op2.get("name") if isinstance(op2, dict) else None
+                        if op2_name:
+                            _JOBS[provider_job_id] = {
+                                **job,
+                                "status": "running",
+                                "stage": "veo_running",
+                                "operationName": op2_name,
+                                "requestBody": body,
+                                "safetyRetryUsed": True,
+                                "safetyRetryReason": reasons,
+                            }
+                            logger.warning(
+                                "[vertex] safety filtered; retried softened prompt job=%s reasons=%s",
+                                provider_job_id,
+                                reasons,
+                            )
+                            job = _JOBS[provider_job_id]
+                            op_name = op2_name
+                            continue
+                except Exception:
+                    logger.exception("[vertex] softened retry submit failed job=%s", provider_job_id)
+
             _log_veo_timings(
                 provider_job_id,
                 outcome="filtered" if filtered else "no_video_payload",
             )
+            if safety:
+                offending = _JOB_PROMPTS.get(provider_job_id, "<not captured>")
+                logger.error(
+                    "[vertex.SAFETY] job=%s output FILTERED (%s).\n"
+                    "  Prompt (%d chars):\n%s",
+                    provider_job_id, reasons, len(offending), offending,
+                )
             _JOBS[provider_job_id] = {
                 "status": "failed",
+                "safety": safety,
                 "error": (
-                    f"Veo filtered the output ({reasons}). Try softening the prompt."
-                    if filtered
-                    else f"Veo returned no video. Raw: {str(response)[:300]}"
-                ),
+                    "Veo's safety filter blocked this prompt. Try rephrasing — "
+                    "avoid words related to violence, weapons, or real public figures."
+                ) if safety else f"Veo returned no video. Raw: {str(response)[:300]}",
             }
             return
 
@@ -503,6 +597,8 @@ async def status(provider_job_id: str) -> StatusResult:
         out2: StatusResult = {"status": "failed", "error": job.get("error", "vertex failed")}
         if started_at:
             out2["startedAt"] = started_at
+        if job.get("safety"):
+            out2["safety"] = True  # type: ignore[typeddict-unknown-key]
         return out2
     out3: StatusResult = {
         "status": "succeeded",

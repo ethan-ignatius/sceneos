@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
 import { nowISO, sleep } from "@/lib/utils";
-import type { GenerationProvider } from "@/types/api";
+import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 8 },
@@ -29,7 +29,10 @@ function isContentPolicyError(message: string): boolean {
     m.includes("usage guidelines") ||
     m.includes("support codes") ||
     (m.includes("filtered") && m.includes("veo")) ||
-    m.includes("violated vertex ai")
+    m.includes("violated vertex ai") ||
+    m.includes("safety filter blocked") ||
+    m.includes("sensitive words") ||
+    m.includes("responsible ai")
   );
 }
 
@@ -57,6 +60,11 @@ export function NodeDetailDrawer() {
   // every poll thereafter; stale values are fine because the wallclock
   // calculation only depends on the timestamp identity.
   const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [latestStatus, setLatestStatus] = useState<StatusResponse | null>(null);
+  const [statusSamples, setStatusSamples] = useState<
+    Array<{ atMs: number; status: string; stage?: string | null; pollAfterMs?: number | null }>
+  >([]);
+  const [dispatchMs, setDispatchMs] = useState<number | null>(null);
   // Set to true on unmount; the polling loop checks each iteration so an
   // orphaned poll can't write to a stale beat after the drawer closes.
   const cancelRef = useRef(false);
@@ -76,6 +84,7 @@ export function NodeDetailDrawer() {
     async (jobId: string, beatId: string, sceneId: string, initialDelay: number) => {
       const startMs = Date.now();
       let delay = initialDelay;
+      let retriedExpiredJob = false;
       while (!cancelRef.current) {
         // 5-minute ceiling on a re-attached poll — long enough for Veo 3.1 Fast
         // (~1–4 min real-world) but bounded so a stuck jobId doesn't spin
@@ -89,6 +98,19 @@ export function NodeDetailDrawer() {
         if (cancelRef.current) return;
         const status = await api.status(jobId);
         if (cancelRef.current) return;
+        setLatestStatus(status);
+        setStatusSamples((prev) => {
+          const next = [
+            ...prev,
+            {
+              atMs: Date.now() - startMs,
+              status: status.status,
+              stage: status.stage ?? null,
+              pollAfterMs: status.pollAfterMs ?? null,
+            },
+          ];
+          return next.slice(-80);
+        });
         setProviderStage(status.stage ?? null);
         // First status response with a startedAt locks our elapsed-time
         // source. Backend value wins over drawer-mount time.
@@ -113,20 +135,64 @@ export function NodeDetailDrawer() {
             jobId,
             clipPublicId: status.clipPublicId,
             clipUrl: status.clipUrl,
+            lastFrameUrl: status.lastFrameUrl,
           });
           updateBeat(beatId, { status: "preview" });
           return;
         }
         if (status.status === "failed") {
-          // "Unknown vertex jobId" / "Unknown … jobId" means the backend
-          // restarted and lost its in-memory _JOBS dict. The job isn't
-          // actually failed in any meaningful sense — it's gone. Clear
-          // the stale jobId from the scene so the drawer doesn't keep
-          // re-attaching to a ghost, and surface a friendly message
-          // instead of the cryptic backend string.
           const errMsg = status.error ?? "Generation failed";
+
+          // Safety filter — Veo rejected the prompt content. Throw with
+          // a message that isContentPolicyError matches so the caller can
+          // route through handleContentPolicyRecovery.
+          if (status.safety || isContentPolicyError(errMsg)) {
+            updateScene(beatId, sceneId, {
+              jobId: undefined,
+              speculativeJobId: undefined,
+            });
+            throw new ApiError(0, errMsg);
+          }
+
+          // "Unknown vertex jobId" — backend restarted, in-memory jobs lost.
           if (/unknown\s+\w+\s+jobid/i.test(errMsg)) {
-            updateScene(beatId, sceneId, { jobId: undefined });
+            // Backend restarted and lost in-memory provider job registry.
+            // Auto-re-dispatch once with the same prompt so users don't hit
+            // a dead-end "expired render" state on node 2+.
+            updateScene(beatId, sceneId, { jobId: undefined, speculativeJobId: undefined });
+            if (!retriedExpiredJob) {
+              retriedExpiredJob = true;
+              const b = manifest?.beats.find((x) => x.beatId === beatId);
+              const s = b?.scenes.find((x) => x.sceneId === sceneId);
+              if (manifest && b && s?.refinedPrompt) {
+                const beatIdx = manifest.beats.findIndex((x) => x.beatId === beatId);
+                const prevBeat = beatIdx > 0 ? manifest.beats[beatIdx - 1] : null;
+                const prevScene = prevBeat?.scenes?.[0];
+                const regen = s.beatFacts
+                  ? await api.orchestrate(beatId, {
+                      manifest,
+                      beatFacts: s.beatFacts,
+                      previousLastFrameUrl: prevScene?.lastFrameUrl,
+                      aspectRatio: "16:9",
+                    })
+                  : await api.generate({
+                      projectId: manifest.projectId,
+                      beatId,
+                      sceneId,
+                      refinedPrompt: s.refinedPrompt,
+                      durationSeconds: s.durationSeconds ?? b.archetype.suggestedDuration,
+                      beatTemplate: b.template,
+                    });
+                if (cancelRef.current) return;
+                if (regen.provider && String(regen.provider) !== "orchestrator") {
+                  setProvider(regen.provider as GenerationProvider);
+                }
+                setFallbackFrom((regen as { originalProvider?: GenerationProvider }).originalProvider ?? null);
+                updateScene(beatId, sceneId, { jobId: regen.jobId });
+                delay = regen.pollAfterMs ?? 1200;
+                continue;
+              }
+            }
             throw new ApiError(0, "The previous render expired. Click Roll camera to start fresh.");
           }
           throw new ApiError(0, errMsg);
@@ -134,7 +200,7 @@ export function NodeDetailDrawer() {
         delay = status.pollAfterMs ?? 800;
       }
     },
-    [updateBeat, updateScene],
+    [manifest, updateBeat, updateScene],
   );
 
   // Veo content-policy recovery. Veo refuses some prompts (real-violence,
@@ -192,6 +258,9 @@ export function NodeDetailDrawer() {
     setProvider(null);
     setProviderStage(null);
     setStartedAt(null);
+    setLatestStatus(null);
+    setStatusSamples([]);
+    setDispatchMs(null);
     setFallbackFrom(null);
 
     // ── Speculative-result fast path ──────────────────────────────
@@ -208,42 +277,62 @@ export function NodeDetailDrawer() {
     // If a speculative job is still running, attach to it instead of
     // dispatching a new one. The pollUntilDone loop handles both
     // running and succeeded states; on succeeded we flip to preview.
+    // If the speculative job is dead (backend restarted, in-memory jobs
+    // wiped), fall through to dispatch a fresh one instead of erroring.
     if (scene.speculativeJobId) {
       updateScene(beat.beatId, scene.sceneId, { jobId: scene.speculativeJobId });
       updateBeat(beat.beatId, { status: "generating" });
       try {
         await pollUntilDone(scene.speculativeJobId, beat.beatId, scene.sceneId, 1500);
-      } catch (err) {
+        return;
+      } catch (specErr) {
         if (cancelRef.current) return;
-        const msg = err instanceof ApiError ? err.message : "Generation hit a snag.";
+        const msg = specErr instanceof ApiError ? specErr.message : "";
         if (isContentPolicyError(msg)) {
           handleContentPolicyRecovery(beat.beatId, scene.sceneId);
-        } else {
-          setGenError(msg);
-          updateBeat(beat.beatId, { status: "ready-to-generate" });
+          return;
         }
+        // Speculative job expired / unknown — clear it and fall through
+        // to a fresh dispatch below instead of showing an error.
+        updateScene(beat.beatId, scene.sceneId, {
+          jobId: undefined,
+          speculativeJobId: undefined,
+        });
       }
-      return;
     }
 
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
-      const gen = await api.generate({
-        projectId: manifest.projectId,
-        beatId: beat.beatId,
-        sceneId: scene.sceneId,
-        refinedPrompt: scene.refinedPrompt,
-        durationSeconds: scene.durationSeconds ?? beat.archetype.suggestedDuration,
-        beatTemplate: beat.template,
-      });
+      const t0 = performance.now();
+      const beatIdx = manifest.beats.findIndex((b) => b.beatId === beat.beatId);
+      const prevBeat = beatIdx > 0 ? manifest.beats[beatIdx - 1] : null;
+      const prevScene = prevBeat?.scenes?.[0];
+      const gen = scene.beatFacts
+        ? await api.orchestrate(beat.beatId, {
+            manifest,
+            beatFacts: scene.beatFacts,
+            previousLastFrameUrl: prevScene?.lastFrameUrl,
+            aspectRatio: "16:9",
+          })
+        : await api.generate({
+            projectId: manifest.projectId,
+            beatId: beat.beatId,
+            sceneId: scene.sceneId,
+            refinedPrompt: scene.refinedPrompt,
+            durationSeconds: scene.durationSeconds ?? beat.archetype.suggestedDuration,
+            beatTemplate: beat.template,
+          });
       if (cancelRef.current) return;
-      setProvider(gen.provider);
-      setFallbackFrom(gen.originalProvider ?? null);
+      setDispatchMs(Math.round(performance.now() - t0));
+      if (gen.provider && String(gen.provider) !== "orchestrator") {
+        setProvider(gen.provider as GenerationProvider);
+      }
+      setFallbackFrom((gen as { originalProvider?: GenerationProvider }).originalProvider ?? null);
       updateScene(beat.beatId, scene.sceneId, {
         jobId: gen.jobId,
-        generateFallbackFrom: gen.originalProvider,
-        generateFallbackReason: gen.fallbackReason,
+        generateFallbackFrom: (gen as { originalProvider?: GenerationProvider }).originalProvider,
+        generateFallbackReason: (gen as { fallbackReason?: string }).fallbackReason,
       });
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
@@ -273,6 +362,7 @@ export function NodeDetailDrawer() {
   useEffect(() => {
     if (!beatId || !sceneId || !persistedJobId || !isGeneratingStatus) return;
     setGenError(null);
+    setStatusSamples([]);
     const decoded = persistedJobId.split("::")[0];
     const KNOWN_PROVIDERS: readonly GenerationProvider[] = [
       "vertex",
@@ -389,12 +479,20 @@ export function NodeDetailDrawer() {
               stage={providerStage}
               startedAt={startedAt}
               fallbackFrom={fallbackFrom}
+              debug={{
+                dispatchMs,
+                latestStatus,
+                samples: statusSamples,
+              }}
               onCancel={() => {
                 cancelRef.current = true;
                 setStartedAt(null);
                 setProviderStage(null);
                 setProvider(null);
                 setFallbackFrom(null);
+                setLatestStatus(null);
+                setStatusSamples([]);
+                setDispatchMs(null);
                 setGenError(null);
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               }}

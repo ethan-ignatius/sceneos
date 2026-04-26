@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from sceneos_py.app import app
+from sceneos_py import app as app_module
 from .fixtures import request_with_turns
 
 
@@ -190,6 +191,62 @@ def test_status_includes_last_frame_url_on_succeeded(monkeypatch):
     assert "lastFrameUrl" in body
     assert body["lastFrameUrl"].endswith(".jpg")
     assert "/so_99p/" in body["lastFrameUrl"]
+
+
+def test_orchestrate_can_queue_in_background(monkeypatch):
+    """When async orchestrate is enabled, /api/orchestrate should return a
+    queue job immediately and /api/status should report running/succeeded
+    without blocking on provider submission."""
+    monkeypatch.setenv("MOCK_MODE", "false")
+    monkeypatch.setenv("SCENEOS_ASYNC_ORCHESTRATE", "true")
+    monkeypatch.setattr(app_module, "_ASYNC_ORCHESTRATE", True)
+
+    async def _fake_runner(job_id: str) -> None:
+        from sceneos_py import jobs as jobs_store
+        jobs_store.update_orchestrate(job_id, status="running", stage="preparing")
+        jobs_store.update_orchestrate(
+            job_id,
+            status="succeeded",
+            stage="succeeded",
+            submission={
+                "clipUrl": "https://res.cloudinary.com/demo/video/upload/dog.mp4",
+                "clipPublicId": "demo/dog",
+            },
+            observability={"fakeRunner": True},
+        )
+
+    monkeypatch.setattr(app_module, "_run_orchestrate_job", _fake_runner)
+
+    client = TestClient(app)
+    manifest = {
+        "projectId": "p-async",
+        "videoType": "story",
+        "masterPrompt": "x",
+        "beats": [
+            {
+                "beatId": "beat-1",
+                "beatName": "Hook",
+                "template": "story.hook",
+                "archetype": {"intent": "x", "mood": "intimate-hook", "suggestedDuration": 5, "directorNotes": ""},
+                "scenes": [{"sceneId": "scene-1", "conversation": [], "approved": False}],
+            }
+        ],
+    }
+    res = client.post(
+        "/api/orchestrate/beat-1",
+        json={
+            "manifest": manifest,
+            "beatFacts": {"subject": "x", "action": "y", "setting": "z", "mood": "intimate-hook"},
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["jobId"].startswith("orch::")
+    assert body["provider"] == "orchestrator"
+    s = client.get(f"/api/status/{body['jobId']}")
+    assert s.status_code == 200
+    sb = s.json()
+    assert sb["status"] in {"running", "succeeded"}
 
 
 def test_stitch_builds_url():
