@@ -61,16 +61,15 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   //   - 1..4 items: clickable pre-answers
   const [latestSuggestions, setLatestSuggestions] = useState<readonly string[] | null>(null);
 
-  // Voice input — Web Speech API. Auto-starts on mount so the user
-  // doesn't reach for the mouse just to talk to the director; the only
-  // reason to touch the mic button is to MUTE it. While recording,
-  // transcript replaces draft; user can edit before submitting. Falls
-  // back gracefully if unsupported (e.g. Firefox).
+  // Voice input — Web Speech API. PURELY OPT-IN: the mic stays off until
+  // the user clicks the mic button. Earlier we auto-started on mount and
+  // auto-submitted on 2s silence — both behaviors were widely complained
+  // about ("auto ingests my voice and instantly hits send before I can
+  // edit transcription errors"). Now: mic only opens on explicit click,
+  // transcript only fills the draft (user reviews + edits + presses Send).
+  // Re-arming after each agent turn is also gone — one click to start,
+  // one click to stop.
   //
-  // onSettle fires after 3s of silence — at that point we auto-submit
-  // the user turn so the conversation flows hands-free. submitVoiceRef
-  // is the bridge between the hook's timer and the latest submit closure.
-  const submitVoiceRef = useRef<((text: string) => void) | null>(null);
   // Auto-grow + scroll for long answers. Textarea starts at one row,
   // expands to fit content up to ~5 rows, then becomes an internal
   // scroller. Rolled here (instead of `field-sizing: content`) so it
@@ -78,59 +77,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const speech = useSpeechRecognition({
     lang: "en-US",
-    silenceMs: 2000,
-    onSettle: (text) => submitVoiceRef.current?.(text),
+    // No onSettle: silence-based auto-submit was ripped out. The
+    // transcript still streams into the draft via the effect below;
+    // user reviews and submits manually.
   });
-  // Auto-start once when the engine reports support AND the agent is
-  // done composing — otherwise the user might start speaking before
-  // they've heard / read the question, and the transcript would
-  // capture half-formed thoughts. Holding off until inFlight=false
-  // means the mic only opens at the moment the user is meant to reply.
-  // We deliberately don't restart after the user explicitly stops it
-  // — that would defeat the mute affordance.
-  const autoStartedRef = useRef(false);
-  // Tracks whether the user explicitly muted via the mic button. The
-  // re-arm effect respects this — auto-restart only kicks in when the
-  // user has NOT chosen to mute. Reset when they unmute.
-  const userMutedRef = useRef(false);
-  useEffect(() => {
-    if (autoStartedRef.current) return;
-    if (!speech.supported) return;
-    if (speech.listening) return;
-    if (inFlight) return;
-    // Only auto-start while the beat is actively waiting for answers.
-    // Re-opening a drawer for a beat that's past questioning (ready-to-generate,
-    // generating, preview, approved) must not resurface the mic.
-    if (beat.status !== "pending" && beat.status !== "questioning") return;
-    autoStartedRef.current = true;
-    speech.start();
-  }, [speech.supported, speech.listening, speech, inFlight, beat.status]);
-
-  // Re-arm the mic after each agent turn so the conversation stays
-  // hands-free across the full questionnaire. Triggered when:
-  //   - The beat is still in `questioning` (the agent hasn't committed),
-  //   - A new turn lands (conversation length grew), AND
-  //   - The latest turn is the agent (we just got a question), AND
-  //   - The agent is no longer composing (inFlight = false), AND
-  //   - The user hasn't muted, AND
-  //   - The mic isn't already listening.
-  // Once status flips past `questioning` (markSufficient → ready-to-generate
-  // → generating), the conversation is over and the mic must NOT come back
-  // — even if a stray turn is appended (the "Cued..." closing line, or a
-  // retry-after-error). Otherwise the mic resurfaces during Roll camera and
-  // the user starts speaking into a closed conversation.
-  useEffect(() => {
-    if (!speech.supported) return;
-    if (userMutedRef.current) return;
-    if (speech.listening) return;
-    if (inFlight) return;
-    if (beat.status !== "questioning") return;
-    const turns = scene.conversation;
-    if (turns.length === 0) return;
-    const last = turns[turns.length - 1];
-    if (last.role !== "agent") return;
-    speech.start();
-  }, [speech, scene.conversation, inFlight, beat.status]);
 
   // Hard stop: once the beat moves past questioning (markSufficient,
   // generating, preview, approved), kill any live listening session.
@@ -145,9 +95,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // Mute the mic the instant the agent starts thinking (inFlight=true).
   // Otherwise the mic keeps capturing during the "Thinking…" period and
   // anything the user mumbles between turns gets concatenated onto the
-  // transcript that's already been submitted. The re-arm effect above
-  // brings the mic back automatically when inFlight flips false AND the
-  // next agent turn lands — hands-free flow continues.
+  // transcript that's already been submitted. The user can re-engage the
+  // mic with the mic button when the next question lands — no auto re-arm.
   useEffect(() => {
     if (!inFlight) return;
     if (speech.listening) speech.stop();
@@ -193,11 +142,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const toggleVoice = () => {
     if (speech.listening) {
       speech.stop();
-      // User explicitly muted — block the re-arm effect from
-      // resurrecting the mic on the next agent turn.
-      userMutedRef.current = true;
     } else {
-      userMutedRef.current = false;
       speech.start();
     }
   };
@@ -451,10 +396,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     await callAgent(trimmed);
   };
 
-  // Bridge the hook's silence timer to the latest submit closure.
-  useEffect(() => {
-    submitVoiceRef.current = (text: string) => void submit(text);
-  });
+  // The silence-based auto-submit bridge (submitVoiceRef) was removed —
+  // voice transcripts now ONLY fill the draft textarea; the user reviews
+  // and presses Send themselves. Auto-send produced too many "instantly
+  // hit send before I could fix transcription errors" complaints.
 
   // Keep textarea height synced with draft. After submit clears draft
   // the field would otherwise stay tall — explicitly reset to one row.
