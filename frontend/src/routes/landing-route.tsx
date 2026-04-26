@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { MotionConfig, motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Mic } from "lucide-react";
+import { ArrowUp, Mic, FolderClock } from "lucide-react";
 import { toast } from "sonner";
 import { usePromptStore } from "@/stores/prompt-store";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -282,7 +282,42 @@ export function LandingRoute() {
           }}
         />
 
-        {/* Content — single centered composition. No nav. No corners. No chrome. */}
+        {/* Bottom-left wordmark — small, quiet, mirrors the same ●-dot
+            register that final-delivery uses in its top chrome so the
+            brand reads as the same product across every surface. Sits
+            in the footer area where it doesn't compete with the
+            headline composition. */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.6 }}
+          className="absolute bottom-4 left-4 z-20 font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary/75 md:bottom-6 md:left-6"
+        >
+          <span className="text-brand-ember">●</span>
+          <span className="ml-2">SceneOS</span>
+        </motion.div>
+
+        {/* Top-right Projects affordance — always reachable from landing.
+            Subdued by default (caption-track register), lifts to fg-primary
+            on hover. Mirrors the same chrome pattern canvas/editor/final
+            already use, so the button looks the same everywhere it appears. */}
+        <motion.button
+          type="button"
+          onClick={() => navigate("/projects")}
+          aria-label="Open projects archive"
+          title="Projects"
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.6 }}
+          className="group absolute right-4 top-4 z-20 inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base md:right-6 md:top-5"
+        >
+          <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
+          <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+            Projects
+          </span>
+        </motion.button>
+
+        {/* Content — single centered composition. */}
         <section className="relative z-10 flex min-h-[100svh] flex-col items-center justify-center px-6 py-16 sm:px-10">
           {/* Headline. One line, no wrap. Cap reduced from 9rem→6.5rem so
               it never overshoots the viewport vertically and the "Direct a
