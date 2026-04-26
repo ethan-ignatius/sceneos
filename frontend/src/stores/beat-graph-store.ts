@@ -546,6 +546,26 @@ export const useBeatGraphStore = create<BeatGraphState>()(
   ),
 );
 
+// ── Global auto-approve subscriber ────────────────────────────────────────
+// Fires on every store update. Any beat whose scene has a clipPublicId
+// but isn't yet approved gets promoted automatically. This is the
+// authoritative auto-approve — it runs independently of which component
+// is mounted, so navigating away from a planet mid-render or having the
+// drawer closed never leaves a beat dangling. Without this, the stitch
+// step 400'd and the user could accidentally re-Roll-camera on a
+// "preview" beat, burning Higgsfield credits twice.
+useBeatGraphStore.subscribe((state, prev) => {
+  const m = state.manifest;
+  if (!m || m === prev.manifest) return;
+  for (const beat of m.beats) {
+    if (beat.status === "approved") continue;
+    const scene = beat.scenes[0];
+    if (!scene?.clipPublicId) continue;
+    if (scene.approved) continue;
+    state.approveScene(beat.beatId, scene.sceneId);
+  }
+});
+
 export function selectActiveBeat(state: BeatGraphState): Beat | null {
   if (!state.manifest || !state.activeBeatId) return null;
   return state.manifest.beats.find((b) => b.beatId === state.activeBeatId) ?? null;

@@ -1042,10 +1042,14 @@ async def stitch(body: dict):
             detail="Invalid request body — expected { manifest: { beats: [...] } }",
         )
 
+    # Accept ANY beat that has a clipPublicId, regardless of status.
+    # The frontend's auto-approve race used to leave beats in "preview"
+    # or "generating" with the clipPublicId already populated, which
+    # silently 400'd the stitch. Status is UI bookkeeping; the splice
+    # only needs the publicId.
     approved = [
         {"beat": beat, "scene": scene}
         for beat in manifest["beats"]
-        if beat.get("status") == "approved"
         for scene in (beat.get("scenes") or [])
         if scene.get("clipPublicId")
     ]
@@ -1053,8 +1057,8 @@ async def stitch(body: dict):
         raise HTTPException(
             status_code=400,
             detail=(
-                "No approved beats with scene.clipPublicId. "
-                "Set beat.status='approved' and scene.clipPublicId on at least one scene."
+                "No beats have a rendered clip yet. Wait for at least one "
+                "beat's clipPublicId to land on its scene."
             ),
         )
 

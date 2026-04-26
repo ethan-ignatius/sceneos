@@ -8,11 +8,14 @@ from __future__ import annotations
 # 4s snaps to the shortest Veo tier (4/6/8) for lower wall-clock per beat.
 TARGET_CLIP_SECONDS = 4
 
-# Gemini 2.5 thinking budgets. The demo budget is intentionally smaller
-# so each user-facing turn lands fast on stage; normal mode gives the
-# model room to actually reason about cross-beat continuity.
-THINKING_BUDGET_NORMAL = 3072
-THINKING_BUDGET_DEMO = 512
+# Gemini 2.5 thinking budgets. Both kept small — the agent's job is to
+# ask one cinematic question per turn given full conversation context.
+# 3072 tokens of "thinking" added 10–30s of latency before any visible
+# output ("Composing the shot…" stuck for forever). 256 is enough for
+# the model to plan a question without compromising quality, and the
+# user-facing latency drops below 5s.
+THINKING_BUDGET_NORMAL = 256
+THINKING_BUDGET_DEMO = 128
 
 # Hard ceiling per beat in demo mode. Kept for back-compat; new dispatch
 # code should call `max_questions_for_manifest(manifest)` so the cap
