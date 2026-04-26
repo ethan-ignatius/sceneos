@@ -85,10 +85,13 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
   // live wheel-zoom offset — reading zoomRef at render time only would
   // freeze the scroll-wheel value (the ref updates outside React, so a
   // wheel event won't trigger a re-render to refresh the closure).
-  // Initial y bumped 0.4 → 1.6 so the snake of the journey path is
-  // visible from above by default. The path now has y-amplitude ~0.55
-  // and z-amplitude ~1.4, so a low camera y reads it as roughly flat.
-  const overviewPos = useRef(new THREE.Vector3(0, 1.6, overviewZ));
+  //
+  // Shoulder-view: camera sits AT PLANET HEIGHT (y=0.5, just above the
+  // path's centerline so we look slightly down ON the planets) on the +z
+  // side of the journey, looking at the journey midpoint. Reads as
+  // "walking alongside the planets." y=1.6 was too high — felt like a
+  // drone view, not a shoulder view.
+  const overviewPos = useRef(new THREE.Vector3(0, 0.5, overviewZ));
   const targetPos = useRef(overviewPos.current.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
   const reducedMotion = usePrefersReducedMotion();
@@ -102,6 +105,34 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
     return i === -1 ? null : positions[i];
   };
 
+  /**
+   * Over-the-shoulder camera — when active beat is N, this returns the
+   * position of beat N-1 (or, for the FIRST beat, an extrapolated point
+   * just before beat 0 along the journey direction).
+   *
+   * Reads as: "we're standing at the previous checkpoint, looking AT
+   * the current one." Per user direction — looking from Earth's
+   * shoulder at the Sun, then from there looking forward at the next.
+   */
+  const findShoulderAnchor = (beatId: string | null): [number, number, number] | null => {
+    if (!beatId) return null;
+    const i = beats.findIndex((b) => b.beatId === beatId);
+    if (i === -1) return null;
+    if (i === 0) {
+      // First beat — extrapolate one step BACK along the journey using
+      // the vector from beat 0 to beat 1 (or a default offset if there's
+      // only one beat). Camera ends up at "the start of the road,"
+      // looking forward at the first checkpoint.
+      const cur = positions[0];
+      const next = positions[1] ?? [cur[0] + 2, cur[1], cur[2]];
+      const dx = cur[0] - next[0];
+      const dy = cur[1] - next[1];
+      const dz = cur[2] - next[2];
+      return [cur[0] + dx, cur[1] + dy, cur[2] + dz];
+    }
+    return positions[i - 1];
+  };
+
   useFrame((state) => {
     const active = findPosition(activeBeatId);
     const hovered = findPosition(hoveredBeatId);
@@ -111,7 +142,9 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
     // can't capture it at render time.
     const zoomOffset = zoomRef?.current.z ?? 0;
     const effectiveZ = Math.max(2.5, overviewZ + zoomOffset);
-    overviewPos.current.set(0, 1.6, effectiveZ);
+    // Shoulder-view: y=0.5 (planet-height + slight elevation), z=+effectiveZ
+    // (looking from in front of the journey toward midpoint).
+    overviewPos.current.set(0, 0.5, effectiveZ);
 
     // ── Pan: clear instantly when transitioning from no-active → active ──
     // Clicking a beat is a deliberate cinematographic move; any residual pan
@@ -124,20 +157,63 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
 
     if (active) {
       const [ax, ay, az] = active;
-      // "Drove up to the checkpoint" angle: camera is slightly behind +
-      // above + to the side of the planet (not dead-on like before) so
-      // the planet sits in 3D space, not flattened against the viewport.
-      // The journey path's curvature comes from y-amplitude 0.55 and
-      // z-amplitude 1.4; a plain (+ax, +ay+0.25, +az+1.9) shot from
-      // straight back would feel like the previous flat-row camera even
-      // though the planets are now snaking. Lifting y and shifting x
-      // slightly puts us ABOVE and to the SIDE of the road at this
-      // checkpoint — exactly the windy-road framing.
+      // Over-the-shoulder zoom: camera sits at the PREVIOUS beat's
+      // position (slightly above + pulled back), looking AT the current
+      // active beat. Per user direction — "from Earth's shoulder at the
+      // Sun, then from there looking forward at the next."
+      //
+      // Drawer-aware offset: the previous version shifted along world-x.
+      // That worked for beats 0–2 (where the journey direction is
+      // mostly +x) but BROKE for beats 3+ because the journey snakes:
+      // by Mars→Saturn the forward vector has heavy z and y components,
+      // and shifting world-x there made the camera look PAST the planet
+      // along +x, putting the planet off-frame to the right.
+      //
+      // Fix: compute camera-RIGHT (forward × world-up, normalised) per
+      // beat and shift both camera + lookAt along THAT axis. The planet
+      // ends up on the left half of the viewport regardless of which
+      // direction the journey is heading at this checkpoint.
+      const shoulder = findShoulderAnchor(activeBeatId);
       const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
-      const drawerOffsetX = isDesktop ? 1.4 : 0;
-      const azimuth = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
-      targetPos.current.set(ax + 0.6 + drawerOffsetX + azimuth, ay + 0.7, az + 1.9);
-      targetLook.current.set(ax + drawerOffsetX, ay, az);
+      const drawerMag = isDesktop ? 1.4 : 0;
+      const breath = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
+      if (shoulder) {
+        const [sx, sy, sz] = shoulder;
+        // Forward = active − shoulder, normalised.
+        const fx = ax - sx, fy = ay - sy, fz = az - sz;
+        const fmag = Math.max(Math.sqrt(fx * fx + fy * fy + fz * fz), 0.001);
+        const fNx = fx / fmag, fNy = fy / fmag, fNz = fz / fmag;
+        // Camera-right = forward × worldUp (0, 1, 0). With forward (a, b, c):
+        //   right = (a, b, c) × (0, 1, 0) = (c, 0, -a)
+        // If forward is near-parallel to up (won't happen in our path,
+        // but defensive), fall back to world-x.
+        let rx = fNz, rz = -fNx;
+        const rmag = Math.sqrt(rx * rx + rz * rz);
+        if (rmag < 0.001) {
+          rx = 1; rz = 0;
+        } else {
+          rx /= rmag; rz /= rmag;
+        }
+        // Drawer shift along camera-right.
+        const drx = rx * drawerMag, drz = rz * drawerMag;
+        // Camera = shoulder + (-forward × 0.3 = pull back) + (worldUp × 0.6) + drawer
+        // Pulling back 0.3 along -forward keeps the previous planet in
+        // the foreground; lifting y by 0.6 gives the slight elevation.
+        targetPos.current.set(
+          sx - fNx * 0.3 + drx + breath,
+          sy + 0.6,
+          sz - fNz * 0.3 + drz,
+        );
+        // LookAt = active beat + drawer shift (same direction so the
+        // view direction is preserved; only the framing slides).
+        targetLook.current.set(ax + drx, ay, az + drz);
+        // Reference fNy so TS doesn't flag it (used implicitly via fNx/fNz
+        // normalisation; kept named for readability).
+        void fNy;
+      } else {
+        targetPos.current.set(ax + 0.7 + breath, ay + 0.45, az + 1.7);
+        targetLook.current.set(ax, ay, az);
+      }
     } else {
       // ── Free-orbit (left-drag on empty space) ──────────────────────
       // When the user drags on empty space, we orbit the camera around
@@ -147,15 +223,15 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
       const azimuth = orbitRef?.current.azimuth ?? 0;
       const polar = orbitRef?.current.polar ?? 0;
       if (azimuth !== 0 || polar !== 0) {
-        // Orbit y-base also bumped 0.4 → 1.6 to match the lifted overview.
-        // Without this, orbiting from the elevated overview view dropped
-        // the camera back to the old low altitude — felt like the path
-        // was flat again the instant you started rotating.
+        // Shoulder-view orbit: default (azimuth=0, polar=0) lands the
+        // camera at (0, 0.5, +rad) — the shoulder-view spot in front of
+        // the journey. Positive azimuth orbits clockwise around y from
+        // there. Polar tilts the camera up/down from the y=0.5 baseline.
         const rad = effectiveZ;
         const cosPolar = Math.cos(polar);
         const x = rad * Math.sin(azimuth) * cosPolar;
         const z = rad * Math.cos(azimuth) * cosPolar;
-        const y = 1.6 + rad * Math.sin(polar) * 0.4;
+        const y = 0.5 + rad * Math.sin(polar) * 0.4;
         targetPos.current.set(x, y, z);
       } else {
         targetPos.current.copy(overviewPos.current);

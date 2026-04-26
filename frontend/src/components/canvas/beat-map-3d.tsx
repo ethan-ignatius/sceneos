@@ -164,23 +164,36 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      // Maya/Blender-style binding (per user direction):
+      //   Middle drag         → orbit around scene/active beat (NEW — was pan)
+      //   Shift + left drag   → orbit (kept as a power-user alt for trackpad
+      //                         users who don't have a middle button)
+      //   Left drag on empty  → pan
+      //   Wheel               → zoom
+      //
+      // No setPointerCapture: capture redirects pointermove events to the
+      // captured target only, which broke the global CinematicCursor's
+      // window-level pointermove listener — the cursor froze in place
+      // mid-drag. Instead we bind move/up on WINDOW so the drag keeps
+      // working off-canvas AND the cursor keeps tracking. (Pointer
+      // capture was originally added so drags didn't break when the
+      // pointer left the canvas; window-bound listeners solve the same
+      // problem without the cursor side-effect.)
       const isMiddle = e.button === 1;
-      // Left on empty: pan (default) or orbit (with shift). Left on a
-      // planet is reserved for the planet's onClick to activate the beat.
       const isLeftEmpty = e.button === 0 && hoveredBeatIdRef.current === null;
       if (!isMiddle && !isLeftEmpty) return;
 
       anchorX = e.clientX;
       anchorY = e.clientY;
-      el.setPointerCapture(e.pointerId);
 
-      if (isLeftEmpty && e.shiftKey) {
+      if (isMiddle || (isLeftEmpty && e.shiftKey)) {
+        // Orbit. Middle preventDefault suppresses the browser's auto-
+        // scroll cursor.
+        if (isMiddle) e.preventDefault();
         orbitRef.current.active = true;
         orbitRef.current.didDrag = false;
       } else {
-        // Pan. Middle-button preventDefault suppresses the browser's
-        // auto-scroll cursor; left-button works without it.
-        if (isMiddle) e.preventDefault();
+        // Pan (left-drag on empty space).
         panRef.current.active = true;
         setPanning(true);
         startOffsetX = panRef.current.offset[0];
@@ -221,15 +234,10 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
       }
     };
 
-    const onPointerUp = (e: PointerEvent) => {
+    const onPointerUp = () => {
       if (panRef.current.active) {
         panRef.current.active = false;
         setPanning(false);
-        try {
-          el.releasePointerCapture(e.pointerId);
-        } catch {
-          /* released already; no-op */
-        }
         document.body.style.cursor = "";
         return;
       }
@@ -237,11 +245,6 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
         orbitRef.current.active = false;
         // Leave didDrag set so onPointerMissed can suppress the
         // click-deactivates-beat behavior; reset on next pointerdown.
-        try {
-          el.releasePointerCapture(e.pointerId);
-        } catch {
-          /* noop */
-        }
         document.body.style.cursor = "";
       }
     };
@@ -259,9 +262,12 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
     };
 
     el.addEventListener("pointerdown", onPointerDown);
-    el.addEventListener("pointermove", onPointerMove);
-    el.addEventListener("pointerup", onPointerUp);
-    el.addEventListener("pointercancel", onPointerUp);
+    // Move + up bound on WINDOW (not el) so drag continues if pointer
+    // leaves the canvas AND the cinematic-cursor's window-level
+    // pointermove listener keeps receiving events during the drag.
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     el.addEventListener("wheel", onWheel, { passive: false });
 
     // External reset (Esc / Re-center button) — zero pan + orbit + zoom.
@@ -295,9 +301,9 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
 
     return () => {
       el.removeEventListener("pointerdown", onPointerDown);
-      el.removeEventListener("pointermove", onPointerMove);
-      el.removeEventListener("pointerup", onPointerUp);
-      el.removeEventListener("pointercancel", onPointerUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       el.removeEventListener("wheel", onWheel);
       window.removeEventListener(RESET_CAMERA_EVENT, onReset);
       window.removeEventListener(GOTO_CAMERA_EVENT, onGoto);

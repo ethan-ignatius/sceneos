@@ -32,10 +32,23 @@ import type { Beat } from "@/types/manifest";
  */
 
 // Tuning constants. Pulled out so the camera rig can reference the same
-// amplitudes when computing the camera path's lookAhead distance.
-const X_SPREAD = 1.55;
-const Y_AMPLITUDE = 0.55;
-const Z_AMPLITUDE = 1.4;
+// amplitudes when composing camera distances.
+//
+// Shoulder-view tuning: the camera sits at planet height, side-on. The
+// path reads as an adventure-map road IF z-modulation is generous (the
+// snake's swerve is what we see from this angle) and y-modulation is
+// gentle (we're at planet height, so big y-bobs would put planets above
+// or below the camera and break the "walking past them" feel).
+//
+// X_SPREAD = 2.1 (was 1.55) — clear separation between adjacent planets
+// at the shoulder angle, so they don't visually overlap.
+// Y_AMPLITUDE = 0.25 (was 0.55) — gentle roller-coaster, not big swings.
+// Z_AMPLITUDE = 1.8 (was 1.4) — pronounced enough that orbiting from
+// above or behind reveals the snake clearly, but not so wild that the
+// shoulder-view side perspective puts back planets way behind front ones.
+const X_SPREAD = 2.1;
+const Y_AMPLITUDE = 0.25;
+const Z_AMPLITUDE = 1.8;
 // Phase offset on z so the y-wave and z-wave aren't synchronised — gives
 // the path real 3D character instead of a 2D zig-zag traced into the y-z
 // plane. (π/3 = the y-peak coincides with a z-zero-crossing.)
