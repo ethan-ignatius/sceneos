@@ -398,45 +398,47 @@ export function LandingRoute() {
               )}
             </motion.p>
 
-            {/* Video-type tier picker — Trailer (3) / Short film (5) /
-                Movie (8). Auto-selected from prompt verbosity; the user
-                can override and that override sticks. Caption-track
-                register, no card chrome — three quiet text chips. */}
+            {/* Video-type tier picker — Trailer / Short film / Movie.
+                Beat count was a leading numeral ("3 Trailer 5 Short film
+                8 Movie") which read as a parsed list, not a tier label.
+                Now: just the tier labels with a small dot separator
+                between them. Beat count moved to a hover-only title
+                attribute for the curious. */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 1.7 }}
-              className="mt-3 flex items-center justify-center gap-1"
+              className="mt-3 flex items-center justify-center gap-0.5"
               role="radiogroup"
               aria-label="Cinematic length"
             >
-              {VIDEO_TYPE_TIERS.map((tier) => {
+              {VIDEO_TYPE_TIERS.map((tier, i) => {
                 const active = videoType === tier.id;
                 return (
-                  <button
-                    key={tier.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => {
-                      setVideoType(tier.id);
-                      setVideoTypeUserPicked(true);
-                    }}
-                    className={cn(
-                      "group inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1",
-                      "font-body text-[11px] transition-colors duration-200",
-                      "focus-visible:outline-none focus-visible:text-brand-ember",
-                      active
-                        ? "text-brand-ember"
-                        : "text-fg-tertiary hover:text-fg-secondary",
-                    )}
-                    title={tier.hint}
-                  >
-                    <span className="font-mono tabular-nums text-fg-tertiary/60 group-hover:text-fg-tertiary">
-                      {tier.beatCount}
-                    </span>
-                    <span className={cn(active && "font-medium")}>{tier.label}</span>
-                  </button>
+                  <div key={tier.id} className="flex items-center">
+                    {i > 0 ? (
+                      <span aria-hidden className="mx-1 text-fg-tertiary/35">·</span>
+                    ) : null}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => {
+                        setVideoType(tier.id);
+                        setVideoTypeUserPicked(true);
+                      }}
+                      className={cn(
+                        "group cursor-pointer px-2 py-1 font-body text-caption transition-colors duration-200",
+                        "focus-visible:outline-none focus-visible:text-brand-ember",
+                        active
+                          ? "font-medium text-brand-ember"
+                          : "text-fg-tertiary hover:text-fg-secondary",
+                      )}
+                      title={`${tier.label} · ${tier.beatCount} beats — ${tier.hint}`}
+                    >
+                      {tier.label}
+                    </button>
+                  </div>
                 );
               })}
             </motion.div>
