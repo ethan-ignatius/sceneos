@@ -146,12 +146,14 @@ async def _kickoff_one_beat(
     canned_facts: dict,
     aspect_ratio: str,
     project_refs: dict | None = None,
+    project_keyframes: dict | None = None,
 ) -> tuple[str, dict]:
     """Run the deterministic pipeline for one beat using canned facts.
     Used only on demo speculative kickoff. Always non-chained (no prior
     frame at T=0) so the 7 beats can fan out in parallel — but every
-    beat reuses the SAME character + location project_refs as its I2V
-    seed so the protagonist + world stay consistent across the cut.
+    beat reuses the SAME character + location project_keyframes as its
+    I2V seed so the protagonist + world stay consistent across the cut.
+    Each beat picks the keyframe variant best matching its framing.
 
     Returns (beatId, job_summary). Job_summary is the same shape returned
     by /api/orchestrate so the frontend has a single consumer."""
@@ -165,6 +167,7 @@ async def _kickoff_one_beat(
             previous_last_frame_url=None,  # parallel fan-out, no chain
             aspect_ratio=aspect_ratio,
             project_refs=project_refs,
+            project_keyframes=project_keyframes,
         )
         result["speculative"] = True
         result["startedAt"] = _now_iso()
@@ -257,8 +260,12 @@ def _shared_descriptions(facts_by_template: dict[str, dict]) -> tuple[str | None
 
 
 def _mock_project_refs(character_desc: str | None, location_desc: str | None) -> dict:
-    """Mock project refs — same shape as vertex_imagen.generate_project_refs
-    but synthesized without any provider call. Used in mock mode + tests."""
+    """Mock single-keyframe project refs (back-compat shape).
+
+    For the new multi-keyframe shape see `_mock_project_keyframes` below.
+    The session stores both: keyframes is canonical, refs is derived (the
+    `Primary` slot of each kind) for back-compat consumers.
+    """
     cloud = env("CLOUDINARY_CLOUD_NAME") or "demo"
     refs: dict[str, dict | None] = {"character": None, "location": None}
     if character_desc:
@@ -278,34 +285,108 @@ def _mock_project_refs(character_desc: str | None, location_desc: str | None) ->
     return refs
 
 
+def _mock_project_keyframes(character_desc: str | None, location_desc: str | None) -> dict:
+    """Mock multi-keyframe project refs.
+
+    Mirrors the live `vertex_imagen.generate_project_keyframes` shape so
+    tests + visualizer see the same structure in both modes. Each variant
+    has its own publicId so the visualizer can render them as a strip.
+    Real Imagen produces three different stills here; mock points all
+    three at the same Cloudinary sample asset because we can't render
+    new images, but the publicIds stay distinct and the variant field
+    is populated."""
+    cloud = env("CLOUDINARY_CLOUD_NAME") or "demo"
+    char_url = f"https://res.cloudinary.com/{cloud}/image/upload/sample.jpg"
+    loc_url = f"https://res.cloudinary.com/{cloud}/image/upload/couple.jpg"
+
+    character: list[dict] = []
+    if character_desc:
+        from .vertex_imagen import KEYFRAME_VARIANTS
+        for variant_id, variant_clause in KEYFRAME_VARIANTS["character"]:
+            character.append({
+                "imageUrl": char_url,
+                "publicId": f"shared::character-{variant_id}",
+                "kind": "character",
+                "variant": variant_id,
+                "prompt": f"[mock] {variant_clause}",
+            })
+
+    location: list[dict] = []
+    if location_desc:
+        from .vertex_imagen import KEYFRAME_VARIANTS
+        for variant_id, variant_clause in KEYFRAME_VARIANTS["location"]:
+            location.append({
+                "imageUrl": loc_url,
+                "publicId": f"shared::location-{variant_id}",
+                "kind": "location",
+                "variant": variant_id,
+                "prompt": f"[mock] {variant_clause}",
+            })
+
+    return {
+        "character": character,
+        "location": location,
+        "characterPrimary": character[0] if character else None,
+        "locationPrimary": location[0] if location else None,
+    }
+
+
+def _refs_from_keyframes(keyframes: dict | None) -> dict:
+    """Derive the back-compat single-ref shape from a keyframes dict.
+
+    Picks the FIRST non-degraded variant per kind. Used so that callers
+    expecting `projectRefs` (legacy shape) continue to work after we
+    upgrade session to multi-keyframe storage.
+    """
+    if not keyframes:
+        return {"character": None, "location": None}
+
+    def _first_real(refs: list[dict] | None) -> dict | None:
+        for ref in refs or []:
+            if not ref.get("degraded") and not ref.get("stub") and ref.get("imageUrl"):
+                return ref
+        # Fall back to the first ref even if degraded — better to surface
+        # something with a `degraded` flag than to silently null out.
+        return (refs or [None])[0] if refs else None
+
+    return {
+        "character": keyframes.get("characterPrimary") or _first_real(keyframes.get("character")),
+        "location": keyframes.get("locationPrimary") or _first_real(keyframes.get("location")),
+    }
+
+
 async def kickoff_speculative_pipelines(
     *,
     manifest: dict,
     demo_prompt: demo_prompts.DemoPromptDef,
     aspect_ratio: str = "16:9",
-) -> tuple[dict[str, dict], dict]:
+) -> tuple[dict[str, dict], dict, dict]:
     """
     Fire all 7 beat pipelines IN PARALLEL using the demo prompt's canned
-    beatFacts and a SHARED character + location ref.
+    beatFacts and a SHARED multi-keyframe set (character + location, 3
+    variants each).
 
-    Returns (jobs_by_beat_id, project_refs).
+    Returns (jobs_by_beat_id, project_refs, project_keyframes).
+    `project_refs` is the back-compat single-ref shape; `project_keyframes`
+    is the new multi-variant shape that the orchestrator prefers.
 
     Sequence:
-      1. Generate ONE character ref + ONE location ref via Imagen (parallel).
-      2. Fan out 7 beat pipelines in parallel; every one uses the same
-         project refs as its I2V seed. The variation comes from the
-         per-beat clipPrompt + framing — the IDENTITY stays locked.
+      1. Generate keyframe sets via Imagen (3 character + 3 location, all
+         in parallel — typically ~5-12s).
+      2. Fan out 7 beat pipelines in parallel. Each beat picks the
+         keyframe variant best matching its framing intent — wide beats
+         grab the location wide-shot, intimate beats grab the character
+         front portrait, kinetic beats grab the action stance.
 
-    In mock mode we synthesize both the refs and the orchestrator results.
-    The /api/status mock branch then flips each job to succeeded on the
-    second poll so the visualizer experience matches real mode.
+    In mock mode we synthesize keyframes and the orchestrator results.
     """
     project_id = manifest["projectId"]
     facts_by_template = demo_prompt["beatFactsByTemplate"]
     character_desc, location_desc = _shared_descriptions(facts_by_template)
 
     if mock_mode():
-        project_refs = _mock_project_refs(character_desc, location_desc)
+        project_keyframes = _mock_project_keyframes(character_desc, location_desc)
+        project_refs = _refs_from_keyframes(project_keyframes)
         results: dict[str, dict] = {}
         for beat in manifest["beats"]:
             canned = facts_by_template.get(beat["template"]) or {
@@ -315,20 +396,27 @@ async def kickoff_speculative_pipelines(
                 "mood": beat["archetype"]["mood"],
             }
             job = _mock_speculative_job(beat, canned, project_refs)
+            # Surface keyframe metadata in the mock job too, so the
+            # visualizer behaves the same in mock + real mode.
+            job["keyframeSets"] = {
+                "character": project_keyframes.get("character") or [],
+                "location": project_keyframes.get("location") or [],
+            }
             set_speculative_job(project_id, beat["beatId"], job)
             results[beat["beatId"]] = job
-        return results, project_refs
+        return results, project_refs, project_keyframes
 
-    # Real mode: refs first, then beats. Refs typically take 5-10s; we
-    # need the imageUrls before kicking off video gens that use them as
-    # I2V seed. Beats then fan out concurrently.
+    # Real mode: keyframes first, then beats. Multi-keyframe gen runs the
+    # 6 Imagen calls (3 character + 3 location) in parallel, typically
+    # ~10-15s end-to-end. Beats then fan out concurrently.
     from . import vertex_imagen
-    project_refs = await vertex_imagen.generate_project_refs(
+    project_keyframes = await vertex_imagen.generate_project_keyframes(
         project_id=project_id,
         character_description=character_desc,
         location_description=location_desc,
         aspect_ratio=aspect_ratio,
     )
+    project_refs = _refs_from_keyframes(project_keyframes)
 
     tasks = []
     for beat in manifest["beats"]:
@@ -349,13 +437,14 @@ async def kickoff_speculative_pipelines(
             canned_facts=canned,
             aspect_ratio=aspect_ratio,
             project_refs=project_refs,
+            project_keyframes=project_keyframes,
         ))
 
     pairs = await asyncio.gather(*tasks)
     results = {beat_id: job for beat_id, job in pairs}
     for beat_id, job in results.items():
         set_speculative_job(project_id, beat_id, job)
-    return results, project_refs
+    return results, project_refs, project_keyframes
 
 
 # ── Public entry: start_session ───────────────────────────────────────────
@@ -400,6 +489,23 @@ async def start_session(
         # that points at an unuploaded asset.
         from . import audio as audio_service
         manifest["audioPublicId"] = audio_service.pick_music(video_type, mood="auto")
+
+        # Movie plan generation: runs concurrently with speculative kickoff
+        # in the gather() below. The plan is stamped on the manifest before
+        # any agent turn fires so beat-1's first question already lives
+        # inside the plan's voice + motif.
+        beat_template_defs = [
+            {
+                "template": b["template"],
+                "beatName": b["beatName"],
+                "intent": b["archetype"]["intent"],
+                "mood": b["archetype"]["mood"],
+                "suggestedDuration": b["archetype"]["suggestedDuration"],
+            }
+            for b in manifest["beats"]
+        ]
+        from . import movie_plan as movie_plan_service
+
         _SESSIONS[project_id] = {
             "mode": mode,
             "masterPrompt": master_prompt,
@@ -409,11 +515,18 @@ async def start_session(
             "manifest": manifest,
         }
         try:
-            speculative, project_refs = await asyncio.wait_for(
-                kickoff_speculative_pipelines(
-                    manifest=manifest,
-                    demo_prompt=demo,
-                    aspect_ratio=aspect_ratio,
+            (speculative, project_refs, project_keyframes), plan = await asyncio.wait_for(
+                asyncio.gather(
+                    kickoff_speculative_pipelines(
+                        manifest=manifest,
+                        demo_prompt=demo,
+                        aspect_ratio=aspect_ratio,
+                    ),
+                    movie_plan_service.generate_movie_plan(
+                        master_prompt=master_prompt,
+                        video_type=video_type,
+                        beat_templates=beat_template_defs,
+                    ),
                 ),
                 timeout=_KICKOFF_TIMEOUT_SECONDS,
             )
@@ -435,10 +548,19 @@ async def start_session(
                     "startedAt": _now_iso(),
                 })
             project_refs = None
-        # Cache project refs on the session so /api/orchestrate (when the
-        # agent eventually calls markSufficient) and any retries pull
-        # from the same character + location anchor.
+            project_keyframes = None
+            plan = None
+
+        # Stamp plan on the manifest itself so the agent + orchestrator
+        # see it without needing a session lookup.
+        if plan:
+            manifest["moviePlan"] = plan
+        # Cache refs + keyframes + plan on the session so /api/orchestrate
+        # (when the agent eventually calls markSufficient) and any retries
+        # pull from the same anchors.
         _SESSIONS[project_id]["projectRefs"] = project_refs
+        _SESSIONS[project_id]["projectKeyframes"] = project_keyframes
+        _SESSIONS[project_id]["moviePlan"] = plan
         return {
             "projectId": project_id,
             "mode": mode,
@@ -447,6 +569,8 @@ async def start_session(
             "demoPromptId": demo["id"],
             "manifest": manifest,
             "projectRefs": project_refs,
+            "projectKeyframes": project_keyframes,
+            "moviePlan": plan,
             "speculativeJobs": speculative,
         }
 
@@ -455,6 +579,11 @@ async def start_session(
     # Project refs are generated lazily on the first markSufficient call
     # that ships characterDescription / locationDescription (see
     # ensure_project_refs() below) and reused for every subsequent beat.
+    #
+    # Movie plan IS generated up front in normal mode too — it's cheap
+    # (one LLM call ~5s) and the agent reads it from beat-1 onwards so
+    # questions stay inside one coherent story instead of drifting
+    # genre-by-genre across beats.
     nrm = demo_prompts.pick_normal_prompt(prompt_id)
     master_prompt = master_prompt_override or nrm["masterPrompt"]
     video_type = nrm["videoType"]
@@ -465,7 +594,35 @@ async def start_session(
         mode=mode,
     )
     from . import audio as audio_service
+    from . import movie_plan as movie_plan_service
     manifest["audioPublicId"] = audio_service.pick_music(video_type, mood="auto")
+
+    beat_template_defs = [
+        {
+            "template": b["template"],
+            "beatName": b["beatName"],
+            "intent": b["archetype"]["intent"],
+            "mood": b["archetype"]["mood"],
+            "suggestedDuration": b["archetype"]["suggestedDuration"],
+        }
+        for b in manifest["beats"]
+    ]
+    try:
+        plan = await asyncio.wait_for(
+            movie_plan_service.generate_movie_plan(
+                master_prompt=master_prompt,
+                video_type=video_type,
+                beat_templates=beat_template_defs,
+            ),
+            timeout=30.0,  # plan is on the critical path; bound it tight
+        )
+    except asyncio.TimeoutError:
+        logger.warning("[session] movie plan timed out for normal-mode project %s", project_id)
+        plan = None
+
+    if plan:
+        manifest["moviePlan"] = plan
+
     _SESSIONS[project_id] = {
         "mode": mode,
         "masterPrompt": master_prompt,
@@ -473,6 +630,8 @@ async def start_session(
         "normalPromptId": nrm["id"],
         "createdAt": _now_iso(),
         "projectRefs": None,  # lazy
+        "projectKeyframes": None,  # lazy
+        "moviePlan": plan,
         "manifest": manifest,
     }
     return {
@@ -482,6 +641,7 @@ async def start_session(
         "videoType": video_type,
         "normalPromptId": nrm["id"],
         "manifest": manifest,
+        "moviePlan": plan,
     }
 
 
@@ -495,52 +655,76 @@ async def ensure_project_refs(
     location_description: str | None,
     aspect_ratio: str = "16:9",
 ) -> dict | None:
+    """Back-compat single-keyframe accessor. Prefer
+    `ensure_project_keyframes` for new callers.
+
+    Returns the back-compat shape `{character, location}` (single ref per
+    kind) derived from the multi-keyframe set. Cached at the session level
+    so subsequent beats reuse without re-calling Imagen.
     """
-    Return cached project refs for `project_id`, generating them on the
+    keyframes = await ensure_project_keyframes(
+        project_id=project_id,
+        character_description=character_description,
+        location_description=location_description,
+        aspect_ratio=aspect_ratio,
+    )
+    if keyframes is None:
+        return None
+    return _refs_from_keyframes(keyframes)
+
+
+async def ensure_project_keyframes(
+    *,
+    project_id: str | None,
+    character_description: str | None,
+    location_description: str | None,
+    aspect_ratio: str = "16:9",
+) -> dict | None:
+    """
+    Return cached multi-keyframe project refs, generating them on the
     first call that has descriptions to work from.
 
     Called by /api/orchestrate in normal mode: the FIRST beat's
     markSufficient lands character + location descriptions, and we
-    generate refs once. Subsequent beats reuse — same character, same
-    world, every clip.
+    generate the full keyframe set once. Subsequent beats reuse — same
+    character variants, same location variants, every clip.
 
     Returns None if there's no project_id (ad-hoc orchestrate) or if
-    neither description is provided AND no cached refs exist.
+    neither description is provided AND no cached keyframes exist.
     """
     if not project_id:
         return None
     sess = _SESSIONS.get(project_id)
     if sess is None:
-        # No session record (caller hit /api/orchestrate without
-        # /api/session/start). Generate refs ad-hoc and return them
-        # without caching, so we don't accumulate stray state.
+        # No session record. Generate ad-hoc, don't cache.
         if not (character_description or location_description):
             return None
         if mock_mode():
-            return _mock_project_refs(character_description, location_description)
+            return _mock_project_keyframes(character_description, location_description)
         from . import vertex_imagen
-        return await vertex_imagen.generate_project_refs(
+        return await vertex_imagen.generate_project_keyframes(
             project_id=project_id,
             character_description=character_description,
             location_description=location_description,
             aspect_ratio=aspect_ratio,
         )
 
-    cached = sess.get("projectRefs")
+    cached = sess.get("projectKeyframes")
     if cached:
         return cached
     if not (character_description or location_description):
         return None
 
     if mock_mode():
-        refs = _mock_project_refs(character_description, location_description)
+        keyframes = _mock_project_keyframes(character_description, location_description)
     else:
         from . import vertex_imagen
-        refs = await vertex_imagen.generate_project_refs(
+        keyframes = await vertex_imagen.generate_project_keyframes(
             project_id=project_id,
             character_description=character_description,
             location_description=location_description,
             aspect_ratio=aspect_ratio,
         )
-    sess["projectRefs"] = refs
-    return refs
+    sess["projectKeyframes"] = keyframes
+    sess["projectRefs"] = _refs_from_keyframes(keyframes)
+    return keyframes

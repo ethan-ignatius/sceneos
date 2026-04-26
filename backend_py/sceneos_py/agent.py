@@ -47,14 +47,26 @@ THINKING_BUDGET_DEMO = 512  # smaller budget = faster turn-around for the live d
 DEMO_MAX_QUESTIONS = 2
 
 # Tool schemas — dict form, accepted by google.genai SDK.
+#
+# Suggested answers are now NON-DETERMINISTIC in count. The user complained
+# that exactly-3 multiple-choice questions felt loaded — every question
+# became "pick from these 3 directions" and constrained creative freedom.
+# Now the agent emits 0-4 suggestions and an `openEnded` flag:
+#   - 0 suggestions + openEnded=true: the question genuinely wants the
+#     user's invention. UI shows just the text input.
+#   - 1-2 suggestions: lightweight nudges, not a forced choice.
+#   - 3-4 suggestions: when the question genuinely benefits from
+#     contrasting options that imply meaningfully different movies.
 _AGENT_TOOLS: list[dict[str, Any]] = [
     {
         "name": "askQuestion",
         "description": (
             "Ask one focused question about the most charged, naturally curious thing "
-            "in the story so far. Reflect the story back before asking. Provide exactly 3 "
-            "suggestedAnswers covering meaningfully different directions — each must imply "
-            "a different movie."
+            "in the story so far. Reflect the story back before asking. Suggested answers "
+            "are OPTIONAL nudges (0-4 of them) — emit fewer (or zero with openEnded=true) "
+            "when the question genuinely wants the user's invention; emit 3-4 only when "
+            "they cover meaningfully different movies. Never use suggestions to constrain "
+            "the user's choices."
         ),
         "parameters": {
             "type": "object",
@@ -71,9 +83,13 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
                 "suggestedAnswers": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Exactly 3 first-person-adjacent answer options. Each implies a different movie if chosen. Not minor variations.",
-                    "min_items": 3,
-                    "max_items": 3,
+                    "description": "0-4 first-person-adjacent answer nudges. Each must imply a different movie if chosen. Use 0 (with openEnded=true) when the question genuinely wants the user's invention. Use 3-4 only when each one is a meaningfully different direction.",
+                    "min_items": 0,
+                    "max_items": 4,
+                },
+                "openEnded": {
+                    "type": "boolean",
+                    "description": "True when the question wants the user's invention more than a pick-one-of-three. UI shows the text input prominently. Default false.",
                 },
                 "estimatedRemaining": {
                     "type": "integer",
@@ -180,54 +196,105 @@ def _collect_conversation(beat: dict, user_message: str | None) -> list[dict]:
 
 
 def _earlier_beats_block(beat: dict, manifest: dict) -> str:
+    """Full-fidelity prior-beats memory.
+
+    Gemini 2.5 has a 1M context window; we use under 5k. Truncating prior
+    beat context to a 4-key summary line was the user's "doesn't remember
+    context from previous nodes" complaint. Now we emit the FULL beatFacts
+    (all 9 keys) per prior beat, plus the prior beat's user conversation
+    in full. The agent reasons against the whole movie, not the current
+    beat in isolation.
+    """
     beat_idx = next(
         (i for i, b in enumerate(manifest["beats"]) if b["beatId"] == beat["beatId"]),
         0,
     )
     if beat_idx == 0:
         return ""
-    lines: list[str] = []
+    sections: list[str] = []
     for b in manifest["beats"][:beat_idx]:
         scenes = b.get("scenes") or []
         scene = scenes[0] if scenes else None
         if not scene:
             continue
-        facts = scene.get("beatFacts")
+        lines: list[str] = [f"## {b['beatName']} (beat {manifest['beats'].index(b) + 1})"]
+        facts = scene.get("beatFacts") or {}
         if facts:
-            lines.append(
-                f"- {b['beatName']}: subject={facts.get('subject', '?')}; "
-                f"action={facts.get('action', '?')}; "
-                f"setting={facts.get('setting', '?')}; "
-                f"mood={facts.get('mood', '?')}"
-            )
-        elif scene.get("sceneSummary") or scene.get("refinedPrompt"):
-            summary = scene.get("sceneSummary") or scene.get("refinedPrompt", "")
-            lines.append(f"- {b['beatName']}: {_truncate(summary, 220)}")
-    if not lines:
-        return ""
-    return "What you have already established (use these details when reflecting the story back):\n" + "\n".join(lines) + "\n"
-
-
-def _project_conversation_block(beat: dict, manifest: dict) -> str:
-    """Short cross-beat context so each node can remember details from other segments."""
-    lines: list[str] = []
-    for b in manifest.get("beats") or []:
-        if b.get("beatId") == beat.get("beatId"):
-            continue
-        scenes = b.get("scenes") or []
-        scene = scenes[0] if scenes else None
-        if not scene:
-            continue
+            for key in ("subject", "action", "setting", "framing", "mood",
+                       "characterDescription", "locationDescription",
+                       "voiceLine", "captionLine"):
+                value = (facts.get(key) or "").strip() if isinstance(facts.get(key), str) else facts.get(key)
+                if value:
+                    lines.append(f"- {key}: {value}")
+        summary = scene.get("sceneSummary") or scene.get("refinedPrompt") or ""
+        if summary:
+            lines.append(f"- summary: {_truncate(summary, 400)}")
+        # Include the user's actual prior answers in full so the agent can
+        # reflect specific phrases back. Cap at last 4 user turns per beat
+        # to bound the worst case (a beat with a 30-turn conversation).
         user_turns = [
             str(t.get("content", "")).strip()
-            for t in scene.get("conversation", [])
+            for t in (scene.get("conversation") or [])
             if t.get("role") == "user" and str(t.get("content", "")).strip()
-        ]
+        ][-4:]
         if user_turns:
-            lines.append(f"- {b.get('beatName', 'Beat')}: {_truncate(' / '.join(user_turns[-2:]), 180)}")
-    if not lines:
+            lines.append("- user answers: " + " ┆ ".join(user_turns))
+        sections.append("\n".join(lines))
+    if not sections:
         return ""
-    return "Relevant details from other segments:\n" + "\n".join(lines) + "\n"
+    return (
+        "# Prior beats (the movie so far)\n"
+        "Use these details when reflecting the story back. Reuse specific "
+        "phrases the user gave you. Carry character + world descriptors "
+        "VERBATIM — the protagonist looks the same in every frame.\n\n"
+        + "\n\n".join(sections)
+        + "\n"
+    )
+
+
+def _later_beats_block(beat: dict, manifest: dict) -> str:
+    """Soft awareness of beats AFTER the current one — only their archetype
+    intent + any user-provided seed answers if they exist. Lets the agent
+    avoid burning the climax twist on the inciting incident, etc.
+    """
+    beat_idx = next(
+        (i for i, b in enumerate(manifest["beats"]) if b["beatId"] == beat["beatId"]),
+        0,
+    )
+    later = manifest["beats"][beat_idx + 1:]
+    if not later:
+        return ""
+    lines: list[str] = []
+    for b in later:
+        archetype = b.get("archetype", {})
+        lines.append(f"- {b['beatName']}: {archetype.get('intent', '')} (mood: {archetype.get('mood', '?')})")
+    return (
+        "# Beats still to come (do not pre-empt their dramatic role)\n"
+        + "\n".join(lines)
+        + "\n"
+    )
+
+
+def _movie_plan_block(manifest: dict) -> str:
+    """If the manifest carries a movie plan (from /api/movie-plan), inject
+    the global story coordinator so every beat lives inside the same movie.
+    No-op when no plan is stamped — movie-plan is opt-in.
+    """
+    plan = manifest.get("moviePlan") or {}
+    if not plan:
+        return ""
+    parts = ["# Movie plan (the holistic story this beat lives inside)"]
+    if plan.get("logline"):
+        parts.append(f"- Logline: {plan['logline']}")
+    if plan.get("protagonistArc"):
+        parts.append(f"- Protagonist arc: {plan['protagonistArc']}")
+    if plan.get("visualMotif"):
+        parts.append(f"- Visual motif (carry through every beat): {plan['visualMotif']}")
+    if plan.get("toneAndGenre"):
+        parts.append(f"- Tone / genre: {plan['toneAndGenre']}")
+    if plan.get("dramaticQuestion"):
+        parts.append(f"- Dramatic question: {plan['dramaticQuestion']}")
+    return "\n".join(parts) + "\n"
 
 
 def _mode_of(manifest: dict) -> str:
@@ -264,7 +331,8 @@ def _system_prompt(beat: dict, manifest: dict) -> str:
         0,
     )
     earlier = _earlier_beats_block(beat, manifest)
-    cross_beat = _project_conversation_block(beat, manifest)
+    later = _later_beats_block(beat, manifest)
+    movie_plan = _movie_plan_block(manifest)
     archetype = beat["archetype"]
     mode = _mode_of(manifest)
 
@@ -291,21 +359,22 @@ The master idea: "{manifest['masterPrompt']}"
 
 The user has not seen the structure. They think you are just curious. Stay that way.
 
+{movie_plan}
 {earlier}
-{cross_beat}
+{later}
 NEVER say "for the hook of your story" or "let us establish the inciting incident" or "for the climax."
 NEVER reveal the 7-beat structure. The user feels like they are just talking about their movie. Keep it that way.
 
 # Thinking
 Before you respond, think.
-- Trace which facets (subject, action, setting, framing, mood, characterDescription, locationDescription) are still unclear or thin.
+- Read the prior beats above carefully. The character and world have already been established by earlier beats — REUSE the exact descriptions, do not invent fresh ones. The protagonist must look the same in every frame.
+- Trace which facets (subject, action, setting, framing, mood, characterDescription, locationDescription) are still unclear or thin FOR THIS BEAT specifically.
 - Treat ordinary concrete nouns as valid facets. If the user says "desert", setting is covered. If they say "astronaut", subject is covered. If they say "runs", action is covered.
 - Never ask for a facet the user just answered. Deepen it instead: stakes, cause, consequence, emotional charge, or what changed.
 - The user's latest concrete answer wins over the master idea. If they add a desert to an astronaut story, do not ask "where is this desert?" or "is this still on Europa?" Treat it as the setting and ask why the astronaut is there, what they are running from, or what discovery changed the scene.
-- Use the original prompt, this beat's conversation, and relevant details from other segments. Never ignore newly added details.
 - If the user answers your exact question, do not ask the same question again. Ask the next causal or consequential thing.
 - Identify the most charged, naturally curious unresolved thing about the story so far.
-- Draft the question, then critique it: does it reflect the story back? Does it ask the most charged thing? Are the three suggestions meaningfully different (each implying a different movie)?
+- Draft the question, then critique it: does it reflect the story back? Does it open up the user's thinking or constrain it? Are any suggestions you offer GENUINELY different movies, or are they minor variations?
 - Decide whether you have enough to call markSufficient or whether to ask one more question.
 Your thinking is shown to the developer in a side panel — be substantive but not endless.
 
@@ -314,6 +383,7 @@ Every question must:
 1. Reflect the story so far back to the user. Prove you were listening. Use details they actually said.
 2. Ask the most charged, naturally curious thing about the premise — what anyone would want to know next, not what the structure needs.
 3. Be answerable in one sentence by someone who has thought about their idea for five minutes. Never make them invent things they have not thought about.
+4. INVITE the user's creativity, not corner it. The user is the writer — you are the curious listener.
 
 Bad: "Describe the setting of scene 3."
 Bad: "Does he feel bad?"
@@ -321,20 +391,29 @@ Bad: "What tone are you going for?"
 Good: "Okay so he is pretending to be their son, does he actually start feeling something for them or is he just in too deep to leave?"
 Good: "And the family, do they have any idea something is off?"
 
-# Suggested answers — exactly 3 per askQuestion call
-Each suggestedAnswer must:
-- Cover a meaningfully different direction. Not minor variations.
-- Be written first-person-adjacent, plain language, how a person would actually say it.
-- Imply a different movie if selected.
+# Suggested answers — variable count, never a forced multiple-choice
+The user explicitly does NOT want every question to be a 3-option multiple choice. That format makes the conversation feel constrained — like you are pushing them toward one of three predetermined directions. Instead, the count is variable and reflects the question's shape:
 
-Bad set:
+- 0 suggestions, openEnded=true: when the question wants the user's invention. ("What does the family already know that he doesn't?") The UI will show a prominent text input. Use this when the question is genuinely open and any of 100+ valid answers would be interesting.
+- 1-2 suggestions: lightweight nudges to spark thinking. ("Maybe she finds the letter too soon. Or maybe she's the one who wrote it." → 2 nudges, but the user still types freely.) Mark openEnded=true.
+- 3-4 suggestions: when each option implies a meaningfully different movie. Use this sparingly — only when the contrasts genuinely help the user feel out the texture of the choice.
+
+Each suggestion (when present) must:
+- Be written first-person-adjacent, plain language, how a person would actually say it.
+- Imply a meaningfully different direction if selected. Never offer minor variations of the same answer.
+- Expand the user's thinking, not constrain it. If you find yourself writing 3 suggestions that are 80% the same, the right move is to drop to 0 + openEnded=true.
+
+Bad set (constrains user):
   ["He starts to feel guilty", "He feels bad about it", "He has remorse"]   (all the same direction)
 
-Good set:
+Good set (each is a different movie):
   ["He genuinely starts to love them, which is the problem",
    "He tells himself it is just the job but it is clearly becoming something more",
    "He doesn't feel anything for them, he is just trapped by circumstances"]
-  (each implies a different movie: tragedy, character study, thriller)
+  (tragedy, character study, thriller)
+
+Better still (when the question is genuinely open):
+  []  with openEnded=true. Let the user write their own answer. Trust them.
 
 # When to stop — YOU decide. There is no target number.
 The right number of questions for this beat is whatever the conversation needs. It can be one. It can be seven. It depends entirely on the texture of what the user gives you.
@@ -352,6 +431,7 @@ Do NOT pace yourself toward a quota. Do NOT try to hit a number. Each turn ask y
 - Asking the same shape of question twice in a row ("and how does X feel? ... and how does Y feel?"). Vary the angle each turn.
 - Asking the user to invent things they have not thought about ("what does the building look like?" when they never mentioned a building).
 - Recapping back the entire story so far. One specific detail to prove you were listening, not a synopsis.
+- Forcing 3-option multiple choice on every question. If two questions in a row come out as 3-suggestion blocks, you are constraining the user. Drop the suggestions or vary the count.
 
 # beatFacts — what the deterministic pipeline reads
 When you call markSufficient, you also emit a structured beatFacts object. The downstream pipeline (motion preset selector, character image generator, location image generator, video generator) reads this — not the raw conversation. Be specific.
@@ -362,7 +442,7 @@ beatFacts must contain:
 - setting: where this happens, concrete
 - framing: lens / camera distance / camera movement (e.g. "85mm intimate close-up, slight handheld")
 - mood: emotional register (a word or two)
-- characterDescription: appearance, age, costume, identifying details — enough for an image model to render the same person consistently across all 7 beats
+- characterDescription: appearance, age, costume, identifying details — enough for an image model to render the same person consistently across all 7 beats. CARRY FORWARD VERBATIM from earlier beats once the protagonist is established. Do not let descriptions drift.
 - locationDescription: visual details of the setting — enough for an image model to render the location
 - voiceLine: ONE short narration or dialogue line for this beat (8-18 words, ~5 seconds spoken). This is what the audience HEARS over the image. It can be a narrator's voice-over OR a single line of overheard dialogue. Examples:
    - VO: "She had spent eleven years pretending the language was real."
@@ -373,7 +453,7 @@ beatFacts must contain:
 Carry forward character + world descriptors verbatim from earlier beats so the protagonist looks the same in every frame. Keep voiceLine consistent in voice — if beat 1 was first-person VO, every beat should be first-person VO.
 
 # Tools — call exactly one per turn
-- askQuestion(question, reasoning, suggestedAnswers, estimatedRemaining)
+- askQuestion(question, reasoning, suggestedAnswers, openEnded?, estimatedRemaining)
 - markSufficient(refinedPrompt, sceneSummary, beatFacts, suggestedDuration)
 
 You must call exactly one tool every turn. Never reply in plain text. Never break voice.
@@ -679,17 +759,41 @@ def _build_request_config(
 
 
 def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
-    """Convert a raw tool call into the public AgentResponse shape."""
+    """Convert a raw tool call into the public AgentResponse shape.
+
+    Suggested answers are now non-deterministic in count: 0-4. We do not
+    pad with filler ("Tell me more in your own words.") — the user
+    explicitly does not want that. When the agent emits 0 suggestions, we
+    surface openEnded=true so the UI knows to put the text input front
+    and center."""
     if name == "askQuestion":
-        suggestions = list(args.get("suggestedAnswers") or [])
-        while len(suggestions) < 3:
-            suggestions.append("Tell me more in your own words.")
-        suggestions = [str(s) for s in suggestions[:3]]
+        raw_suggestions = list(args.get("suggestedAnswers") or [])
+        # Cap at 4, dedupe trivial duplicates, keep ordering.
+        seen: set[str] = set()
+        suggestions: list[str] = []
+        for s in raw_suggestions:
+            text = str(s).strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            suggestions.append(text)
+            if len(suggestions) >= 4:
+                break
+        # Honor explicit openEnded flag; otherwise infer from emptiness.
+        explicit_open = args.get("openEnded")
+        if explicit_open is None:
+            open_ended = len(suggestions) == 0
+        else:
+            open_ended = bool(explicit_open)
         return {
             "kind": "question",
             "question": str(args.get("question", "")),
             "reasoning": str(args.get("reasoning", "")),
             "suggestedAnswers": suggestions,
+            "openEnded": open_ended,
             "estimatedRemaining": int(args.get("estimatedRemaining", 1)),
         }
     if name == "markSufficient":
@@ -712,30 +816,59 @@ def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
 
 
 def _repair_question_if_redundant(result: dict, beat: dict, conversation: list[dict]) -> dict:
+    """Catch only the most blatant redundancy: literal duplicate of the
+    immediate prior agent question. The old version pattern-matched on
+    keywords ("where" / "still on" / "is this") and force-rewrote
+    questions into templated facet questions, which made the conversation
+    feel mechanical. We trust the agent's question now and only intervene
+    on exact duplication, which is a real Gemini failure mode under low
+    temperature.
+    """
     if result.get("kind") != "question":
         return result
-    question = str(result.get("question") or "")
-    q = question.lower()
+    question = (result.get("question") or "").strip().lower()
+    if not question:
+        return result
+
+    # Find the immediately prior agent question.
+    prior_agent_question = ""
+    for turn in reversed(conversation):
+        if turn.get("role") == "agent":
+            prior_agent_question = str(turn.get("content") or "").strip().lower()
+            break
+
+    def _normalize(s: str) -> str:
+        return " ".join(s.rstrip(".?!").split())
+
+    # Trigger 1: exact duplicate (modulo whitespace / final punctuation).
+    is_exact_duplicate = (
+        prior_agent_question
+        and _normalize(question) == _normalize(prior_agent_question)
+    )
+
+    # Trigger 2: question that overrides the user's just-stated setting
+    # by re-asserting the master prompt's original setting. Pattern:
+    # "still on X" / "part of X" — we keep this narrow because the old
+    # broad "where" / "is this" check was too aggressive and forced
+    # mechanical-feeling rewrites on natural questions.
     report = score(conversation)
     setting_covered = "setting" in report.covered
-    action_covered = "action" in report.covered
-
-    asks_setting_again = (
+    contradicts_user_setting = (
         setting_covered
-        and any(phrase in q for phrase in ("where", "still on", "part of", "happen somewhere", "is this"))
+        and any(phrase in question for phrase in ("still on ", "part of ", "is this still"))
     )
-    repeats_action = action_covered and any(
-        phrase in q for phrase in ("what are they doing", "what is the main thing they are doing")
-    )
-    if not asks_setting_again and not repeats_action:
+
+    if not (is_exact_duplicate or contradicts_user_setting):
         return result
 
     repaired_question, suggestions, target = _missing_facet_question(beat, conversation, 0)
+    reason = "exact duplicate" if is_exact_duplicate else "contradicts user-stated setting"
     return {
         **result,
         "question": repaired_question,
         "suggestedAnswers": suggestions,
-        "reasoning": f"Repaired redundant {target} question after user already supplied setting/action.",
+        "openEnded": False,
+        "reasoning": f"Repaired ({reason}) → target: {target}.",
         "estimatedRemaining": max(0, int(result.get("estimatedRemaining", 1))),
     }
 
