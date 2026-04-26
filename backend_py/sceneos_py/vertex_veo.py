@@ -207,7 +207,20 @@ async def generate(params: GenerateClipParams) -> dict:
 
     try:
         logger.info("[vertex] submitting Veo job %s publicId=%s", provider_job_id, pid)
-        op = await _authed_post(_predict_url(), body)
+        # Idempotency key tied to our pre-generated job id: if Veo accepts
+        # the predict-long-running call but the response parse blows up,
+        # the retry returns the cached LRO name instead of re-submitting
+        # (Veo charges per submission).
+        from .retry import with_reliability
+        op = await with_reliability(
+            "vertex.veo.submit",
+            lambda: _authed_post(_predict_url(), body),
+            timeout_seconds=120.0,
+            max_attempts=3,
+            base_backoff=2.0,
+            idempotency_key=f"veo.submit:{provider_job_id}",
+            breaker_name="vertex.veo",
+        )
     except Exception as exc:
         _JOBS[provider_job_id] = {"status": "failed", "error": str(exc)}
         logger.exception("[vertex] submit failed job=%s", provider_job_id)
@@ -239,10 +252,22 @@ async def _poll_until_done(provider_job_id: str) -> None:
     op_name = job["operationName"]
     pid = job["publicId"]
 
+    from .retry import with_reliability
+
     for _ in range(_MAX_POLL_ATTEMPTS):
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         try:
-            result = await _authed_post(_fetch_op_url(), {"operationName": op_name})
+            # Poll is a pure read; safe to retry. We do NOT use an
+            # idempotency key because each poll observes fresh state and
+            # caching would mask "done=true" transitions.
+            result = await with_reliability(
+                "vertex.veo.poll",
+                lambda: _authed_post(_fetch_op_url(), {"operationName": op_name}),
+                timeout_seconds=30.0,
+                max_attempts=3,
+                base_backoff=1.0,
+                breaker_name="vertex.veo",
+            )
         except Exception as exc:
             _JOBS[provider_job_id] = {"status": "failed", "error": f"poll error: {exc}"}
             logger.exception("[vertex] poll failed job=%s", provider_job_id)

@@ -8,8 +8,13 @@ REQUIRED_FACETS = ("subject", "action", "setting", "framing", "mood")
 # Soft target (the agent uses these as guidance via the system prompt; not
 # Python-enforced for the live path). Stub fallback still uses MIN as a
 # deterministic floor since it can't reason about coverage.
-MIN_USER_TURNS = 3
-MAX_QUESTIONS = 8  # safety cap — real agents almost never hit this
+#
+# Both numbers are deliberately loose: the user explicitly does NOT want a
+# fixed 3-question loop. The live agent decides when to stop based on
+# texture; these are only used by the no-LLM stub fallback and as the
+# system-prompt safety ceiling.
+MIN_USER_TURNS = 2  # stub-fallback floor: still ask one Q after first answer
+MAX_QUESTIONS = 12  # safety ceiling — real agents almost never hit this
 
 FACET_HINTS: dict[str, tuple[str, ...]] = {
     "subject": (
