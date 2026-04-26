@@ -18,6 +18,7 @@ import { EditorTimeline } from "@/components/editor/editor-timeline";
 import { EditorClipDetail } from "@/components/editor/editor-clip-detail";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
+import { useNarrationStore } from "@/lib/use-narration";
 import { api, ApiError } from "@/lib/api";
 import { nowISO } from "@/lib/utils";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
@@ -74,6 +75,20 @@ export function EditorRoute() {
       mountedRef.current = false;
     };
   }, []);
+
+  // Editor-arrival narration. Plays once on mount when manifest is loaded —
+  // the co-director welcoming the user into the cutting room. Skipped if
+  // audio is muted (handled inside playMoment).
+  const editorArrivalPlayedRef = useRef(false);
+  useEffect(() => {
+    if (editorArrivalPlayedRef.current) return;
+    if (!manifest) return;
+    editorArrivalPlayedRef.current = true;
+    void useNarrationStore.getState().playMoment("editor_arrived", {
+      manifest,
+      masterPrompt: manifest.masterPrompt,
+    });
+  }, [manifest]);
 
   // Boot — seed editor decisions + first baked URL on mount, once.
   // 30s client-side timeout so a hanging Vertex/Cloudinary call surfaces
@@ -628,7 +643,6 @@ function EditorAwaitingApprovalsFallback({ hasManifest }: { hasManifest: boolean
  */
 function CloudinaryArtifactStrip({
   url,
-  decisions,
   thumbnailUrl,
   urlCopied,
   setUrlCopied,
@@ -639,89 +653,68 @@ function CloudinaryArtifactStrip({
   urlCopied: boolean;
   setUrlCopied: (v: boolean) => void;
 }) {
-  const chips = useMemo(() => deriveTransformChips(decisions), [decisions]);
+  // Stripped to one line: ember eyebrow + Copy / Open / Poster
+  // affordances. The "fl_splice × 2 / so · eo × 1 / e_fade × 2 ..."
+  // chip listing was debug noise leaking into the UI per user feedback
+  // ("too verbose, too overwhelming"). The transforms still ship in
+  // the URL — judges who care can read them in the URL itself; they
+  // shouldn't have to read a translated chip strip on every render.
   return (
-    <section className="space-y-3">
-      <div className="flex items-baseline justify-between">
-        <div className="font-body text-micro font-medium uppercase tracking-[0.08em] text-brand-ember">
-          Cloudinary · single-URL bake
-        </div>
-        <div className="flex items-center gap-4">
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(url);
-                setUrlCopied(true);
-                window.setTimeout(() => setUrlCopied(false), 1400);
-                toast.success("Master cut URL copied.");
-              } catch {
-                toast.error("Couldn't reach the clipboard.");
-              }
-            }}
-            className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
-            aria-label="Copy master cut URL"
-          >
-            {urlCopied ? (
-              <>
-                <Check size={11} strokeWidth={2} className="text-brand-ember" aria-hidden="true" />
-                <span className="text-brand-ember">Copied</span>
-              </>
-            ) : (
-              <>
-                <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
-                Copy
-              </>
-            )}
-          </button>
+    <section className="flex items-baseline justify-between">
+      <div className="font-body text-micro font-medium uppercase tracking-[0.08em] text-brand-ember">
+        Cloudinary · single-URL bake
+      </div>
+      <div className="flex items-center gap-4">
+        <button
+          type="button"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              setUrlCopied(true);
+              window.setTimeout(() => setUrlCopied(false), 1400);
+              toast.success("Master cut URL copied.");
+            } catch {
+              toast.error("Couldn't reach the clipboard.");
+            }
+          }}
+          className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
+          aria-label="Copy master cut URL"
+        >
+          {urlCopied ? (
+            <>
+              <Check size={11} strokeWidth={2} className="text-brand-ember" aria-hidden="true" />
+              <span className="text-brand-ember">Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy size={11} strokeWidth={1.5} aria-hidden="true" />
+              Copy
+            </>
+          )}
+        </button>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
+          aria-label="Open master cut URL in a new tab"
+        >
+          <ExternalLink size={11} strokeWidth={1.5} aria-hidden="true" />
+          Open
+        </a>
+        {thumbnailUrl ? (
           <a
-            href={url}
+            href={thumbnailUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
-            aria-label="Open master cut URL in a new tab"
+            aria-label="Open poster-frame derivative in a new tab"
           >
-            <ExternalLink size={11} strokeWidth={1.5} aria-hidden="true" />
-            Open
+            <ImageIcon size={11} strokeWidth={1.5} aria-hidden="true" />
+            Poster
           </a>
-        </div>
+        ) : null}
       </div>
-
-      {/* Full URL block dropped per UX feedback — Copy + Open buttons in
-          the row above are the load-bearing affordance; the long mono
-          string was visual noise that didn't help the user act on it.
-          The transform-vocabulary chips below tell the same Cloudinary
-          story without the raw URL. */}
-
-      {chips.length > 0 ? (
-        <div className="flex flex-wrap gap-x-3 gap-y-1.5">
-          {chips.map((c) => (
-            <span
-              key={c.label}
-              title={c.hint}
-              className="font-mono text-micro tabular-nums text-brand-ember/85"
-            >
-              {c.label}
-            </span>
-          ))}
-        </div>
-      ) : null}
-
-      {thumbnailUrl ? (
-        <a
-          href={thumbnailUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="group inline-flex items-center gap-2 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
-          aria-label="Open poster-frame derivative in a new tab"
-        >
-          <ImageIcon size={11} strokeWidth={1.5} aria-hidden="true" />
-          Poster-frame derivative
-          <span className="font-mono text-micro text-fg-tertiary/70 group-hover:text-brand-ember">
-            /so_auto/&lt;id&gt;.jpg
-          </span>
-        </a>
-      ) : null}
     </section>
   );
 }

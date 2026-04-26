@@ -1,20 +1,12 @@
 import type { ReactNode } from "react";
-import type { EditAudio, EditDecisions, EditLook } from "@/types/api";
-import { cn } from "@/lib/utils";
+import type { EditAudio, EditDecisions } from "@/types/api";
 
-const LOOKS: { value: EditLook; label: string; hint: string }[] = [
-  { value: "neutral", label: "Neutral", hint: "no LUT" },
-  { value: "warm-archive", label: "Warm archive", hint: "memoir, sepia bias" },
-  { value: "cool-modern", label: "Cool modern", hint: "thriller, blue cast" },
-  { value: "high-contrast-mono", label: "Mono", hint: "high contrast B&W" },
-  { value: "punchy-trailer", label: "Punchy trailer", hint: "vibrance, contrast" },
-  { value: "soft-romance", label: "Soft romance", hint: "haze, warmth" },
-];
-
-// Placeholder Cloudinary public ID for the music-bed feature. Real audio
-// beds get uploaded under their own publicIds; this constant is the
-// no-asset-yet sentinel the editor uses while the audio library is scaffolded.
-const DEMO_MUSIC_TRACK = "audio/demo-bed";
+// Verified Cloudinary audio publicId — the lighthouse-bake's Lyria score
+// (piano + strings, ducked low). Replaces the unverified "audio/demo-bed"
+// sentinel which 404'd on Cloudinary because nobody had uploaded an
+// asset under that path. Using a known-good publicId means the music
+// bed actually plays the moment the user toggles it on.
+const DEMO_MUSIC_TRACK = "sceneos/8dbb956c76a7/audio/music";
 
 interface EditorToolbarProps {
   /** Null while /api/editor/init is in flight or after a reset. The toolbar
@@ -24,177 +16,41 @@ interface EditorToolbarProps {
 }
 
 /**
- * Global controls for the cut. Hairline-divided sections, no card chrome.
- * Each section: caption-track eyebrow + value hint on the right + control row.
- * Every change re-bakes the Cloudinary URL via /api/editor/apply.
+ * Global controls for the cut. Per user direction ("really we just want
+ * the fades and the trims and the appending — that's what's valuable.
+ * music yeah and then otherwise we're good"), this column is reduced to
+ * MUSIC ONLY. Trims + fades + per-clip transition live on the timeline /
+ * per-clip detail surface in the left column; appending is the master
+ * cut's `fl_splice` chain (already visible as the URL).
+ *
+ * Dropped from earlier versions: Look LUT picker, Captions anchor toggle,
+ * Watermark toggle, fade-in / fade-out / duck sliders. All were either
+ * non-essential ("verbose and overwhelming" per user feedback) or
+ * silently broken (watermark publicId 404'd on the demo cloud).
  */
 export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
-  // The toolbar owns its loading-state contract — callers mount it
-  // unconditionally and we early-return while decisions are still pending.
   if (!decisions) return null;
   const audio = decisions.audio ?? null;
-  const look = decisions.look ?? "neutral";
-  const captionPosition = decisions.captionPosition ?? "south";
   const setAudio = (next: EditAudio | null) => onPatch({ audio: next });
 
   return (
     <div className="space-y-5">
-      {/* Look LUT — 3×2 grid, hairline-divided cells (no rounded chrome). */}
-      <ToolbarSection eyebrow="Look" hint={LOOKS.find((l) => l.value === look)?.hint ?? ""}>
-        <div className="grid grid-cols-3 border border-fg-tertiary/15 [&>button]:border-l [&>button]:border-t [&>button]:border-fg-tertiary/15 [&>button:nth-child(3n+1)]:border-l-0 [&>button:nth-child(-n+3)]:border-t-0">
-          {LOOKS.map((l) => (
-            <button
-              key={l.value}
-              type="button"
-              onClick={() => onPatch({ look: l.value })}
-              className={cn(
-                "px-2.5 py-2 text-left font-body text-pill",
-                "transition-colors duration-200 ease-out",
-                look === l.value
-                  ? "bg-brand-ember/10 text-brand-ember"
-                  : "text-fg-tertiary hover:text-fg-primary",
-              )}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
-      </ToolbarSection>
-
-      {/* Music bed — text-button toggle + always-visible volume slider
-          when on. Default volume -10dB (~30% perceived) so the bed sits
-          under dialogue without overwhelming. Surface fade-in/out + duck
-          inline below as the music's nested controls. */}
       <ToolbarSection
-        eyebrow="Music bed"
-        hint={audio ? `${audio.publicId} · ${audio.volume ?? 0}dB` : "off"}
+        eyebrow="Music"
+        hint={audio ? `${audio.volume ?? -10}dB` : "off"}
       >
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() =>
-              setAudio(
-                audio
-                  ? null
-                  : { publicId: DEMO_MUSIC_TRACK, volume: -10, fadeInMs: 800, fadeOutMs: 1200 },
-              )
-            }
-            className="font-body text-pill font-medium text-fg-secondary transition-colors hover:text-brand-ember"
-          >
-            {audio ? "Remove" : "Add demo bed"}
-          </button>
-          {audio ? (
-            <>
-              <input
-                type="range"
-                min={-40}
-                max={0}
-                step={1}
-                value={audio.volume ?? -10}
-                onChange={(e) => setAudio({ ...audio, volume: Number(e.target.value) })}
-                className="flex-1 accent-brand-ember"
-                aria-label="Music volume"
-                title="Music bed volume (dB)"
-              />
-              <span className="w-12 text-right font-mono text-caption tabular-nums text-fg-tertiary">
-                {audio.volume ?? -10}dB
-              </span>
-            </>
-          ) : null}
-        </div>
-        {audio ? (
-          <div className="mt-2 space-y-2">
-            {/* Fade in / fade out — exposed as inline range sliders with
-                mono numeric readouts so the user reads them as a real
-                editing decision, not a hidden detail. The agent can
-                propose values via its commit/proposal flow; the user
-                tunes from here when they want to feel it. */}
-            <div className="flex items-center gap-3">
-              <span className="w-14 font-body text-caption text-fg-tertiary">Fade in</span>
-              <input
-                type="range"
-                min={0}
-                max={4000}
-                step={100}
-                value={audio.fadeInMs ?? 0}
-                onChange={(e) => setAudio({ ...audio, fadeInMs: Number(e.target.value) })}
-                className="flex-1 accent-brand-ember"
-                aria-label="Music fade-in milliseconds"
-              />
-              <span className="w-12 text-right font-mono text-caption tabular-nums text-fg-tertiary">
-                {(audio.fadeInMs ?? 0) === 0 ? "off" : `${(audio.fadeInMs ?? 0) / 1000}s`}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="w-14 font-body text-caption text-fg-tertiary">Fade out</span>
-              <input
-                type="range"
-                min={0}
-                max={4000}
-                step={100}
-                value={audio.fadeOutMs ?? 0}
-                onChange={(e) => setAudio({ ...audio, fadeOutMs: Number(e.target.value) })}
-                className="flex-1 accent-brand-ember"
-                aria-label="Music fade-out milliseconds"
-              />
-              <span className="w-12 text-right font-mono text-caption tabular-nums text-fg-tertiary">
-                {(audio.fadeOutMs ?? 0) === 0 ? "off" : `${(audio.fadeOutMs ?? 0) / 1000}s`}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                onPatch({
-                  duckOriginalAudioDb: decisions.duckOriginalAudioDb == null ? -12 : null,
-                })
-              }
-              className={cn(
-                "font-body text-pill transition-colors",
-                decisions.duckOriginalAudioDb != null
-                  ? "text-brand-ember hover:text-brand-ember/80"
-                  : "text-fg-tertiary hover:text-fg-primary",
-              )}
-            >
-              Duck clip audio:{" "}
-              {decisions.duckOriginalAudioDb != null
-                ? `${decisions.duckOriginalAudioDb}dB`
-                : "off"}
-            </button>
-          </div>
-        ) : null}
-      </ToolbarSection>
-
-      {/* Captions — anchor toggle as inline text affordances. */}
-      <ToolbarSection eyebrow="Captions" hint={`anchored: ${captionPosition}`}>
-        <div className="flex items-center gap-4">
-          {(["south", "north"] as const).map((pos) => (
-            <button
-              key={pos}
-              type="button"
-              onClick={() => onPatch({ captionPosition: pos })}
-              className={cn(
-                "font-body text-pill transition-colors",
-                captionPosition === pos
-                  ? "font-medium text-brand-ember"
-                  : "text-fg-tertiary hover:text-fg-primary",
-              )}
-            >
-              {pos === "south" ? "Bottom" : "Top"}
-            </button>
-          ))}
-        </div>
-      </ToolbarSection>
-
-      {/* Watermark — single text-button toggle. */}
-      <ToolbarSection eyebrow="Watermark" hint={decisions.watermarkPublicId ?? "off"}>
         <button
           type="button"
           onClick={() =>
-            onPatch({ watermarkPublicId: decisions.watermarkPublicId ? null : "sceneos-mark" })
+            setAudio(
+              audio
+                ? null
+                : { publicId: DEMO_MUSIC_TRACK, volume: -10, fadeInMs: 800, fadeOutMs: 1200 },
+            )
           }
           className="font-body text-pill font-medium text-fg-secondary transition-colors hover:text-brand-ember"
         >
-          {decisions.watermarkPublicId ? "Remove" : "Add corner mark"}
+          {audio ? "Remove score" : "Add score"}
         </button>
       </ToolbarSection>
     </div>
