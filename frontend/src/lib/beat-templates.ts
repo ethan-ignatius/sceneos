@@ -276,7 +276,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Hook",
     intent: "Establish the false equilibrium. Stop the audience from looking away.",
     mood: "intimate-hook",
-    suggestedDuration: 5,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: One image that contains the premise.",
       "LENS: 35mm or 50mm. Close enough to read intent.",
@@ -290,7 +290,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Exposition",
     intent: "Establish the world, the protagonist, and what they want.",
     mood: "wide-establish",
-    suggestedDuration: 8,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: Wider. Show the protagonist in their world.",
       "LENS: 24mm scale OR 85mm compression to isolate them in it.",
@@ -304,7 +304,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Inciting Incident",
     intent: "The disruption. The protagonist must act.",
     mood: "intimate-hook",
-    suggestedDuration: 6,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: The break. A specific physical moment.",
       "LENS: Switch focal length from exposition.",
@@ -318,7 +318,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Rising Action",
     intent: "Stakes escalate. Obstacles compound. The protagonist commits.",
     mood: "kinetic-rising",
-    suggestedDuration: 10,
+    suggestedDuration: 6,
     directorNotes: [
       "FRAME: Variety. Avoid eye-level for too long.",
       "LENS: Mix focal lengths.",
@@ -332,7 +332,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Climax",
     intent: "The apex. The dramatic question is answered.",
     mood: "tense-climax",
-    suggestedDuration: 8,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: One held image of the highest stakes OR maximum motion.",
       "LENS: Wide for scale OR ECU for emotional impact.",
@@ -346,7 +346,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Falling Action",
     intent: "The aftermath. Consequences land.",
     mood: "still-resolve",
-    suggestedDuration: 6,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: The world after. Echo the exposition.",
       "LENS: Match or mirror exposition lens.",
@@ -360,7 +360,7 @@ const STORY: BeatTemplateDef[] = [
     beatName: "Resolution",
     intent: "The new normal. The last frame is the emotional register.",
     mood: "still-resolve",
-    suggestedDuration: 5,
+    suggestedDuration: 4,
     directorNotes: [
       "FRAME: Final image. The thing they remember.",
       "LENS: Match the emotional center.",

@@ -25,8 +25,8 @@ const fadeUp = {
  * The video URL is mood-graded at the Cloudinary CDN edge — same publicId,
  * different transform → different look. See lib/cloudinary-transforms.ts.
  *
- * Approve: marks scene approved + closes the drawer so the canvas's
- *   approved-state node visual takes over.
+ * Approve: marks scene approved (drawer stays open — use the footer's
+ *   "Next" to move to the next beat in the pipeline).
  * Regenerate: clears clip fields + flips status back to ready-to-generate;
  *   conversation is preserved.
  */
@@ -34,26 +34,8 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   const scene = beat.scenes[0];
   const approveScene = useBeatGraphStore((s) => s.approveScene);
   const regenerateScene = useBeatGraphStore((s) => s.regenerateScene);
-  const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
-  // Tracks the post-Approve close-drawer timer so unmount cancels it.
-  // Without this, force-closing the drawer mid-approve fires setActiveBeat
-  // on a stale state — and could close a *different* beat the user has
-  // since opened.
-  const approveTimerRef = useRef<number | null>(null);
-  useEffect(() => {
-    return () => {
-      if (approveTimerRef.current !== null) {
-        window.clearTimeout(approveTimerRef.current);
-        approveTimerRef.current = null;
-      }
-    };
-  }, []);
-
   const isApproved = beat.status === "approved" || scene.approved;
 
-  // Mood-graded Cloudinary URL when a publicId exists. The real backend
-  // always emits a publicId on success — null = an actual no-clip state,
-  // which the empty render below handles.
   const src = scene.clipPublicId
     ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
     : "";
@@ -67,19 +49,9 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   }
 
   const handleApprove = () => {
-    // Race guard: a double-click within the 220ms close-drawer window
-    // would re-fire approveScene + the chime. The timer ref doubles as
-    // an "in flight" flag — if it's set, we're already approving.
-    if (isApproved || approveTimerRef.current !== null) return;
+    if (isApproved) return;
     approveScene(beat.beatId, scene.sceneId);
-    // Two-note chime — quiet completion punctuation; mute toggle respected.
     playApproveChime();
-    // Brief pause (DURATIONS.quick) so the user sees the approve happen
-    // before the drawer exit animation runs — feels more deliberate.
-    approveTimerRef.current = window.setTimeout(() => {
-      approveTimerRef.current = null;
-      setActiveBeat(null);
-    }, DURATIONS.quick * 1000);
   };
 
   const handleRegenerate = () => {
@@ -118,13 +90,18 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
         </span>
       </motion.div>
 
-      <motion.p
+      <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="line-clamp-3 max-w-prose font-body text-[0.875rem] leading-[1.55] text-fg-secondary"
+        className="max-w-prose rounded-md border border-fg-tertiary/20 bg-fg-primary/[0.02] p-3"
       >
-        {scene.refinedPrompt ?? beat.archetype.intent}
-      </motion.p>
+        <p
+          className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words font-body text-[0.875rem] leading-[1.55] text-fg-secondary"
+          title={scene.refinedPrompt ?? beat.archetype.intent}
+        >
+          {scene.refinedPrompt ?? beat.archetype.intent}
+        </p>
+      </motion.div>
 
       <motion.div
         variants={fadeUp}

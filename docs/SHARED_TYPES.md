@@ -201,7 +201,7 @@ export interface GenerateResponse {
  *  - higgsfield: recorded-demo tier (best quality, slow)
  *  - kling:      live-demo tier (faster, slightly lower quality)
  *  - fal:        fast/cheap real-AI tier via fal.ai (LTX-Video)
- *  - vertex:     Vertex AI Veo 3 (Google Cloud — service-account auth)
+ *  - vertex:     Vertex AI Veo 3.1 Fast (Google Cloud — service-account auth)
  *  - replicate:  multi-model fallback
  *  - cached:     hard-coded demo project (instant, on-stage safety net)
  */

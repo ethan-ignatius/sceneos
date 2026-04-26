@@ -47,7 +47,7 @@ def test_cached_lighthouse_route_shape(monkeypatch):
         assert b["clipUrl"].startswith("https://res.cloudinary.com/")
         assert b["durationSeconds"] > 0
     bake = body["bake"]
-    assert bake["videoModel"] == "veo-3.1-generate-001"
+    assert bake["videoModel"] == "veo-3.1-fast-generate-001"
     assert bake["musicModel"] == "lyria-002"
     assert bake["nativeAudio"] is True
     assert bake["captions"] is True

@@ -31,7 +31,15 @@ if [[ "${1:-}" == "check" ]]; then
 fi
 
 echo "── booting backend on :8787 ────────────────────────────────────────"
-(cd backend_py && MOCK_MODE=false python -m uvicorn sceneos_py.app:app --reload --port 8787) &
+(
+  cd backend_py || exit 1
+  if [[ -f .venv/bin/activate ]]; then
+    # shellcheck source=/dev/null
+    . .venv/bin/activate
+  fi
+  export MOCK_MODE=false
+  exec python -m uvicorn sceneos_py.app:app --reload --port 8787
+) &
 BACKEND_PID=$!
 
 echo "── booting frontend on :5173 ───────────────────────────────────────"

@@ -43,6 +43,7 @@ import time
 from typing import Any
 
 from . import vertex_imagen
+from .continuity import merge_beat_facts_for_continuity
 from .motion_presets import pick_motion_preset
 from .provider import dispatch_with_fallback, encode_job_id, poll_after_ms_for
 
@@ -121,14 +122,24 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
     plan_continuity = (plan_beat.get("visualContinuity") or "").strip()
     plan_emotional_state = (plan_beat.get("emotionalState") or "").strip()
 
-    image_prompt_parts = [
+    master = (manifest or {}).get("masterPrompt") or ""
+    mclip = " ".join(master.split()) if master else ""
+    if len(mclip) > 400:
+        mclip = mclip[:399].rstrip() + "…"
+
+    image_prompt_parts: list[str] = []
+    if mclip:
+        image_prompt_parts.append(
+            f"One continuous story — same film and world as this premise: {mclip}"
+        )
+    image_prompt_parts.extend([
         f"Cinematic still of {subject} {action}.",
         f"Setting: {setting}.",
         f"{motion_preset['lighting']}; {motion_preset['lens']};",
         f"{motion_preset['composition']}; {motion_preset['atmosphere']}.",
         f"Mood: {mood}.",
         "35mm film grain, shallow depth of field.",
-    ]
+    ])
     if motif:
         image_prompt_parts.append(f"Visual motif (carry through every beat): {motif}.")
     if plan_continuity:
@@ -164,7 +175,7 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
         "aspectRatio": aspect_ratio,
         "resolution": "1080p",
         "durationSeconds": duration,
-        "preferredModel": "veo-3.1-generate-001",
+        "preferredModel": "veo-3.1-fast-generate-001",
     }
 
 
@@ -272,6 +283,8 @@ async def run_beat_pipeline(
     beat = next((b for b in manifest["beats"] if b["beatId"] == beat_id), None)
     if beat is None:
         raise ValueError(f"orchestrator: beatId not found ({beat_id})")
+
+    beat_facts = merge_beat_facts_for_continuity(manifest, beat_id, dict(beat_facts))
 
     mood = beat_facts.get("mood") or beat.get("archetype", {}).get("mood", "cinematic")
     motion_preset = pick_motion_preset(mood)

@@ -31,7 +31,8 @@ interface AgentBubbleStreamProps {
  * Per-beat questionnaire chat UI wired to /api/agent.
  *
  * Lifecycle (see docs/AGENT_FLOW.md §7):
- *   - On mount with empty conversation → fetch the seed question.
+ *   - On mount with empty conversation → POST /api/agent (one-shot) for
+ *     the seed question — faster than the streaming endpoint used on turns.
  *   - On user submit → optimistically append user turn, POST, append agent reply.
  *   - When the agent returns kind="sufficient" → store refinedPrompt on the
  *     scene and flip beat.status to "ready-to-generate".
@@ -51,13 +52,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Live thinking accumulator — populated by /api/agent/stream "thought"
-  // events while the agent composes its next turn. Cleared when the
-  // "result" event arrives (or on unmount). Visible in place of
-  // "Composing the shot." so the 6–8s Vertex Gemini latency reads as
-  // active thinking instead of a frozen UI. NOTE for backend team
-  // (Vishnu, Ethan): per-call latency is real Gemini 2.5 Flash latency
-  // on the trial GCP tier — see backend audit doc. Once latency drops,
-  // this thinking-stream remains useful as a transparency signal.
+  // events on *follow-up* turns (after the user has sent a message). The
+  // initial seed uses faster one-shot /api/agent instead (no thinking
+  // budget), so "Next beat" is not stuck behind streaming + think tokens.
+  // Cleared when the "result" arrives (or on unmount).
   const [streamingThought, setStreamingThought] = useState("");
   const cancelledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -203,9 +201,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     };
   }, []);
 
-  // Uses /api/agent/stream so the user sees Gemini's thinking tokens
-  // accumulate in real time. The one-shot endpoint (api.agent) returns
-  // in 6–8s on the trial Vertex tier, which read as a hung UI.
+  // First question on an empty beat: one-shot /api/agent (backend disables
+  // "thinking" for that path) so the drawer does not pay streaming + think
+  // overhead — critical when jumping beats with "Next beat". Follow-up
+  // messages still use api.agentStream below.
   useEffect(() => {
     cancelledRef.current = false;
     if (!manifest || scene.conversation.length > 0) return;
@@ -216,9 +215,8 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     setStreamingThought("");
     const ctrl = new AbortController();
     abortRef.current = ctrl;
-    // 60s ceiling — Vertex Gemini turns run ~6–10s warm; 60s gives a
-    // generous buffer for cold starts before we surface a timeout
-    // error and unstick the UI.
+    // 60s ceiling — generous buffer for cold starts before we surface
+    // a timeout and unstick the UI.
     const seedTimeoutId = window.setTimeout(() => {
       ctrl.abort();
       if (active && !cancelledRef.current) setError("Director took too long — try again.");
@@ -237,38 +235,29 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
 
     (async () => {
       try {
-        for await (const ev of api.agentStream({ manifest, beatId: beat.beatId }, ctrl.signal)) {
-          if (!active || cancelledRef.current) break;
-          if (ev.type === "thought" || ev.type === "text") {
-            setStreamingThought((prev) => prev + ev.chunk);
-          } else if (ev.type === "result") {
-            window.clearTimeout(safetyTimer);
-            if (ev.kind === "question") {
-              appendAgentTurn(beat.beatId, scene.sceneId, {
-                role: "agent",
-                content: ev.question,
-                timestamp: nowISO(),
-              });
-              updateBeat(beat.beatId, { status: "questioning" });
-              setLatestSuggestions(ev.suggestedAnswers ?? null);
-            } else if (ev.kind === "sufficient") {
-              // Edge case: agent considers itself sufficient on first turn.
-              updateScene(beat.beatId, scene.sceneId, {
-                refinedPrompt: ev.refinedPrompt,
-                durationSeconds: ev.suggestedDuration,
-                beatFacts: ev.beatFacts,
-              });
-              updateBeat(beat.beatId, { status: "ready-to-generate" });
-            }
-            setStreamingThought("");
-          } else if (ev.type === "error") {
-            window.clearTimeout(safetyTimer);
-            setError(ev.message);
-          }
+        const ev = await api.agent({ manifest, beatId: beat.beatId }, ctrl.signal);
+        if (!active || cancelledRef.current) return;
+        window.clearTimeout(safetyTimer);
+        if (ev.kind === "question") {
+          appendAgentTurn(beat.beatId, scene.sceneId, {
+            role: "agent",
+            content: ev.question,
+            timestamp: nowISO(),
+          });
+          updateBeat(beat.beatId, { status: "questioning" });
+          setLatestSuggestions(ev.suggestedAnswers ?? null);
+        } else {
+          // Edge case: agent considers itself sufficient on first turn.
+          updateScene(beat.beatId, scene.sceneId, {
+            refinedPrompt: ev.refinedPrompt,
+            durationSeconds: ev.suggestedDuration,
+            beatFacts: ev.beatFacts,
+          });
+          updateBeat(beat.beatId, { status: "ready-to-generate" });
         }
+        setStreamingThought("");
       } catch (err) {
         if (!active || cancelledRef.current) return;
-        // AbortError from intentional unmount → silent. Anything else surfaces.
         if ((err as Error)?.name === "AbortError") return;
         setError(err instanceof ApiError ? err.message : "Couldn't reach the director.");
       } finally {
@@ -283,6 +272,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       cancelledRef.current = true;
       ctrl.abort();
       window.clearTimeout(seedTimeoutId);
+      window.clearTimeout(safetyTimer);
     };
     // beat.beatId is the stable identity for this drawer instance; deps deliberate.
     // eslint-disable-next-line react-hooks/exhaustive-deps

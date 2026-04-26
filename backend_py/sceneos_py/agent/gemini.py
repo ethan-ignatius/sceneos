@@ -2,7 +2,9 @@
 
 The non-streaming path (run_agent_turn) is used by /api/agent and tests.
 The streaming path (run_agent_turn_streaming) is used by /api/agent/stream
-and surfaces Gemini's thinking tokens live as SSE events.
+and surfaces Gemini's thinking tokens live as SSE events. If the stream ends
+with no function_call in any chunk, we fall back once to the non-streaming
+`run_agent_turn` (same request), which is more reliable with thinking.
 
 Both paths share:
   - Stub fallback when no Gemini client is available (mock mode + tests).
@@ -104,7 +106,12 @@ async def run_agent_turn(req: dict) -> dict:
             raise RuntimeError("Gemini agent did not emit a tool call after cold retry.")
 
     return _repair_question_if_redundant(
-        _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat),
+        _normalize_call_to_result(
+            function_call.name,
+            _normalize_args(function_call.args),
+            beat,
+            manifest=manifest,
+        ),
         beat,
         conversation,
     )
@@ -298,82 +305,66 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             final_call = {"name": item["name"], "args": item["args"]}
             yield {"type": "tool_call", "name": item["name"], "args": item["args"]}
         elif kind == "error":
-            # Stream-level Gemini error → pivot to Anthropic fallback so the
-            # user gets a real answer instead of a dead stream. We surface a
-            # short status thought so the visualizer can show the pivot.
+            # Stream-level Gemini error → one-shot agent turn (same request).
             logger.warning("[agent/stream] Gemini stream error, beat=%s: %s", beat_name, item["message"])
-            yield {"type": "thought", "chunk": f"[gemini stream error: {item['message']}; falling back to Anthropic Haiku]"}
-            try:
-                result = await _run_anthropic_agent_turn(
-                    beat=beat,
-                    manifest=manifest,
-                    conversation=conversation,
-                )
-            except Exception as exc:
-                yield {"type": "error", "message": f"Both Gemini stream and Anthropic fallback failed: {exc}"}
-                return
             yield {
-                "type": "tool_call",
-                "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
-                "args": result,
+                "type": "thought",
+                "chunk": f"[gemini stream error: {item['message']}; finishing with one-shot request]",
             }
+            try:
+                result = await run_agent_turn(req)
+            except Exception as exc:
+                yield {"type": "error", "message": f"Gemini stream failed and recovery failed: {exc}"}
+                return
             yield {"type": "result", **result}
             return
 
-    # ── Timeout recovery: fall back to Anthropic ───────────────────────────
+    # ── Timeout → non-streaming recovery (no separate Anthropic path in tree)
     if timed_out:
         yield {
             "type": "thought",
             "chunk": (
                 f"[gemini stream timed out after {time.monotonic() - wall_start:.0f}s; "
-                f"falling back to Anthropic Haiku]"
+                f"finishing with one-shot request]"
             ),
         }
         try:
-            result = await _run_anthropic_agent_turn(
-                beat=beat,
-                manifest=manifest,
-                conversation=conversation,
-            )
+            result = await run_agent_turn(req)
         except Exception as exc:
-            logger.error("[agent/stream] Anthropic fallback also failed, beat=%s: %s", beat_name, exc)
-            yield {"type": "error", "message": f"Gemini timed out and Anthropic fallback failed: {exc}"}
+            logger.error("[agent/stream] one-shot recovery failed after timeout, beat=%s: %s", beat_name, exc)
+            yield {"type": "error", "message": f"Gemini timed out and recovery failed: {exc}"}
             return
-        logger.info("[agent/stream] Anthropic fallback succeeded, beat=%s kind=%s", beat_name, result.get("kind"))
-        yield {
-            "type": "tool_call",
-            "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
-            "args": result,
-        }
+        logger.info("[agent/stream] one-shot recovery after timeout, beat=%s kind=%s", beat_name, result.get("kind"))
         yield {"type": "result", **result}
         return
 
-    # ── Normal completion ──────────────────────────────────────────────────
+    # ── Stream ended without tool call (not a timeout) ────────────────────
     if final_call is None:
-        # Stream ended with no function_call. Pivot to Anthropic instead of
-        # surfacing a dead stream.
-        logger.warning("[agent/stream] no tool call in stream, beat=%s — falling back to Anthropic", beat_name)
-        yield {"type": "thought", "chunk": "[gemini stream produced no tool call; falling back to Anthropic Haiku]"}
+        logger.warning(
+            "vertex.gemini.agent.stream: stream ended without function_call; "
+            "using non-streaming recovery pass (beat=%s).",
+            beat_name,
+        )
         try:
-            result = await _run_anthropic_agent_turn(
-                beat=beat,
-                manifest=manifest,
-                conversation=conversation,
-            )
+            result = await run_agent_turn(req)
         except Exception as exc:
-            yield {"type": "error", "message": f"Stream completed without tool call and fallback failed: {exc}"}
+            logger.exception("vertex.gemini.agent: recovery after empty stream failed")
+            yield {
+                "type": "error",
+                "message": f"Stream completed without a tool call, and recovery failed: {exc}",
+            }
             return
-        yield {
-            "type": "tool_call",
-            "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
-            "args": result,
-        }
         yield {"type": "result", **result}
         return
 
     logger.info("[agent/stream] tool call received: %s, beat=%s", final_call["name"], beat_name)
     try:
-        result = _normalize_call_to_result(final_call["name"], final_call["args"], beat)
+        result = _normalize_call_to_result(
+            final_call["name"],
+            final_call["args"],
+            beat,
+            manifest=manifest,
+        )
     except Exception as exc:
         yield {"type": "error", "message": f"Failed to normalize tool call: {exc}"}
         return

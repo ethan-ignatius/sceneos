@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..continuity import merge_beat_facts_for_continuity
 from ._constants import TARGET_CLIP_SECONDS
 
 
@@ -35,7 +36,9 @@ def _normalize_args(value: Any) -> Any:
     return value
 
 
-def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
+def _normalize_call_to_result(
+    name: str, args: dict, beat: dict, *, manifest: dict | None = None
+) -> dict:
     """Convert a raw tool call into the public AgentResponse shape.
 
     Suggested answers are non-deterministic (0-4). No filler padding.
@@ -75,6 +78,8 @@ def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
         beat_facts.setdefault("action", "the action of this beat")
         beat_facts.setdefault("setting", "the established location")
         beat_facts.setdefault("mood", beat["archetype"]["mood"])
+        if manifest is not None and beat.get("beatId"):
+            beat_facts = merge_beat_facts_for_continuity(manifest, beat["beatId"], beat_facts)
         return {
             "kind": "sufficient",
             "refinedPrompt": str(args.get("refinedPrompt", "")),

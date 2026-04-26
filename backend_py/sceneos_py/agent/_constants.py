@@ -4,7 +4,9 @@ from __future__ import annotations
 
 # Default suggested clip duration when the agent doesn't infer one from
 # the beat archetype. In seconds.
-TARGET_CLIP_SECONDS = 5
+# Default / ceiling for agent `suggestedDuration` when the model omits it.
+# 4s snaps to the shortest Veo tier (4/6/8) for lower wall-clock per beat.
+TARGET_CLIP_SECONDS = 4
 
 # Gemini 2.5 thinking budgets. The demo budget is intentionally smaller
 # so each user-facing turn lands fast on stage; normal mode gives the

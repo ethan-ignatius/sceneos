@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { X, Clapperboard } from "lucide-react";
+import { X, Clapperboard, ChevronRight } from "lucide-react";
 import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
@@ -20,6 +20,7 @@ export function NodeDetailDrawer() {
   const beat = useBeatGraphStore(selectActiveBeat);
   const manifest = useBeatGraphStore((s) => s.manifest);
   const setActiveBeat = useBeatGraphStore((s) => s.setActiveBeat);
+  const setStitchTrayOpen = useBeatGraphStore((s) => s.setStitchTrayOpen);
   const updateBeat = useBeatGraphStore((s) => s.updateBeat);
   const updateScene = useBeatGraphStore((s) => s.updateScene);
 
@@ -58,7 +59,7 @@ export function NodeDetailDrawer() {
       const startMs = Date.now();
       let delay = initialDelay;
       while (!cancelRef.current) {
-        // 5-minute ceiling on a re-attached poll — long enough for Veo 3
+        // 5-minute ceiling on a re-attached poll — long enough for Veo 3.1 Fast
         // (~1–4 min real-world) but bounded so a stuck jobId doesn't spin
         // forever. Fresh dispatches use 30s for demo safety; re-attaches
         // get the wider window because we don't know how long the job has
@@ -104,6 +105,18 @@ export function NodeDetailDrawer() {
     },
     [updateBeat, updateScene],
   );
+
+  const handleGoNext = useCallback(() => {
+    if (!manifest || !beat) return;
+    const idx = manifest.beats.findIndex((b) => b.beatId === beat.beatId);
+    if (idx < 0) return;
+    if (idx < manifest.beats.length - 1) {
+      setActiveBeat(manifest.beats[idx + 1]!.beatId);
+    } else {
+      setActiveBeat(null);
+      setStitchTrayOpen(true);
+    }
+  }, [beat, manifest, setActiveBeat, setStitchTrayOpen]);
 
   const handleGenerate = useCallback(async () => {
     if (!beat || !manifest) return;
@@ -156,7 +169,11 @@ export function NodeDetailDrawer() {
       if (cancelRef.current) return;
       setProvider(gen.provider);
       setFallbackFrom(gen.originalProvider ?? null);
-      updateScene(beat.beatId, scene.sceneId, { jobId: gen.jobId });
+      updateScene(beat.beatId, scene.sceneId, {
+        jobId: gen.jobId,
+        generateFallbackFrom: gen.originalProvider,
+        generateFallbackReason: gen.fallbackReason,
+      });
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
@@ -212,6 +229,7 @@ export function NodeDetailDrawer() {
 
   const beatIndex = manifest?.beats.findIndex((b) => b.beatId === beat.beatId) ?? 0;
   const totalBeats = manifest?.beats.length ?? 1;
+  const isLastBeat = beatIndex >= totalBeats - 1;
 
   return (
     <motion.aside
@@ -312,13 +330,27 @@ export function NodeDetailDrawer() {
           )}
         </motion.div>
 
-        {/* Footer — single CTA at a time. No labels, no progress meters,
-            no eyebrow text. The chat already shows the user where they are
-            in the conversation; duplicating that as a "Director's questionnaire
-            00/02" pill was double-bookkeeping. The CTA flips between
-            "Lock it in" (early-finish) and "Roll camera" (ready) based on
-            beat status. */}
-        {!isGenerating && !isPreview ? (
+        {/* Footer — agent path: lock-in / roll camera. Preview path: next beat. */}
+        {!isGenerating && isPreview ? (
+          <motion.footer
+            variants={fadeUp}
+            transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+            className="border-t border-fg-tertiary/15 px-6 py-4"
+          >
+            <Button
+              size="lg"
+              variant="primary"
+              className="w-full ember-pulse"
+              onClick={handleGoNext}
+              aria-label={isLastBeat ? "Open stitch — review your film" : "Go to the next beat"}
+            >
+              <span className="font-body text-meta font-medium">
+                {isLastBeat ? "Continue to stitch" : "Next beat"}
+              </span>
+              <ChevronRight size={18} strokeWidth={1.5} aria-hidden="true" />
+            </Button>
+          </motion.footer>
+        ) : !isGenerating ? (
           <motion.footer
             variants={fadeUp}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
@@ -355,9 +387,6 @@ export function NodeDetailDrawer() {
               }
 
               if (!canLock) {
-                // No answers yet — no CTA. The chat is the work; show
-                // nothing so the input bar isn't crowded with a disabled
-                // button that just says "answer first."
                 return null;
               }
 
@@ -394,11 +423,6 @@ export function NodeDetailDrawer() {
                 }
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               };
-              // Promoted from a tertiary ghost to a Button-styled CTA so
-              // users always see they can break out of the conversation
-              // loop. The agent requires 3+ user turns before it'll mark
-              // sufficient on its own; without an obvious escape hatch
-              // users were getting stuck answering questions forever.
               return (
                 <Button
                   size="lg"

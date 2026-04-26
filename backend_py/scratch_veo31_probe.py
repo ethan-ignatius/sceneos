@@ -1,4 +1,4 @@
-"""One-shot probe: does veo-3.1-generate-001 answer on our project?
+"""One-shot probe: does veo-3.1-fast-generate-001 answer on our project?
 
 Submits a 4-second test clip, polls until done, prints the resulting
 Cloudinary URL. Throws away the clip — this is just a model-availability

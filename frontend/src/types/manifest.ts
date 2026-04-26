@@ -172,6 +172,15 @@ export interface Scene {
   lastFrameUrl?: string;
   durationSeconds?: number;
   approved: boolean;
+  /**
+   * Filled from POST /api/generate when the backend falls back from the
+   * primary video provider to the cached demo lane. Lets the preview
+   * explain "demo vs live Veo" after reload. Same values as
+   * `GenerationProvider` in `api.ts` (kept as string to avoid a type cycle).
+   */
+  generateFallbackFrom?: string;
+  /** Human-readable from backend (quota, safety, network, …). */
+  generateFallbackReason?: string;
 }
 
 /**
