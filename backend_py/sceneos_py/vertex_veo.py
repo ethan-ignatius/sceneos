@@ -52,10 +52,21 @@ def _read_config() -> dict[str, str]:
         or env("GCP_LOCATION")
         or "us-central1"
     )
-    # Veo 3 GA. Native synced audio (dialogue + SFX + ambient), better video,
-    # 1080p output. Same predictLongRunning endpoint as Veo 2 — no transport
-    # change. Override with VEO_MODEL_ID if you need legacy Veo 2.
-    model_id = env("VEO_MODEL_ID", "veo-3.0-generate-001") or "veo-3.0-generate-001"
+    # Veo 3.1 GA (released Nov 17, 2025). The current SOTA on Vertex AI for
+    # text-to-video. Over Veo 3:
+    #   - Better cinematic-style adherence (i.e. the prompt's framing, lens,
+    #     and lighting language actually shows up on screen).
+    #   - Better character consistency across image-to-video: when seeded
+    #     with the project's character/location ref, the protagonist looks
+    #     like the SAME person across all 7 beats, not seven similar people.
+    #     This is the single biggest contributor to "the video has flow".
+    #   - Richer native audio (synchronized SFX + dialogue at 1080p).
+    #   - Same predictLongRunning + fetchPredictOperation transport, no
+    #     wire-format change vs. Veo 3 — drop-in upgrade.
+    # Override with VEO_MODEL_ID for cost-throttling (e.g. veo-3.1-fast-generate-001
+    # has 5x the per-minute quota at the cost of some fidelity) or to pin to
+    # the older veo-3.0-generate-001 / veo-2.0-generate-001 for regression.
+    model_id = env("VEO_MODEL_ID", "veo-3.1-generate-001") or "veo-3.1-generate-001"
     return {"projectId": project_id, "location": location, "modelId": model_id}
 
 
@@ -265,7 +276,21 @@ async def _poll_until_done(provider_job_id: str) -> None:
                 "clipPublicId": clip_public_id,
             }
         except Exception as exc:
-            _JOBS[provider_job_id] = {"status": "failed", "error": f"persist error: {exc}"}
+            # Surface the real cause. Wrapping just `exc` (e.g. an httpx
+            # HTTPStatusError with empty args) loses the response body, which
+            # is the only thing that tells you whether Cloudinary rejected
+            # the data URI for size, format, or auth — all three look the
+            # same when stringified.
+            import traceback
+            detail = repr(exc)
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    detail = f"{detail} | http {response.status_code}: {response.text[:400]}"
+                except Exception:
+                    pass
+            tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))[-800:]
+            _JOBS[provider_job_id] = {"status": "failed", "error": f"persist error: {detail}\n{tb}"}
         return
 
     _JOBS[provider_job_id] = {

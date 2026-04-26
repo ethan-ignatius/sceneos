@@ -109,7 +109,7 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
         "aspectRatio": aspect_ratio,
         "resolution": "1080p",
         "durationSeconds": duration,
-        "preferredModel": "veo-3.0-generate-001",
+        "preferredModel": "veo-3.1-generate-001",
     }
 
 

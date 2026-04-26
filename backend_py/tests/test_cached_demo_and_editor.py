@@ -47,7 +47,7 @@ def test_cached_lighthouse_route_shape(monkeypatch):
         assert b["clipUrl"].startswith("https://res.cloudinary.com/")
         assert b["durationSeconds"] > 0
     bake = body["bake"]
-    assert bake["videoModel"] == "veo-3.0-generate-001"
+    assert bake["videoModel"] == "veo-3.1-generate-001"
     assert bake["musicModel"] == "lyria-002"
     assert bake["nativeAudio"] is True
     assert bake["captions"] is True
@@ -112,12 +112,22 @@ def test_editor_caption_uses_arial_not_custom_font():
     seg = _caption_overlay("Cape Disappointment", 0.0, 5.0)
     assert seg.startswith("l_text:Arial_")
     assert "Inter_" not in seg
-    assert "co_rgb:F4F1E8" in seg          # warm cream off-white
+    # Caption legibility regression: pure white, NOT cream. Cream
+    # (co_rgb:F4F1E8) on a thick stroke renders as muddy gray on dark
+    # frames and bleeds adjacent letters together — what users described
+    # as "letters overlap and look gray". Pin pure white so a regression
+    # back to cream (or a CSS-style `co_rgb:` value with alpha) trips here.
+    assert "co_white" in seg
+    assert "co_rgb:F4F1E8" not in seg
     assert "e_outline:" in seg              # legibility stroke
+    # And the stroke must be slim. A 4px stroke at 56pt smushes letters.
+    # 2px at 48pt is what we ship.
+    assert "e_outline:2:" in seg
+    assert "e_outline:4:" not in seg
 
 
 def test_editor_caption_positioning_lives_in_layer_apply_segment():
-    """Cloudinary's text-overlay positioning (g_south / y_120) MUST live in
+    """Cloudinary's text-overlay positioning (g_south / y_140) MUST live in
     the fl_layer_apply segment, NOT next to l_text:. Inline positioning
     silently centers the caption on the canvas — that's the bug that made
     the first lighthouse bake unwatchable (text covered the keeper's chest
@@ -130,11 +140,11 @@ def test_editor_caption_positioning_lives_in_layer_apply_segment():
     assert opener.startswith("l_text:Arial_")
     # Positioning must NOT be in the opener — that's the bug.
     assert "g_south" not in opener
-    assert "y_120" not in opener
+    assert "y_140" not in opener
     # Positioning belongs in the apply segment, alongside so_/du_ timing.
     assert applier.startswith("fl_layer_apply,")
     assert "g_south" in applier
-    assert "y_120" in applier
+    assert "y_140" in applier
     assert "so_0.0" in applier
     assert "du_5.0" in applier
 
@@ -148,10 +158,13 @@ def test_static_caption_positioning_lives_in_layer_apply_segment():
     opener, _, applier = seg.partition("/")
     assert opener.startswith("l_text:Arial_")
     assert "g_south" not in opener
-    assert "y_120" not in opener
+    assert "y_140" not in opener
     assert applier.startswith("fl_layer_apply,")
     assert "g_south" in applier
-    assert "y_120" in applier
+    assert "y_140" in applier
+    # Same legibility pin as the editor caption (white + 2px outline).
+    assert "co_white" in seg
+    assert "e_outline:2:" in seg
 
 
 def test_editor_url_fl_splice_lives_in_layer_opener():
@@ -225,17 +238,24 @@ def test_editor_apply_produces_full_duration_cut(monkeypatch):
 def test_lighthouse_final_url_captions_positioned_below_subjects():
     """The hand-baked lighthouse URL pins what the demo plays. Make sure
     every caption in it has its positioning in the apply segment, not in
-    the l_text: opener (the bug that put captions across faces)."""
+    the l_text: opener (the bug that put captions across faces) AND uses
+    the legibility-fixed style (white + 2px outline + 52pt)."""
     from sceneos_py.cached import LIGHTHOUSE_SHIP_FINAL_URL
     # The pattern that means "broken bake" — gravity glued to the text
     # declaration via comma after e_outline — must NOT appear. (When
     # positioning is comma-attached to the l_text opener, Cloudinary
     # silently centers the caption mid-frame.)
+    assert "e_outline:2:000000,g_south" not in LIGHTHOUSE_SHIP_FINAL_URL
     assert "e_outline:4:000000,g_south" not in LIGHTHOUSE_SHIP_FINAL_URL
     # The pattern that means "fixed bake" — every l_text declaration must
-    # be followed by `/fl_layer_apply,g_south,y_120` (apply with gravity).
+    # be followed by `/fl_layer_apply,g_south,y_140` (apply with gravity).
     # 4 captions in the lighthouse cut → exactly 4 of these segments.
-    assert LIGHTHOUSE_SHIP_FINAL_URL.count("/fl_layer_apply,g_south,y_120") == 4
+    assert LIGHTHOUSE_SHIP_FINAL_URL.count("/fl_layer_apply,g_south,y_140") == 4
+    # Caption legibility: pure white, no cream. Cream + thick stroke is
+    # what made captions look gray and overlapping in the first bake.
+    assert "co_rgb:F4F1E8" not in LIGHTHOUSE_SHIP_FINAL_URL
+    # Slim stroke (2px), not the bleed-into-adjacent-letters 4px stroke.
+    assert "e_outline:4:000000" not in LIGHTHOUSE_SHIP_FINAL_URL
     # Defensive: every l_text: in the URL is followed (within the next 80
     # bytes) by the corrected apply pattern, not by inline gravity.
     import re as _re
