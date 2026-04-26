@@ -109,6 +109,7 @@ export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 export interface StatusResponse {
   jobId: string;
   status: JobStatus;
+  stage?: "veo_running" | "cloudinary_uploading" | "cloudinary_uploaded" | string;
   clipUrl?: string;
   clipPublicId?: string;
   /**

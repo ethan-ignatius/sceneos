@@ -10,6 +10,8 @@ interface GenerationPanelProps {
   suggestedDurationSeconds: number;
   /** Provider returned by /api/generate. */
   provider?: GenerationProvider | null;
+  /** Backend-reported provider stage. */
+  stage?: string | null;
 }
 
 const PROVIDER_LABEL: Record<GenerationProvider, string> = {
@@ -43,7 +45,7 @@ const STAGES = [
  * that. Real Higgsfield is much longer, so this panel will need real
  * progress signals from `/api/status` once the live provider is wired.
  */
-export function GenerationPanel({ suggestedDurationSeconds, provider }: GenerationPanelProps) {
+export function GenerationPanel({ suggestedDurationSeconds, provider, stage }: GenerationPanelProps) {
   const startMsRef = useRef<number>(Date.now());
   const [elapsed, setElapsed] = useState(0);
 
@@ -55,8 +57,13 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
     return () => clearInterval(id);
   }, []);
 
-  const stageIndex = STAGES.findIndex((s) => elapsed < s.end);
-  const activeIndex = stageIndex === -1 ? STAGES.length - 1 : stageIndex;
+  const timedStageIndex = STAGES.findIndex((s) => elapsed < s.end);
+  const activeIndex =
+    stage === "cloudinary_uploading" || stage === "cloudinary_uploaded"
+      ? 2
+      : timedStageIndex === -1
+        ? STAGES.length - 1
+        : timedStageIndex;
 
   const totalEst = Math.max(suggestedDurationSeconds * 0.12 + 1.5, 2); // mock-tuned
   const ratio = Math.min(elapsed / totalEst, 0.99);
@@ -127,10 +134,17 @@ export function GenerationPanel({ suggestedDurationSeconds, provider }: Generati
           <span className="mx-2 text-fg-tertiary/60">/</span>
           <span className="font-mono tabular-nums">~{formatTime(totalEst)}</span>
         </span>
-        <span>{provider ? PROVIDER_LABEL[provider] : "Connecting…"}</span>
+        <span>{stageLabel(stage, provider)}</span>
       </div>
     </div>
   );
+}
+
+function stageLabel(stage: string | null | undefined, provider: GenerationProvider | null | undefined): string {
+  if (stage === "veo_running") return "Vertex · rendering";
+  if (stage === "cloudinary_uploading") return "Cloudinary · uploading";
+  if (stage === "cloudinary_uploaded") return "Cloudinary · uploaded";
+  return provider ? PROVIDER_LABEL[provider] : "Connecting…";
 }
 
 function formatTime(seconds: number): string {

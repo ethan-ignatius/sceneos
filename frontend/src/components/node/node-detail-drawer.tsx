@@ -25,6 +25,7 @@ export function NodeDetailDrawer() {
 
   const [genError, setGenError] = useState<string | null>(null);
   const [provider, setProvider] = useState<GenerationProvider | null>(null);
+  const [providerStage, setProviderStage] = useState<string | null>(null);
   // Set to true on unmount; the polling loop checks each iteration so an
   // orphaned poll can't write to a stale beat after the drawer closes.
   const cancelRef = useRef(false);
@@ -57,6 +58,7 @@ export function NodeDetailDrawer() {
         if (cancelRef.current) return;
         const status = await api.status(jobId);
         if (cancelRef.current) return;
+        setProviderStage(status.stage ?? null);
         if (status.status === "succeeded") {
           updateScene(beatId, sceneId, {
             jobId,
@@ -81,6 +83,7 @@ export function NodeDetailDrawer() {
     if (!scene.refinedPrompt) return;
     setGenError(null);
     setProvider(null);
+    setProviderStage(null);
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
@@ -94,6 +97,7 @@ export function NodeDetailDrawer() {
       });
       if (cancelRef.current) return;
       setProvider(gen.provider);
+      updateScene(beat.beatId, scene.sceneId, { jobId: gen.jobId });
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
       if (cancelRef.current) return;
@@ -215,6 +219,7 @@ export function NodeDetailDrawer() {
             <GenerationPanel
               suggestedDurationSeconds={beat.archetype.suggestedDuration}
               provider={provider}
+              stage={providerStage}
             />
           ) : isPreview ? (
             <ClipPreview beat={beat} />

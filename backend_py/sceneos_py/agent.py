@@ -32,8 +32,10 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
+from .config import mock_mode
+from .anthropic_client import make_claude_client
 from .genai_client import default_gemini_model_for, make_genai_client
-from .sufficiency import FACET_HINTS, MAX_QUESTIONS, MIN_USER_TURNS, REQUIRED_FACETS
+from .sufficiency import FACET_HINTS, MAX_QUESTIONS, MIN_USER_TURNS, REQUIRED_FACETS, score
 
 
 TARGET_CLIP_SECONDS = 5
@@ -126,6 +128,15 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
     },
 ]
 
+_ANTHROPIC_AGENT_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": tool["name"],
+        "description": tool["description"],
+        "input_schema": tool["parameters"],
+    }
+    for tool in _AGENT_TOOLS
+]
+
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -189,6 +200,28 @@ def _earlier_beats_block(beat: dict, manifest: dict) -> str:
     return "What you have already established (use these details when reflecting the story back):\n" + "\n".join(lines) + "\n"
 
 
+def _project_conversation_block(beat: dict, manifest: dict) -> str:
+    """Short cross-beat context so each node can remember details from other segments."""
+    lines: list[str] = []
+    for b in manifest.get("beats") or []:
+        if b.get("beatId") == beat.get("beatId"):
+            continue
+        scenes = b.get("scenes") or []
+        scene = scenes[0] if scenes else None
+        if not scene:
+            continue
+        user_turns = [
+            str(t.get("content", "")).strip()
+            for t in scene.get("conversation", [])
+            if t.get("role") == "user" and str(t.get("content", "")).strip()
+        ]
+        if user_turns:
+            lines.append(f"- {b.get('beatName', 'Beat')}: {_truncate(' / '.join(user_turns[-2:]), 180)}")
+    if not lines:
+        return ""
+    return "Relevant details from other segments:\n" + "\n".join(lines) + "\n"
+
+
 def _mode_of(manifest: dict) -> str:
     """Resolve the session mode from the manifest. Defaults to 'normal' for
     back-compat with manifests that predate the demo/normal split."""
@@ -223,6 +256,7 @@ def _system_prompt(beat: dict, manifest: dict) -> str:
         0,
     )
     earlier = _earlier_beats_block(beat, manifest)
+    cross_beat = _project_conversation_block(beat, manifest)
     archetype = beat["archetype"]
     mode = _mode_of(manifest)
 
@@ -235,6 +269,8 @@ Normal capitalization. Normal punctuation. Normal commas.
 No em dashes. No exclamation marks. No "Great choice!", no "Interesting!", no performed enthusiasm.
 Warm but not fake. Curious but not performative.
 Ask one thing at a time.
+Keep the user-facing question under 18 words whenever possible.
+Do not start with "Okay, so" or "Great". Use a short grounded echo only when it helps.
 
 # Mapping (DO NOT tell the user any of this)
 You are filling in a 7-beat dramatic structure: hook, exposition, inciting incident, rising action, climax, falling action, resolution.
@@ -248,12 +284,18 @@ The master idea: "{manifest['masterPrompt']}"
 The user has not seen the structure. They think you are just curious. Stay that way.
 
 {earlier}
+{cross_beat}
 NEVER say "for the hook of your story" or "let us establish the inciting incident" or "for the climax."
 NEVER reveal the 7-beat structure. The user feels like they are just talking about their movie. Keep it that way.
 
 # Thinking
 Before you respond, think.
 - Trace which facets (subject, action, setting, framing, mood, characterDescription, locationDescription) are still unclear or thin.
+- Treat ordinary concrete nouns as valid facets. If the user says "desert", setting is covered. If they say "astronaut", subject is covered. If they say "runs", action is covered.
+- Never ask for a facet the user just answered. Deepen it instead: stakes, cause, consequence, emotional charge, or what changed.
+- The user's latest concrete answer wins over the master idea. If they add a desert to an astronaut story, do not ask "where is this desert?" or "is this still on Europa?" Treat it as the setting and ask why the astronaut is there, what they are running from, or what discovery changed the scene.
+- Use the original prompt, this beat's conversation, and relevant details from other segments. Never ignore newly added details.
+- If the user answers your exact question, do not ask the same question again. Ask the next causal or consequential thing.
 - Identify the most charged, naturally curious unresolved thing about the story so far.
 - Draft the question, then critique it: does it reflect the story back? Does it ask the most charged thing? Are the three suggestions meaningfully different (each implying a different movie)?
 - Decide whether you have enough to call markSufficient or whether to ask one more question.
@@ -385,13 +427,93 @@ _STUB_QUESTION_BANK: list[tuple[str, list[str]]] = [
 ]
 
 
-def _stub_question_turn(beat: dict, master: str, idx: int) -> dict:
+def _last_user_answer(conversation: list[dict]) -> str:
+    for turn in reversed(conversation):
+        if turn.get("role") == "user" and str(turn.get("content", "")).strip():
+            return str(turn.get("content", "")).strip()
+    return ""
+
+
+def _missing_facet_question(beat: dict, conversation: list[dict], idx: int) -> tuple[str, list[str], str]:
+    """Pick a fallback question from what is actually missing, not turn count.
+
+    This keeps the no-LLM path coherent. If the user says "the astronaut runs
+    around the desert", subject/action/setting are already covered, so the
+    next question should deepen stakes or feeling instead of asking where.
+    """
+    report = score(conversation)
+    last = _last_user_answer(conversation)
+    echo_text = (last[:1].lower() + last[1:]).rstrip(".") if last else ""
+    echo = f"So, {echo_text}." if echo_text else ""
+    missing_facets = list(report.missing)
+    if "framing" in missing_facets and "mood" in missing_facets:
+        # A story/stakes question is more natural than asking about lenses.
+        missing_facets.remove("mood")
+        missing_facets.insert(0, "mood")
+    missing = missing_facets[0] if missing_facets else "mood"
+
+    if missing == "subject":
+        return (
+            "Tell me who is on screen in this moment. Who are we following?",
+            [
+                "One person alone, carrying the whole scene",
+                "Two people whose conflict defines the moment",
+                "A place or object tells the story before anyone appears",
+            ],
+            "subject",
+        )
+    if missing == "action":
+        return (
+            f"{echo} What is the main thing they are doing in frame?",
+            [
+                "They move with purpose toward something specific",
+                "They freeze because they have seen something",
+                "They are trying to escape before anyone notices",
+            ],
+            "action",
+        )
+    if missing == "setting":
+        return (
+            f"{echo} Where exactly does this happen?",
+            [
+                "An ordinary place that suddenly feels wrong",
+                "A vast exterior landscape that dwarfs them",
+                "A tight interior space with no easy way out",
+            ],
+            "setting",
+        )
+    if missing == "framing":
+        return (
+            f"{echo} Are we close enough to feel their panic, or wide enough to see what they are up against?",
+            [
+                "Close on their body and breath",
+                "Wide, with the landscape swallowing them",
+                "Tracking beside them, urgent and unstable",
+            ],
+            "framing",
+        )
+    if missing == "mood":
+        return (
+            f"{echo} Why are they doing it, fear, discovery, play, or survival?",
+            [
+                "They are running from something they barely understand",
+                "They are chasing a signal only they can see",
+                "They are testing the limits of a strange new world",
+            ],
+            "mood",
+        )
+
     question, suggestions = _STUB_QUESTION_BANK[idx % len(_STUB_QUESTION_BANK)]
+    return question, suggestions, "fallback"
+
+
+def _stub_question_turn(beat: dict, master: str, conversation: list[dict], idx: int) -> dict:
+    question, suggestions, target = _missing_facet_question(beat, conversation, idx)
     return {
         "kind": "question",
         "question": question,
         "reasoning": (
-            f"Stub agent (no Vertex AI client): walking through the {beat['beatName'].lower()} "
+            f"Stub agent (no Vertex AI client): targeting {target} for the {beat['beatName'].lower()} "
             f"beat for \"{_truncate(master, 80)}\"."
         ),
         "suggestedAnswers": suggestions,
@@ -435,7 +557,7 @@ def _stub_sufficient_turn(beat: dict, master: str, conversation: list[dict]) -> 
 def _stub_agent_turn(beat: dict, master: str, conversation: list[dict], user_turn_count: int) -> dict:
     if user_turn_count >= MIN_USER_TURNS and (_has_facet_coverage(conversation) or user_turn_count >= MAX_QUESTIONS):
         return _stub_sufficient_turn(beat, master, conversation)
-    return _stub_question_turn(beat, master, user_turn_count)
+    return _stub_question_turn(beat, master, conversation, user_turn_count)
 
 
 # ── live agent: shared helpers ─────────────────────────────────────────────
@@ -461,6 +583,26 @@ def _to_gemini_contents(conversation: list[dict], opening_master_prompt: str) ->
         text = t.get("content", "") or ""
         contents.append({"role": role, "parts": [{"text": text}]})
     return contents
+
+
+def _to_anthropic_messages(conversation: list[dict], opening_master_prompt: str) -> list[dict]:
+    if not conversation:
+        return [
+            {
+                "role": "user",
+                "content": (
+                    f"My idea: {opening_master_prompt}. "
+                    "Ask me your first question about this part of the story."
+                ),
+            }
+        ]
+    messages: list[dict] = []
+    for turn in conversation:
+        role = "assistant" if turn.get("role") == "agent" else "user"
+        text = str(turn.get("content", "") or "").strip()
+        if text:
+            messages.append({"role": role, "content": text})
+    return messages or _to_anthropic_messages([], opening_master_prompt)
 
 
 def _normalize_args(value: Any) -> Any:
@@ -502,7 +644,7 @@ def _build_request_config(
     # across sessions — the user explicitly does not want a deterministic
     # script. Demo mode stays at 0.8 because the timer matters more than
     # variety on stage, and the questions are short anyway.
-    temperature = 0.8 if mode == "demo" else 1.0
+    temperature = 0.6 if mode == "demo" else 0.75
     config_kwargs: dict[str, Any] = dict(
         system_instruction=system,
         tools=[types.Tool(function_declarations=_AGENT_TOOLS)],
@@ -513,7 +655,7 @@ def _build_request_config(
             )
         ),
         temperature=temperature,
-        max_output_tokens=2048 if mode == "demo" else 4096,
+        max_output_tokens=768 if mode == "demo" else 1024,
     )
     if with_thinking:
         config_kwargs["thinking_config"] = types.ThinkingConfig(
@@ -553,6 +695,80 @@ def _normalize_call_to_result(name: str, args: dict, beat: dict) -> dict:
     raise RuntimeError(f"unknown tool {name}")
 
 
+def _repair_question_if_redundant(result: dict, beat: dict, conversation: list[dict]) -> dict:
+    if result.get("kind") != "question":
+        return result
+    question = str(result.get("question") or "")
+    q = question.lower()
+    report = score(conversation)
+    setting_covered = "setting" in report.covered
+    action_covered = "action" in report.covered
+
+    asks_setting_again = (
+        setting_covered
+        and any(phrase in q for phrase in ("where", "still on", "part of", "happen somewhere", "is this"))
+    )
+    repeats_action = action_covered and any(
+        phrase in q for phrase in ("what are they doing", "what is the main thing they are doing")
+    )
+    if not asks_setting_again and not repeats_action:
+        return result
+
+    repaired_question, suggestions, target = _missing_facet_question(beat, conversation, 0)
+    return {
+        **result,
+        "question": repaired_question,
+        "suggestedAnswers": suggestions,
+        "reasoning": f"Repaired redundant {target} question after user already supplied setting/action.",
+        "estimatedRemaining": max(0, int(result.get("estimatedRemaining", 1))),
+    }
+
+
+def _claude_agent_model() -> str:
+    # Haiku is fast and reliable for the short questionnaire turn. This is a
+    # fallback path for Gemini quota / malformed tool-call failures.
+    from .config import env
+
+    return env("ANTHROPIC_AGENT_MODEL", "claude-3-5-haiku-latest") or "claude-3-5-haiku-latest"
+
+
+async def _run_anthropic_agent_turn(
+    *,
+    beat: dict,
+    manifest: dict,
+    conversation: list[dict],
+) -> dict:
+    client = make_claude_client()
+    if client is None:
+        raise RuntimeError("Anthropic fallback unavailable: ANTHROPIC_API_KEY is not configured.")
+
+    system = _system_prompt(beat, manifest)
+    messages = _to_anthropic_messages(conversation, manifest["masterPrompt"])
+
+    def _call_sync() -> Any:
+        return client.messages.create(
+            model=_claude_agent_model(),
+            max_tokens=768,
+            temperature=0.65,
+            system=system,
+            tools=_ANTHROPIC_AGENT_TOOLS,
+            tool_choice={"type": "any"},
+            messages=messages,
+        )
+
+    response = await asyncio.to_thread(_call_sync)
+    tool_use = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
+    if tool_use is None:
+        raise RuntimeError(
+            f"Anthropic fallback did not call a tool (stop_reason={getattr(response, 'stop_reason', '?')})"
+        )
+    return _repair_question_if_redundant(
+        _normalize_call_to_result(tool_use.name, _normalize_args(tool_use.input), beat),
+        beat,
+        conversation,
+    )
+
+
 # ── live agent: non-streaming entry point ──────────────────────────────────
 
 
@@ -568,6 +784,11 @@ async def run_agent_turn(req: dict) -> dict:
 
     client = make_genai_client()
     if client is None:
+        if not mock_mode():
+            raise RuntimeError(
+                "Vertex Gemini client unavailable in real mode. Install google-genai "
+                "and set GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS, or set MOCK_MODE=true."
+            )
         return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
 
     _, config = _build_request_config(
@@ -575,25 +796,58 @@ async def run_agent_turn(req: dict) -> dict:
     )
     contents = _to_gemini_contents(conversation, manifest["masterPrompt"])
 
-    def _call_sync() -> Any:
+    def _call_sync(temp: float = 0.75) -> Any:
+        config_kwargs = dict(config.model_dump(exclude_none=True))
+        config_kwargs["temperature"] = temp
+        from google.genai import types
+        retry_config = types.GenerateContentConfig(**config_kwargs)
         return client.models.generate_content(
             model=default_gemini_model_for("agent"),
             contents=contents,
-            config=config,
+            config=retry_config,
         )
 
-    response = await asyncio.to_thread(_call_sync)
+    try:
+        response = await asyncio.to_thread(_call_sync)
+    except Exception:
+        return await _run_anthropic_agent_turn(
+            beat=beat,
+            manifest=manifest,
+            conversation=conversation,
+        )
 
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
-        raise RuntimeError(f"runAgentTurn: Gemini returned no candidates ({response!r})")
+        return await _run_anthropic_agent_turn(
+            beat=beat,
+            manifest=manifest,
+            conversation=conversation,
+        )
     parts = getattr(candidates[0].content, "parts", None) or []
     function_call = next((getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)), None)
     if function_call is None:
-        finish_reason = getattr(candidates[0], "finish_reason", "?")
-        raise RuntimeError(f"runAgentTurn: Gemini did not call a tool (finish_reason={finish_reason})")
+        # Gemini occasionally emits MALFORMED_FUNCTION_CALL under load. Retry
+        # once colder, then use the Anthropic fallback rather than surfacing a
+        # 502 to the user.
+        try:
+            response = await asyncio.to_thread(lambda: _call_sync(0.25))
+            candidates = getattr(response, "candidates", None) or []
+            parts = getattr(candidates[0].content, "parts", None) if candidates else []
+            function_call = next((getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)), None)
+        except Exception:
+            function_call = None
+        if function_call is None:
+            return await _run_anthropic_agent_turn(
+                beat=beat,
+                manifest=manifest,
+                conversation=conversation,
+            )
 
-    return _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat)
+    return _repair_question_if_redundant(
+        _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat),
+        beat,
+        conversation,
+    )
 
 
 # ── live agent: streaming entry point ──────────────────────────────────────
@@ -623,6 +877,15 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
 
     client = make_genai_client()
     if client is None:
+        if not mock_mode():
+            yield {
+                "type": "error",
+                "message": (
+                    "Vertex Gemini client unavailable in real mode. Install google-genai "
+                    "and set GOOGLE_PROJECT_ID + GOOGLE_APPLICATION_CREDENTIALS, or set MOCK_MODE=true."
+                ),
+            }
+            return
         # Stub streaming: synthesize thinking events for the visualizer demo path.
         for chunk in [
             f"[stub mode — no Vertex client] working on the {beat['beatName'].lower()} beat. ",

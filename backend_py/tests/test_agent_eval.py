@@ -14,6 +14,7 @@ def _run(req: dict) -> dict:
 
 def _disable_llm(monkeypatch):
     """Strip any LLM credentials so run_agent_turn falls back to the deterministic stub."""
+    monkeypatch.setenv("MOCK_MODE", "true")
     for key in ("ANTHROPIC_API_KEY", "GOOGLE_PROJECT_ID", "GCP_PROJECT_ID", "GOOGLE_APPLICATION_CREDENTIALS"):
         monkeypatch.delenv(key, raising=False)
 
@@ -35,6 +36,53 @@ def test_one_answer_cannot_mark_sufficient(monkeypatch):
     ]
     response = _run(request_with_turns(turns))
     assert response["kind"] == "question"
+
+
+def test_fallback_does_not_ask_redundant_location_question(monkeypatch):
+    _disable_llm(monkeypatch)
+    turns = [
+        {
+            "role": "agent",
+            "content": "Tell me what is happening in this part of the story. Who is on screen and what are they doing?",
+        },
+        {
+            "role": "user",
+            "content": "The astronaut runs around the desert",
+        },
+    ]
+
+    response = _run(request_with_turns(turns))
+
+    assert response["kind"] == "question"
+    assert "where" not in response["question"].lower()
+    assert "interior" not in response["question"].lower()
+    assert "exterior" not in response["question"].lower()
+    assert any(word in response["question"].lower() for word in ("why", "close", "wide", "panic"))
+
+
+def test_repair_redundant_llm_setting_question():
+    from sceneos_py.agent import _repair_question_if_redundant
+    from .fixtures import BASE_MANIFEST
+
+    beat = BASE_MANIFEST["beats"][0]
+    turns = [
+        {
+            "role": "user",
+            "content": "The astronaut walks through the red sand dunes of Mars.",
+        }
+    ]
+    result = {
+        "kind": "question",
+        "question": "Are these dunes part of Europa?",
+        "reasoning": "bad setting reconciliation",
+        "suggestedAnswers": ["yes", "no", "maybe"],
+        "estimatedRemaining": 1,
+    }
+
+    repaired = _repair_question_if_redundant(result, beat, turns)
+
+    assert "europa" not in repaired["question"].lower()
+    assert "where" not in repaired["question"].lower()
 
 
 def test_complete_node_marks_sufficient(monkeypatch):

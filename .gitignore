@@ -1,3 +1,9 @@
 examples/
 issues/
 .claude/
+
+# Local secrets / legacy backend leftovers
+backend/.env
+backend/.env.*
+!backend/.env.example
+backend/node_modules/

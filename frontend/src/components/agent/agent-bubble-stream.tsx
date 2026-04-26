@@ -365,7 +365,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             </>
           );
         })()}
-        {inFlight && scene.conversation.length === 0 ? (
+        {inFlight ? (
           <div
             role="status"
             aria-live="polite"

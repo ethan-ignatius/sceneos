@@ -566,6 +566,8 @@ async def status(job_id: str):
         "provider": provider,
         "status": result.get("status"),
     }
+    if result.get("stage"):
+        response["stage"] = result["stage"]
     if poll_after is not None:
         response["pollAfterMs"] = poll_after
     if result.get("clipUrl"):

@@ -29,6 +29,7 @@ class GenerateClipParams(TypedDict, total=False):
 
 class StatusResult(TypedDict, total=False):
     status: JobStatusValue
+    stage: str
     clipUrl: str
     clipPublicId: str
     error: str

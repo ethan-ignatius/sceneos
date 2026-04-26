@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import uuid
 from typing import Any
 
@@ -25,6 +26,7 @@ from .provider import GenerateClipParams, StatusResult
 _POLL_INTERVAL_SECONDS = 5
 _MAX_POLL_ATTEMPTS = 120
 
+logger = logging.getLogger(__name__)
 
 _JOBS: dict[str, dict[str, Any]] = {}
 
@@ -154,9 +156,11 @@ async def generate(params: GenerateClipParams) -> dict:
     }
 
     try:
+        logger.info("[vertex] submitting Veo job %s publicId=%s", provider_job_id, pid)
         op = await _authed_post(_predict_url(), body)
     except Exception as exc:
         _JOBS[provider_job_id] = {"status": "failed", "error": str(exc)}
+        logger.exception("[vertex] submit failed job=%s", provider_job_id)
         return {"jobId": provider_job_id}
 
     op_name = op.get("name") if isinstance(op, dict) else None
@@ -169,9 +173,11 @@ async def generate(params: GenerateClipParams) -> dict:
 
     _JOBS[provider_job_id] = {
         "status": "running",
+        "stage": "veo_running",
         "operationName": op_name,
         "publicId": pid,
     }
+    logger.info("[vertex] Veo operation started job=%s operation=%s", provider_job_id, op_name)
     asyncio.create_task(_poll_until_done(provider_job_id))
     return {"jobId": provider_job_id}
 
@@ -189,6 +195,7 @@ async def _poll_until_done(provider_job_id: str) -> None:
             result = await _authed_post(_fetch_op_url(), {"operationName": op_name})
         except Exception as exc:
             _JOBS[provider_job_id] = {"status": "failed", "error": f"poll error: {exc}"}
+            logger.exception("[vertex] poll failed job=%s", provider_job_id)
             return
 
         if isinstance(result.get("error"), dict):
@@ -219,14 +226,23 @@ async def _poll_until_done(provider_job_id: str) -> None:
 
         video = videos[0]
         try:
+            _JOBS[provider_job_id] = {
+                **_JOBS.get(provider_job_id, {}),
+                "status": "running",
+                "stage": "cloudinary_uploading",
+            }
+            logger.info("[vertex] Veo done; uploading to Cloudinary job=%s publicId=%s", provider_job_id, pid)
             clip_url, clip_public_id = await _persist(video, pid)
             _JOBS[provider_job_id] = {
                 "status": "succeeded",
+                "stage": "cloudinary_uploaded",
                 "clipUrl": clip_url,
                 "clipPublicId": clip_public_id,
             }
+            logger.info("[vertex] Cloudinary upload complete job=%s publicId=%s url=%s", provider_job_id, clip_public_id, clip_url)
         except Exception as exc:
             _JOBS[provider_job_id] = {"status": "failed", "error": f"persist error: {exc}"}
+            logger.exception("[vertex] Cloudinary upload failed job=%s", provider_job_id)
         return
 
     _JOBS[provider_job_id] = {
@@ -257,11 +273,12 @@ async def status(provider_job_id: str) -> StatusResult:
     if not job:
         return {"status": "failed", "error": f"Unknown vertex jobId: {provider_job_id}"}
     if job["status"] == "running":
-        return {"status": "running"}
+        return {"status": "running", "stage": job.get("stage", "veo_running")}
     if job["status"] == "failed":
         return {"status": "failed", "error": job.get("error", "vertex failed")}
     return {
         "status": "succeeded",
+        "stage": job.get("stage", "cloudinary_uploaded"),
         "clipUrl": job["clipUrl"],
         "clipPublicId": job["clipPublicId"],
     }
