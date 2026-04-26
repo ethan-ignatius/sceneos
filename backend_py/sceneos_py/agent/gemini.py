@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 import time
 from typing import Any, AsyncIterator
@@ -33,6 +34,61 @@ from .stub import _stub_agent_turn
 
 
 logger = logging.getLogger(__name__)
+
+
+def _continuity_anchors(manifest: dict, beat: dict) -> list[str]:
+    beats = manifest.get("beats") or []
+    idx = next((i for i, b in enumerate(beats) if b.get("beatId") == beat.get("beatId")), 0)
+    anchors: list[str] = []
+    for b in beats[:idx]:
+        for scene in reversed(b.get("scenes") or []):
+            facts = scene.get("beatFacts") or {}
+            for k in ("subject", "action", "setting", "characterDescription", "locationDescription", "voiceLine"):
+                v = (facts.get(k) or "").strip()
+                if v:
+                    anchors.append(v)
+            for t in (scene.get("conversation") or []):
+                if t.get("role") == "user":
+                    c = str(t.get("content") or "").strip()
+                    if c:
+                        anchors.append(c)
+            if anchors:
+                break
+    # Keep only meaningful, short-ish anchors.
+    out: list[str] = []
+    for a in anchors:
+        words = re.findall(r"[a-zA-Z0-9']+", a.lower())
+        if len(words) < 2:
+            continue
+        out.append(" ".join(words[:8]))
+        if len(out) >= 12:
+            break
+    return out
+
+
+def _question_mentions_prior(result: dict, beat: dict, manifest: dict) -> dict:
+    """Force a concrete callback to prior beats for beat 2+ questions."""
+    if result.get("kind") != "question":
+        return result
+    beats = manifest.get("beats") or []
+    idx = next((i for i, b in enumerate(beats) if b.get("beatId") == beat.get("beatId")), 0)
+    if idx <= 0:
+        return result
+    q = str(result.get("question") or "").strip()
+    if not q:
+        return result
+    ql = q.lower()
+    anchors = _continuity_anchors(manifest, beat)
+    if not anchors:
+        return result
+    if any(a and a in ql for a in anchors[:8]):
+        return result
+    # Prefix one concrete anchor so the question cannot be generic.
+    anchor = anchors[0]
+    anchored_q = f"Given {anchor}, {q[0].lower() + q[1:]}" if len(q) > 1 else f"Given {anchor}, {q}"
+    result = dict(result)
+    result["question"] = anchored_q
+    return result
 
 
 # ── Non-streaming entry point ──────────────────────────────────────────────
@@ -103,11 +159,12 @@ async def run_agent_turn(req: dict) -> dict:
         if function_call is None:
             raise RuntimeError("Gemini agent did not emit a tool call after cold retry.")
 
-    return _repair_question_if_redundant(
+    result = _repair_question_if_redundant(
         _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat),
         beat,
         conversation,
     )
+    return _question_mentions_prior(result, beat, manifest)
 
 
 # ── Streaming entry point ──────────────────────────────────────────────────
@@ -117,7 +174,7 @@ async def run_agent_turn(req: dict) -> dict:
 # 6–15s on the trial tier, but we MUST have a ceiling — without one, a
 # stalled Gemini stream blocks the consumer coroutine (and thus the SSE
 # connection) forever. 45s gives Gemini 2.5 Flash generous room for its
-# thinking budget while still recovering within a minute via Anthropic.
+# thinking budget while still recovering via one-shot Gemini fallback.
 STREAM_TIMEOUT_SECONDS = 45.0
 
 # Per-chunk liveness: if the producer hasn't put ANYTHING on the queue for
@@ -257,8 +314,8 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
     #      producer start to SENTINEL. Catches total stalls.
     #   2. CHUNK_SILENCE_SECONDS (20s) — per-get ceiling. Catches mid-stream
     #      stalls where Gemini sends a few thinking tokens then goes silent.
-    # On any timeout: fall back to Anthropic Haiku and surface a thought
-    # event so the user sees "switching to backup" instead of frozen UI.
+    # On timeout/error/no-tool: fall back to ONE-SHOT Gemini (run_agent_turn)
+    # and surface a thought event so the UI never appears dead.
 
     final_call: dict | None = None
     timed_out = False
@@ -298,68 +355,59 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             final_call = {"name": item["name"], "args": item["args"]}
             yield {"type": "tool_call", "name": item["name"], "args": item["args"]}
         elif kind == "error":
-            # Stream-level Gemini error → pivot to Anthropic fallback so the
-            # user gets a real answer instead of a dead stream. We surface a
-            # short status thought so the visualizer can show the pivot.
+            # Stream-level Gemini error → pivot to one-shot Gemini fallback so
+            # the user gets a real answer instead of a dead stream.
             logger.warning("[agent/stream] Gemini stream error, beat=%s: %s", beat_name, item["message"])
-            yield {"type": "thought", "chunk": f"[gemini stream error: {item['message']}; falling back to Anthropic Haiku]"}
+            yield {
+                "type": "thought",
+                "chunk": f"[gemini stream error: {item['message']}; retrying with one-shot Gemini]",
+            }
             try:
-                result = await _run_anthropic_agent_turn(
-                    beat=beat,
-                    manifest=manifest,
-                    conversation=conversation,
-                )
+                result = await run_agent_turn(req)
             except Exception as exc:
-                yield {"type": "error", "message": f"Both Gemini stream and Anthropic fallback failed: {exc}"}
+                yield {"type": "error", "message": f"Gemini stream and one-shot fallback both failed: {exc}"}
                 return
             yield {
                 "type": "tool_call",
                 "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
                 "args": result,
             }
+            result = _question_mentions_prior(result, beat, manifest)
             yield {"type": "result", **result}
             return
 
-    # ── Timeout recovery: fall back to Anthropic ───────────────────────────
+    # ── Timeout recovery: fall back to one-shot Gemini ─────────────────────
     if timed_out:
         yield {
             "type": "thought",
             "chunk": (
                 f"[gemini stream timed out after {time.monotonic() - wall_start:.0f}s; "
-                f"falling back to Anthropic Haiku]"
+                f"retrying with one-shot Gemini]"
             ),
         }
         try:
-            result = await _run_anthropic_agent_turn(
-                beat=beat,
-                manifest=manifest,
-                conversation=conversation,
-            )
+            result = await run_agent_turn(req)
         except Exception as exc:
-            logger.error("[agent/stream] Anthropic fallback also failed, beat=%s: %s", beat_name, exc)
-            yield {"type": "error", "message": f"Gemini timed out and Anthropic fallback failed: {exc}"}
+            logger.error("[agent/stream] one-shot fallback also failed, beat=%s: %s", beat_name, exc)
+            yield {"type": "error", "message": f"Gemini timed out and one-shot fallback failed: {exc}"}
             return
-        logger.info("[agent/stream] Anthropic fallback succeeded, beat=%s kind=%s", beat_name, result.get("kind"))
+        logger.info("[agent/stream] one-shot fallback succeeded, beat=%s kind=%s", beat_name, result.get("kind"))
         yield {
             "type": "tool_call",
             "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
             "args": result,
         }
+        result = _question_mentions_prior(result, beat, manifest)
         yield {"type": "result", **result}
         return
 
     # ── Normal completion ──────────────────────────────────────────────────
     if final_call is None:
-        # Stream ended with no function_call. Pivot to Anthropic instead of
-        # surfacing a dead stream.
-        logger.warning("[agent/stream] no tool call in stream, beat=%s — falling back to Anthropic", beat_name)
-        yield {"type": "thought", "chunk": "[gemini stream produced no tool call; falling back to Anthropic Haiku]"}
+        # Stream ended with no function_call. Retry once via one-shot Gemini.
+        logger.warning("[agent/stream] no tool call in stream, beat=%s — retrying one-shot", beat_name)
+        yield {"type": "thought", "chunk": "[gemini stream produced no tool call; retrying with one-shot Gemini]"}
         try:
-            result = await _run_anthropic_agent_turn(
-                beat=beat,
-                manifest=manifest,
-                conversation=conversation,
-            )
+            result = await run_agent_turn(req)
         except Exception as exc:
             yield {"type": "error", "message": f"Stream completed without tool call and fallback failed: {exc}"}
             return
@@ -368,6 +416,7 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
             "args": result,
         }
+        result = _question_mentions_prior(result, beat, manifest)
         yield {"type": "result", **result}
         return
 
@@ -378,4 +427,5 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         yield {"type": "error", "message": f"Failed to normalize tool call: {exc}"}
         return
     result = _repair_question_if_redundant(result, beat, conversation)
+    result = _question_mentions_prior(result, beat, manifest)
     yield {"type": "result", **result}

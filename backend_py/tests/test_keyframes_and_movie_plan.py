@@ -316,6 +316,54 @@ def test_earlier_beats_block_emits_full_beatfacts():
     assert "the keeper is haunted by a missed signal" in block  # user turn full
 
 
+def test_earlier_beats_block_uses_latest_rich_scene_not_first():
+    from sceneos_py.agent.context import _earlier_beats_block
+
+    manifest = {
+        "beats": [
+            {
+                "beatId": "beat-1",
+                "beatName": "Hook",
+                "archetype": {"intent": "x", "mood": "intimate-hook"},
+                "scenes": [
+                    {
+                        "sceneId": "s1",
+                        "approved": True,
+                        "conversation": [{"role": "user", "content": "early draft"}],
+                    },
+                    {
+                        "sceneId": "s2",
+                        "approved": True,
+                        "sceneSummary": "finalized beat after retries",
+                        "beatFacts": {
+                            "subject": "keeper",
+                            "action": "lights the lamp",
+                            "setting": "storm tower",
+                            "framing": "tight handheld",
+                            "mood": "dread",
+                            "characterDescription": "scarred keeper in yellow slicker",
+                            "locationDescription": "iron stair and brass lens",
+                            "voiceLine": "He keeps the dark offshore.",
+                            "captionLine": "Night one.",
+                        },
+                        "conversation": [{"role": "user", "content": "make it stormier and haunted"}],
+                    },
+                ],
+            },
+            {
+                "beatId": "beat-2",
+                "beatName": "Exposition",
+                "archetype": {"intent": "y", "mood": "wide-establish"},
+                "scenes": [{"sceneId": "s3", "approved": False, "conversation": []}],
+            },
+        ],
+    }
+    block = _earlier_beats_block(manifest["beats"][1], manifest)
+    assert "scarred keeper in yellow slicker" in block
+    assert "Night one." in block
+    assert "make it stormier and haunted" in block
+
+
 def test_movie_plan_block_emitted_when_present():
     from sceneos_py.agent.context import _movie_plan_block
     manifest = {

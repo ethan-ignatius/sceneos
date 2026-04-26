@@ -31,6 +31,25 @@ def _active_scene(beat: dict) -> dict | None:
     return scenes[-1]
 
 
+def _memory_scene(beat: dict) -> dict | None:
+    """Best scene to represent a beat in cross-beat memory.
+
+    Some clients append scenes across retries/edits, so the canonical data
+    for a completed beat may not live at scenes[0]. Prefer the newest scene
+    that has beatFacts; then newest with summary/refinedPrompt; then newest.
+    """
+    scenes = beat.get("scenes") or []
+    if not scenes:
+        return None
+    for scene in reversed(scenes):
+        if scene.get("beatFacts"):
+            return scene
+    for scene in reversed(scenes):
+        if scene.get("sceneSummary") or scene.get("refinedPrompt"):
+            return scene
+    return scenes[-1]
+
+
 def _collect_conversation(beat: dict, user_message: str | None) -> list[dict]:
     scene = _active_scene(beat) or {"conversation": []}
     history = list(scene.get("conversation") or [])
@@ -63,8 +82,7 @@ def _earlier_beats_block(beat: dict, manifest: dict) -> str:
         return ""
     sections: list[str] = []
     for b in manifest["beats"][:beat_idx]:
-        scenes = b.get("scenes") or []
-        scene = scenes[0] if scenes else None
+        scene = _memory_scene(b)
         if not scene:
             continue
         lines: list[str] = [f"## {b['beatName']} (beat {manifest['beats'].index(b) + 1})"]

@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -35,6 +36,8 @@ from .provider import (
 
 logger = logging.getLogger(__name__)
 _KEYFRAME_WAIT_SECONDS = float(env("SCENEOS_KEYFRAME_WAIT_SECONDS", "25") or "25")
+_ASYNC_ORCHESTRATE = (env("SCENEOS_ASYNC_ORCHESTRATE", "true") or "true").strip().lower() != "false"
+_ORCH_POLL_MS = int(env("SCENEOS_ORCH_POLL_MS", "1200") or "1200")
 
 app = FastAPI(title="sceneos-backend-py")
 
@@ -89,7 +92,6 @@ def health():
 async def agent(body: dict):
     if mock_mode():
         return mock_service.run_mock_agent_turn(body)
-    t_orch = time.perf_counter()
     try:
         return await agent_service.run_agent_turn(body)
     except Exception as exc:
@@ -257,6 +259,7 @@ async def project_observability(project_id: str):
     Returns session metadata + beat progress + speculative-job snapshots.
     """
     from . import session as session_service
+    from . import jobs as jobs_store
 
     sess = session_service.get_session(project_id)
     if sess is None:
@@ -264,14 +267,19 @@ async def project_observability(project_id: str):
 
     manifest = sess.get("manifest") or {}
     beats = manifest.get("beats") or []
+    project_keyframes = sess.get("projectKeyframes") or {}
+    character_keyframes = project_keyframes.get("character") or []
+    location_keyframes = project_keyframes.get("location") or []
     beat_rows = []
     for beat in beats:
-        scene = (beat.get("scenes") or [{}])[0] or {}
+        scenes = beat.get("scenes") or []
+        scene = scenes[-1] if scenes else {}
         beat_rows.append({
             "beatId": beat.get("beatId"),
             "beatName": beat.get("beatName"),
             "template": beat.get("template"),
             "status": beat.get("status"),
+            "sceneCount": len(scenes),
             "hasBeatFacts": bool(scene.get("beatFacts")),
             "hasRefinedPrompt": bool(scene.get("refinedPrompt")),
             "jobId": scene.get("jobId"),
@@ -279,6 +287,22 @@ async def project_observability(project_id: str):
             "lastFrameUrl": scene.get("lastFrameUrl"),
         })
 
+    orchestrate_jobs = [
+        {
+            "jobId": j.job_id,
+            "projectId": j.project_id,
+            "beatId": j.beat_id,
+            "status": j.status,
+            "stage": j.stage,
+            "provider": j.provider,
+            "providerJobId": (encode_job_id(j.provider, j.provider_job_id) if j.provider and j.provider_job_id else None),
+            "error": j.error,
+            "startedAt": j.started_at,
+            "updatedAt": j.updated_at,
+        }
+        for j in jobs_store.ORCH_JOBS.values()
+        if j.project_id == project_id
+    ]
     return {
         "projectId": project_id,
         "mode": sess.get("mode"),
@@ -288,9 +312,129 @@ async def project_observability(project_id: str):
         "projectKeyframesMeta": sess.get("projectKeyframesMeta"),
         "projectRefsPresent": bool(sess.get("projectRefs")),
         "projectKeyframesPresent": bool(sess.get("projectKeyframes")),
+        "projectKeyframesSummary": {
+            "characterCount": len(character_keyframes),
+            "locationCount": len(location_keyframes),
+            "characterVariants": [k.get("variant") for k in character_keyframes if k.get("variant")],
+            "locationVariants": [k.get("variant") for k in location_keyframes if k.get("variant")],
+            "characterPublicIds": [k.get("publicId") for k in character_keyframes if k.get("publicId")],
+            "locationPublicIds": [k.get("publicId") for k in location_keyframes if k.get("publicId")],
+        },
         "speculativeJobs": session_service.all_speculative_jobs(project_id),
+        "orchestrateJobs": orchestrate_jobs,
         "beats": beat_rows,
     }
+
+
+async def _orchestrate_submit(
+    *,
+    beat_id: str,
+    manifest: dict,
+    beat_facts: dict,
+    previous_last_frame_url: str | None,
+    aspect_ratio: str,
+    project_id: str | None,
+) -> dict:
+    """Run the heavy orchestrate submission path and return provider job info."""
+    from . import orchestrator
+    from . import session as session_service
+
+    t_orch = time.perf_counter()
+    t_refs = time.perf_counter()
+    keyframe_timeout = False
+    try:
+        project_keyframes = await asyncio.wait_for(
+            session_service.ensure_project_keyframes(
+                project_id=project_id,
+                character_description=beat_facts.get("characterDescription"),
+                location_description=beat_facts.get("locationDescription"),
+                aspect_ratio=aspect_ratio,
+            ),
+            timeout=_KEYFRAME_WAIT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        keyframe_timeout = True
+        project_keyframes = None
+        logger.warning(
+            "[orchestrate] keyframe generation timed out after %.1fs project=%s beat=%s",
+            _KEYFRAME_WAIT_SECONDS,
+            project_id,
+            beat_id,
+        )
+    refs_ms = int((time.perf_counter() - t_refs) * 1000)
+    project_refs = (
+        session_service._refs_from_keyframes(project_keyframes)
+        if project_keyframes
+        else None
+    )
+    t_pipeline = time.perf_counter()
+    result = await orchestrator.run_beat_pipeline(
+        manifest=manifest,
+        beat_id=beat_id,
+        beat_facts=beat_facts,
+        previous_last_frame_url=previous_last_frame_url,
+        aspect_ratio=aspect_ratio,
+        project_refs=project_refs,
+        project_keyframes=project_keyframes,
+    )
+    pipeline_ms = int((time.perf_counter() - t_pipeline) * 1000)
+    total_ms = int((time.perf_counter() - t_orch) * 1000)
+    result["orchestrateTiming"] = {
+        "ensureProjectKeyframesMs": refs_ms,
+        "runBeatPipelineMs": pipeline_ms,
+        "totalMs": total_ms,
+        "keyframeTimeout": keyframe_timeout,
+    }
+    logger.info(
+        "[orchestrate] beat=%s project=%s totalMs=%s refsMs=%s pipelineMs=%s",
+        beat_id, project_id, total_ms, refs_ms, pipeline_ms,
+    )
+    if project_id:
+        session_service.set_speculative_job(project_id, beat_id, result)
+    return result
+
+
+async def _run_orchestrate_job(job_id: str) -> None:
+    """Background worker for queued orchestrate jobs."""
+    from . import jobs as jobs_store
+
+    job = jobs_store.get_orchestrate(job_id)
+    if not job:
+        return
+    jobs_store.update_orchestrate(job_id, status="running", stage="preparing")
+    payload = (job.observability or {}).get("requestPayload") or {}
+    try:
+        result = await _orchestrate_submit(
+            beat_id=payload["beatId"],
+            manifest=payload["manifest"],
+            beat_facts=payload["beatFacts"],
+            previous_last_frame_url=payload.get("previousLastFrameUrl"),
+            aspect_ratio=payload.get("aspectRatio") or "16:9",
+            project_id=payload.get("projectId"),
+        )
+        provider = result.get("provider")
+        provider_job_id = None
+        encoded_job_id = result.get("jobId")
+        if encoded_job_id and "::" in encoded_job_id:
+            provider_job_id = encoded_job_id.split("::", 1)[1]
+        jobs_store.update_orchestrate(
+            job_id,
+            status="submitted",
+            stage="submitted-to-provider",
+            provider=provider,
+            provider_job_id=provider_job_id,
+            submission=result,
+            observability={"submitResult": {"provider": provider, "jobId": encoded_job_id}},
+        )
+    except Exception as exc:
+        logger.exception("[orchestrate/queue] failed job=%s", job_id)
+        jobs_store.update_orchestrate(
+            job_id,
+            status="failed",
+            stage="failed",
+            error=str(exc),
+            observability={"failure": {"type": type(exc).__name__, "message": str(exc)}},
+        )
 
 
 # ── /api/orchestrate/{beat_id} — deterministic per-beat pipeline ──────────
@@ -401,69 +545,56 @@ async def orchestrate(beat_id: str, body: dict):
             "refinedPrompt": refined_prompt,
         }
 
-    try:
-        # Look up (or generate-and-cache) the project-level multi-keyframe
-        # set. In demo mode this was already populated at
-        # /api/session/start. In normal mode this is the lazy first-time
-        # generation triggered by the first markSufficient that ships
-        # characterDescription / locationDescription. Each beat picks the
-        # keyframe variant best matching its framing.
-        t_refs = time.perf_counter()
-        keyframe_timeout = False
-        try:
-            project_keyframes = await asyncio.wait_for(
-                session_service.ensure_project_keyframes(
-                    project_id=project_id,
-                    character_description=beat_facts.get("characterDescription"),
-                    location_description=beat_facts.get("locationDescription"),
-                    aspect_ratio=aspect_ratio,
-                ),
-                timeout=_KEYFRAME_WAIT_SECONDS,
+    if _ASYNC_ORCHESTRATE:
+        from . import jobs as jobs_store
+        orch_id = f"orch::{uuid.uuid4().hex[:12]}"
+        scene_id = ((beat.get("scenes") or [{}])[0] or {}).get("sceneId") or f"{beat_id}-scene-1"
+        jobs_store.put_orchestrate(
+            jobs_store.OrchestrateJob(
+                job_id=orch_id,
+                project_id=project_id,
+                beat_id=beat_id,
+                scene_id=scene_id,
+                status="queued",
+                stage="queued",
+                observability={
+                    "requestPayload": {
+                        "projectId": project_id,
+                        "beatId": beat_id,
+                        "manifest": manifest,
+                        "beatFacts": beat_facts,
+                        "previousLastFrameUrl": previous_last_frame_url,
+                        "aspectRatio": aspect_ratio,
+                    }
+                },
             )
-        except asyncio.TimeoutError:
-            # Fail-open: do not stall the whole beat for minutes waiting on Imagen.
-            # The orchestrator can still proceed (chain-from-previous or text-only).
-            keyframe_timeout = True
-            project_keyframes = None
-            logger.warning(
-                "[orchestrate] keyframe generation timed out after %.1fs project=%s beat=%s",
-                _KEYFRAME_WAIT_SECONDS,
-                project_id,
-                beat_id,
-            )
-        refs_ms = int((time.perf_counter() - t_refs) * 1000)
-        # Back-compat single-ref shape for any caller that still reads it.
-        project_refs = (
-            session_service._refs_from_keyframes(project_keyframes)
-            if project_keyframes
-            else None
         )
-        t_pipeline = time.perf_counter()
-        result = await orchestrator.run_beat_pipeline(
-            manifest=manifest,
+        asyncio.create_task(_run_orchestrate_job(orch_id))
+        return {
+            "sceneId": scene_id,
+            "jobId": orch_id,
+            "provider": "orchestrator",
+            "status": "queued",
+            "pollAfterMs": _ORCH_POLL_MS,
+            "chainFromPrevious": bool(previous_last_frame_url and not beat.get("chainFromPrevious") is False),
+            "sharedRefs": False,
+            "observability": {
+                "queued": True,
+                "projectId": project_id,
+                "beatId": beat_id,
+                "hint": "Poll /api/status/<jobId>; provider job appears after submission.",
+            },
+        }
+
+    try:
+        result = await _orchestrate_submit(
             beat_id=beat_id,
+            manifest=manifest,
             beat_facts=beat_facts,
             previous_last_frame_url=previous_last_frame_url,
             aspect_ratio=aspect_ratio,
-            project_refs=project_refs,
-            project_keyframes=project_keyframes,
+            project_id=project_id,
         )
-        pipeline_ms = int((time.perf_counter() - t_pipeline) * 1000)
-        total_ms = int((time.perf_counter() - t_orch) * 1000)
-        result["orchestrateTiming"] = {
-            "ensureProjectKeyframesMs": refs_ms,
-            "runBeatPipelineMs": pipeline_ms,
-            "totalMs": total_ms,
-            "keyframeTimeout": keyframe_timeout,
-        }
-        logger.info(
-            "[orchestrate] beat=%s project=%s totalMs=%s refsMs=%s pipelineMs=%s",
-            beat_id, project_id, total_ms, refs_ms, pipeline_ms,
-        )
-        # Cache it under the projectId so subsequent calls (e.g. retries)
-        # hit the same job without re-submitting.
-        if project_id:
-            session_service.set_speculative_job(project_id, beat_id, result)
         return result
     except Exception as exc:
         logger.exception("[orchestrate] failed for beat %s", beat_id)
@@ -670,6 +801,98 @@ async def generate(body: dict):
 
 @app.get("/api/status/{job_id:path}")
 async def status(job_id: str):
+    if job_id.startswith("orch::"):
+        from . import jobs as jobs_store
+        orch = jobs_store.get_orchestrate(job_id)
+        if not orch:
+            raise HTTPException(status_code=404, detail={"error": "Unknown orchestrate jobId"})
+        if orch.status in {"queued", "running"}:
+            return {
+                "jobId": job_id,
+                "provider": "orchestrator",
+                "status": "running",
+                "stage": orch.stage,
+                "pollAfterMs": _ORCH_POLL_MS,
+                "startedAt": orch.started_at or orch.created_at,
+                "observability": orch.observability,
+            }
+        if orch.status == "failed":
+            return {
+                "jobId": job_id,
+                "provider": "orchestrator",
+                "status": "failed",
+                "stage": orch.stage,
+                "error": orch.error or "orchestrate job failed",
+                "startedAt": orch.started_at or orch.created_at,
+                "observability": orch.observability,
+            }
+        if orch.status == "succeeded":
+            response = {
+                "jobId": job_id,
+                "provider": orch.provider or "orchestrator",
+                "status": "succeeded",
+                "stage": orch.stage,
+                "startedAt": orch.started_at or orch.created_at,
+                "observability": orch.observability,
+            }
+            submission = orch.submission or {}
+            if submission.get("clipUrl"):
+                response["clipUrl"] = submission["clipUrl"]
+            if submission.get("clipPublicId"):
+                response["clipPublicId"] = submission["clipPublicId"]
+                response["lastFrameUrl"] = last_frame_url(submission["clipPublicId"])
+            return response
+        # submitted/succeeded: either proxy provider status or return cached success.
+        if not orch.provider or not orch.provider_job_id:
+            return {
+                "jobId": job_id,
+                "provider": "orchestrator",
+                "status": "running",
+                "stage": orch.stage,
+                "pollAfterMs": _ORCH_POLL_MS,
+                "startedAt": orch.started_at or orch.created_at,
+                "observability": orch.observability,
+            }
+        provider = orch.provider  # type: ignore[assignment]
+        provider_job_id = orch.provider_job_id
+        _, impl = get_provider() if provider == _active_name() else (provider, _registry_for(provider))
+        result = await impl.status(provider_job_id)
+        if result.get("status") == "succeeded":
+            jobs_store.update_orchestrate(job_id, status="succeeded", stage="succeeded")
+        elif result.get("status") == "failed":
+            jobs_store.update_orchestrate(
+                job_id,
+                status="failed",
+                stage="provider-failed",
+                error=result.get("error") or "provider failed",
+            )
+        poll_after = (
+            poll_after_ms_for(provider)
+            if result.get("status") in {"queued", "running"}
+            else None
+        )
+        response = {
+            "jobId": job_id,
+            "provider": provider,
+            "status": result.get("status"),
+            "stage": result.get("stage") or orch.stage,
+            "orchestratorJobId": job_id,
+            "providerJobId": encode_job_id(provider, provider_job_id),
+            "startedAt": orch.started_at or orch.created_at,
+            "observability": orch.observability,
+        }
+        if poll_after is not None:
+            response["pollAfterMs"] = poll_after
+        if result.get("clipUrl"):
+            response["clipUrl"] = result["clipUrl"]
+        if result.get("clipPublicId"):
+            response["clipPublicId"] = result["clipPublicId"]
+            if result.get("status") == "succeeded":
+                response["lastFrameUrl"] = last_frame_url(result["clipPublicId"])
+        if result.get("error"):
+            response["error"] = result["error"]
+        return response
+
     if mock_mode() or job_id.startswith("mock::") or job_id.startswith("cached::"):
         ticks = _MOCK_TICKS.get(job_id, 0) + 1
         _MOCK_TICKS[job_id] = ticks

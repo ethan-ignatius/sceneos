@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
 import { sleep } from "@/lib/utils";
-import type { GenerationProvider } from "@/types/api";
+import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 8 },
@@ -38,6 +38,11 @@ export function NodeDetailDrawer() {
   // every poll thereafter; stale values are fine because the wallclock
   // calculation only depends on the timestamp identity.
   const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [latestStatus, setLatestStatus] = useState<StatusResponse | null>(null);
+  const [statusSamples, setStatusSamples] = useState<
+    Array<{ atMs: number; status: string; stage?: string | null; pollAfterMs?: number | null }>
+  >([]);
+  const [dispatchMs, setDispatchMs] = useState<number | null>(null);
   // Set to true on unmount; the polling loop checks each iteration so an
   // orphaned poll can't write to a stale beat after the drawer closes.
   const cancelRef = useRef(false);
@@ -57,6 +62,7 @@ export function NodeDetailDrawer() {
     async (jobId: string, beatId: string, sceneId: string, initialDelay: number) => {
       const startMs = Date.now();
       let delay = initialDelay;
+      let retriedExpiredJob = false;
       while (!cancelRef.current) {
         // 5-minute ceiling on a re-attached poll — long enough for Veo 3
         // (~1–4 min real-world) but bounded so a stuck jobId doesn't spin
@@ -70,6 +76,19 @@ export function NodeDetailDrawer() {
         if (cancelRef.current) return;
         const status = await api.status(jobId);
         if (cancelRef.current) return;
+        setLatestStatus(status);
+        setStatusSamples((prev) => {
+          const next = [
+            ...prev,
+            {
+              atMs: Date.now() - startMs,
+              status: status.status,
+              stage: status.stage ?? null,
+              pollAfterMs: status.pollAfterMs ?? null,
+            },
+          ];
+          return next.slice(-80);
+        });
         setProviderStage(status.stage ?? null);
         // First status response with a startedAt locks our elapsed-time
         // source. Backend value wins over drawer-mount time.
@@ -81,6 +100,7 @@ export function NodeDetailDrawer() {
             jobId,
             clipPublicId: status.clipPublicId,
             clipUrl: status.clipUrl,
+            lastFrameUrl: status.lastFrameUrl,
           });
           updateBeat(beatId, { status: "preview" });
           return;
@@ -94,7 +114,43 @@ export function NodeDetailDrawer() {
           // instead of the cryptic backend string.
           const errMsg = status.error ?? "Generation failed";
           if (/unknown\s+\w+\s+jobid/i.test(errMsg)) {
+            // Backend restarted and lost in-memory provider job registry.
+            // Auto-re-dispatch once with the same prompt so users don't hit
+            // a dead-end "expired render" state on node 2+.
             updateScene(beatId, sceneId, { jobId: undefined });
+            if (!retriedExpiredJob) {
+              retriedExpiredJob = true;
+              const b = manifest?.beats.find((x) => x.beatId === beatId);
+              const s = b?.scenes.find((x) => x.sceneId === sceneId);
+              if (manifest && b && s?.refinedPrompt) {
+                const beatIdx = manifest.beats.findIndex((x) => x.beatId === beatId);
+                const prevBeat = beatIdx > 0 ? manifest.beats[beatIdx - 1] : null;
+                const prevScene = prevBeat?.scenes?.[0];
+                const regen = s.beatFacts
+                  ? await api.orchestrate(beatId, {
+                      manifest,
+                      beatFacts: s.beatFacts,
+                      previousLastFrameUrl: prevScene?.lastFrameUrl,
+                      aspectRatio: "16:9",
+                    })
+                  : await api.generate({
+                      projectId: manifest.projectId,
+                      beatId,
+                      sceneId,
+                      refinedPrompt: s.refinedPrompt,
+                      durationSeconds: s.durationSeconds ?? b.archetype.suggestedDuration,
+                      beatTemplate: b.template,
+                    });
+                if (cancelRef.current) return;
+                if (regen.provider && String(regen.provider) !== "orchestrator") {
+                  setProvider(regen.provider as GenerationProvider);
+                }
+                setFallbackFrom((regen as { originalProvider?: GenerationProvider }).originalProvider ?? null);
+                updateScene(beatId, sceneId, { jobId: regen.jobId });
+                delay = regen.pollAfterMs ?? 1200;
+                continue;
+              }
+            }
             throw new ApiError(0, "The previous render expired. Click Roll camera to start fresh.");
           }
           throw new ApiError(0, errMsg);
@@ -102,7 +158,7 @@ export function NodeDetailDrawer() {
         delay = status.pollAfterMs ?? 800;
       }
     },
-    [updateBeat, updateScene],
+    [manifest, updateBeat, updateScene],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -113,21 +169,38 @@ export function NodeDetailDrawer() {
     setProvider(null);
     setProviderStage(null);
     setStartedAt(null);
+    setLatestStatus(null);
+    setStatusSamples([]);
+    setDispatchMs(null);
     setFallbackFrom(null);
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
-      const gen = await api.generate({
-        projectId: manifest.projectId,
-        beatId: beat.beatId,
-        sceneId: scene.sceneId,
-        refinedPrompt: scene.refinedPrompt,
-        durationSeconds: scene.durationSeconds ?? beat.archetype.suggestedDuration,
-        beatTemplate: beat.template,
-      });
+      const t0 = performance.now();
+      const beatIdx = manifest.beats.findIndex((b) => b.beatId === beat.beatId);
+      const prevBeat = beatIdx > 0 ? manifest.beats[beatIdx - 1] : null;
+      const prevScene = prevBeat?.scenes?.[0];
+      const gen = scene.beatFacts
+        ? await api.orchestrate(beat.beatId, {
+            manifest,
+            beatFacts: scene.beatFacts,
+            previousLastFrameUrl: prevScene?.lastFrameUrl,
+            aspectRatio: "16:9",
+          })
+        : await api.generate({
+            projectId: manifest.projectId,
+            beatId: beat.beatId,
+            sceneId: scene.sceneId,
+            refinedPrompt: scene.refinedPrompt,
+            durationSeconds: scene.durationSeconds ?? beat.archetype.suggestedDuration,
+            beatTemplate: beat.template,
+          });
       if (cancelRef.current) return;
-      setProvider(gen.provider);
-      setFallbackFrom(gen.originalProvider ?? null);
+      setDispatchMs(Math.round(performance.now() - t0));
+      if (gen.provider && String(gen.provider) !== "orchestrator") {
+        setProvider(gen.provider as GenerationProvider);
+      }
+      setFallbackFrom((gen as { originalProvider?: GenerationProvider }).originalProvider ?? null);
       updateScene(beat.beatId, scene.sceneId, { jobId: gen.jobId });
       await pollUntilDone(gen.jobId, beat.beatId, scene.sceneId, gen.pollAfterMs);
     } catch (err) {
@@ -152,6 +225,7 @@ export function NodeDetailDrawer() {
   useEffect(() => {
     if (!beatId || !sceneId || !persistedJobId || !isGeneratingStatus) return;
     setGenError(null);
+    setStatusSamples([]);
     const decoded = persistedJobId.split("::")[0];
     const KNOWN_PROVIDERS: readonly GenerationProvider[] = [
       "vertex",
@@ -267,12 +341,20 @@ export function NodeDetailDrawer() {
               stage={providerStage}
               startedAt={startedAt}
               fallbackFrom={fallbackFrom}
+              debug={{
+                dispatchMs,
+                latestStatus,
+                samples: statusSamples,
+              }}
               onCancel={() => {
                 cancelRef.current = true;
                 setStartedAt(null);
                 setProviderStage(null);
                 setProvider(null);
                 setFallbackFrom(null);
+                setLatestStatus(null);
+                setStatusSamples([]);
+                setDispatchMs(null);
                 setGenError(null);
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               }}

@@ -54,9 +54,10 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
   // Mood-graded Cloudinary URL when a publicId exists. The real backend
   // always emits a publicId on success — null = an actual no-clip state,
   // which the empty render below handles.
-  const src = scene.clipPublicId
-    ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
-    : "";
+  const src = scene.clipUrl
+    || (scene.clipPublicId
+      ? buildClipUrl(scene.clipPublicId, { mood: beat.archetype.mood })
+      : "");
 
   if (!src) {
     return (

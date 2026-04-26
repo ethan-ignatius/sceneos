@@ -31,8 +31,8 @@ export type AgentResponse =
       question: string;
       reasoning: string;
       estimatedRemaining: number;
-      /** Three different-direction options the user can click instead of typing. */
-      suggestedAnswers?: [string, string, string];
+      /** Optional quick replies (0..4). Empty/absent means open-ended. */
+      suggestedAnswers?: string[];
     }
   | {
       kind: "sufficient";
@@ -58,7 +58,7 @@ export type AgentStreamEvent =
   | { type: "text"; chunk: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | ({ type: "result" } & (
-      | { kind: "question"; question: string; reasoning: string; estimatedRemaining: number; suggestedAnswers?: [string, string, string] }
+      | { kind: "question"; question: string; reasoning: string; estimatedRemaining: number; suggestedAnswers?: string[] }
       | { kind: "sufficient"; refinedPrompt: string; sceneSummary: string; suggestedDuration: number; beatFacts?: BeatFacts }
     ))
   | { type: "error"; message: string }
@@ -111,6 +111,10 @@ export interface StatusResponse {
   jobId: string;
   status: JobStatus;
   stage?: "veo_running" | "cloudinary_uploading" | "cloudinary_uploaded" | string;
+  /** Optional orchestrator queue job id when status is proxied through orch::<id>. */
+  orchestratorJobId?: string;
+  /** Encoded provider::<id> handle when orchestrator has submitted downstream. */
+  providerJobId?: string;
   clipUrl?: string;
   clipPublicId?: string;
   /**
@@ -129,6 +133,8 @@ export interface StatusResponse {
    * from zero. Only present for providers that track it (Vertex today).
    */
   startedAt?: string;
+  /** Free-form backend observability payload (timings, trace metadata). */
+  observability?: Record<string, unknown>;
 }
 
 export interface StitchRequest {

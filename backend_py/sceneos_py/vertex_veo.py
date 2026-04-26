@@ -38,6 +38,30 @@ _JOBS: dict[str, dict[str, Any]] = {}
 _JOB_STARTED_AT: dict[str, str] = {}
 
 
+def _soften_prompt(prompt: str) -> str:
+    """Reduce wording that frequently triggers Veo safety filters."""
+    p = (prompt or "").strip()
+    if not p:
+        return p
+    replacements = {
+        "ancient weapons": "ancient artifacts",
+        "weapon": "artifact",
+        "martial arts": "disciplined training",
+        "deadly": "dangerous",
+        "kill": "defeat",
+        "blood": "dust",
+        "violence": "conflict",
+        "fight": "confrontation",
+        "battle": "trial",
+    }
+    out = p
+    for src, dst in replacements.items():
+        out = out.replace(src, dst).replace(src.title(), dst.title())
+    if "non-graphic" not in out.lower():
+        out = f"{out} Keep depiction non-graphic, PG-13, and focused on atmosphere and discovery."
+    return out
+
+
 def _read_config() -> dict[str, str]:
     # Accept either GOOGLE_PROJECT_ID (matches gcloud + Vertex docs) or the
     # legacy GCP_PROJECT_ID alias used by the original TS backend. Same for
@@ -171,6 +195,7 @@ async def generate(params: GenerateClipParams) -> dict:
     voice_line = (clip_prompt.get("voiceLine") or "").strip()
     if voice_line:
         full_prompt = f"{full_prompt} The narrator says: \"{voice_line}\"."
+    softened_prompt = _soften_prompt(full_prompt)
 
     instance: dict[str, Any] = {"prompt": full_prompt}
 
@@ -239,6 +264,9 @@ async def generate(params: GenerateClipParams) -> dict:
         "stage": "veo_running",
         "operationName": op_name,
         "publicId": pid,
+        "requestBody": body,
+        "softenedPrompt": softened_prompt,
+        "safetyRetryUsed": False,
     }
     logger.info("[vertex] Veo operation started job=%s operation=%s", provider_job_id, op_name)
     asyncio.create_task(_poll_until_done(provider_job_id))
@@ -289,10 +317,43 @@ async def _poll_until_done(provider_job_id: str) -> None:
         if not videos:
             filtered = response.get("raiMediaFilteredCount", 0)
             reasons = "; ".join(response.get("raiMediaFilteredReasons") or []) or "no videos"
+            if filtered and not job.get("safetyRetryUsed"):
+                try:
+                    body = dict(job.get("requestBody") or {})
+                    instances = list(body.get("instances") or [])
+                    if instances:
+                        first = dict(instances[0] or {})
+                        first["prompt"] = job.get("softenedPrompt") or first.get("prompt", "")
+                        instances[0] = first
+                        body["instances"] = instances
+                        op2 = await _authed_post(_predict_url(), body)
+                        op2_name = op2.get("name") if isinstance(op2, dict) else None
+                        if op2_name:
+                            _JOBS[provider_job_id] = {
+                                **job,
+                                "status": "running",
+                                "stage": "veo_running",
+                                "operationName": op2_name,
+                                "requestBody": body,
+                                "safetyRetryUsed": True,
+                                "safetyRetryReason": reasons,
+                            }
+                            logger.warning(
+                                "[vertex] safety filtered; retried softened prompt job=%s reasons=%s",
+                                provider_job_id,
+                                reasons,
+                            )
+                            job = _JOBS[provider_job_id]
+                            op_name = op2_name
+                            continue
+                except Exception:
+                    logger.exception("[vertex] softened retry submit failed job=%s", provider_job_id)
             _JOBS[provider_job_id] = {
                 "status": "failed",
                 "error": (
-                    f"Veo filtered the output ({reasons}). Try softening the prompt."
+                    f"Veo filtered the output ({reasons}). "
+                    f"{'Softened retry also failed. ' if filtered else ''}"
+                    "Try softening the prompt."
                     if filtered
                     else f"Veo returned no video. Raw: {str(response)[:300]}"
                 ),

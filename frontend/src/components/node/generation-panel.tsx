@@ -1,9 +1,9 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Check, AlertTriangle } from "lucide-react";
+import { Check, AlertTriangle, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
-import type { GenerationProvider } from "@/types/api";
+import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 interface GenerationPanelProps {
   /** Suggested OUTPUT video duration in seconds. */
@@ -36,6 +36,15 @@ interface GenerationPanelProps {
    * render.
    */
   fallbackFrom?: GenerationProvider | null;
+  /**
+   * Real-time debug payload fed by the drawer polling loop so users can
+   * inspect stage transitions, poll cadence, and backend observability.
+   */
+  debug?: {
+    dispatchMs?: number | null;
+    latestStatus?: StatusResponse | null;
+    samples?: Array<{ atMs: number; status: string; stage?: string | null; pollAfterMs?: number | null }>;
+  } | null;
 }
 
 const PROVIDER_LABEL: Record<GenerationProvider, string> = {
@@ -116,12 +125,14 @@ export function GenerationPanel({
   startedAt,
   onCancel,
   fallbackFrom,
+  debug,
 }: GenerationPanelProps) {
   // Local fallback clock — used until backend startedAt arrives. Set on
   // first mount; once startedAt is present, the calculation below ignores
   // it. Surviving across drawer close/reopen is what makes the bar honest.
   const startMsRef = useRef<number>(Date.now());
   const [tick, setTick] = useState(0);
+  const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
     startMsRef.current = Date.now();
@@ -335,6 +346,67 @@ export function GenerationPanel({
         </span>
         <span>{stageLabel(stage, provider)}</span>
       </div>
+
+      {/* Runtime observability (real frontend). */}
+      <div className="border-t border-fg-tertiary/15 pt-2">
+        <button
+          type="button"
+          onClick={() => setShowDebug((v) => !v)}
+          className="flex w-full items-center justify-between rounded-sm px-1.5 py-1 font-mono text-caption text-fg-tertiary hover:text-fg-secondary"
+          aria-expanded={showDebug}
+        >
+          <span>Runtime observability</span>
+          <ChevronDown
+            size={12}
+            className={cn("transition-transform", showDebug && "rotate-180")}
+            aria-hidden="true"
+          />
+        </button>
+        <AnimatePresence initial={false}>
+          {showDebug ? (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18, ease: EASE.outQuart }}
+              className="mt-1 space-y-1 rounded-md border border-fg-tertiary/15 bg-bg-elev-2/25 px-3 py-2 font-mono text-caption text-fg-tertiary"
+            >
+              <Row k="provider" v={provider ? PROVIDER_LABEL[provider] : "connecting"} />
+              <Row k="stage" v={stage ?? "n/a"} />
+              <Row k="dispatchMs" v={debug?.dispatchMs != null ? `${debug.dispatchMs}ms` : "n/a"} />
+              <Row k="jobId" v={debug?.latestStatus?.jobId ?? "n/a"} />
+              <Row k="providerJobId" v={debug?.latestStatus?.providerJobId ?? "n/a"} />
+              <Row k="pollAfterMs" v={debug?.latestStatus?.pollAfterMs != null ? `${debug.latestStatus.pollAfterMs}ms` : "n/a"} />
+              <Row k="status" v={debug?.latestStatus?.status ?? "n/a"} />
+              <Row
+                k="status samples"
+                v={
+                  debug?.samples?.length
+                    ? debug.samples
+                        .slice(-6)
+                        .map((s) => `${Math.round(s.atMs / 1000)}s:${s.status}${s.stage ? `/${s.stage}` : ""}`)
+                        .join(" | ")
+                    : "none"
+                }
+              />
+              {debug?.latestStatus?.observability ? (
+                <pre className="max-h-28 overflow-auto whitespace-pre-wrap break-all text-[10px] text-fg-tertiary/85">
+                  {JSON.stringify(debug.latestStatus.observability, null, 2)}
+                </pre>
+              ) : null}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-fg-tertiary/70">{k}</span>
+      <span className="max-w-[70%] break-all text-right text-fg-secondary">{v}</span>
     </div>
   );
 }
