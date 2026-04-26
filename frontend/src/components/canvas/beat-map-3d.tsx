@@ -10,6 +10,7 @@ import { NodeMesh } from "./node-mesh";
 import { CameraRig, type PanState, type OrbitState, type ZoomState } from "./camera-rig";
 import { ConnectingPath } from "./connecting-path";
 import { AmbientParticles } from "./ambient-particles";
+import { CosmicScene } from "./cosmic-scene";
 
 /**
  * Custom event the route chrome (Esc handler, Re-center button) dispatches
@@ -356,7 +357,15 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
             re-suspension here only briefly hides this subtree, not the
             full BeatMap3D via the outer canvas-route Suspense. */}
         <Suspense fallback={null}>
-          <Stars radius={80} depth={40} count={1500} factor={3} saturation={0} fade speed={0.3} />
+          {/* Distant starfield — drei's Stars sphere wrapped around the
+              whole scene. Kept WITH the new <CosmicScene> below: stars are
+              the deep-deep background twinkle; CosmicScene adds the
+              foreground galaxy, asteroids, comets, and the distant ship. */}
+          <Stars radius={140} depth={70} count={2400} factor={3.5} saturation={0} fade speed={0.25} />
+          {/* The cosmic backdrop — galaxy nebula spiral, asteroid belt,
+              comet trails, and a distant procedural spaceship. Sits
+              behind the planets and the journey path. See cosmic-scene.tsx. */}
+          <CosmicScene />
           <ConnectingPath positions={positions} />
           {beats.map((beat, i) => (
             <NodeMesh

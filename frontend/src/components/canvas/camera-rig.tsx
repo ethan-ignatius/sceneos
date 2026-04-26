@@ -85,7 +85,10 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
   // live wheel-zoom offset — reading zoomRef at render time only would
   // freeze the scroll-wheel value (the ref updates outside React, so a
   // wheel event won't trigger a re-render to refresh the closure).
-  const overviewPos = useRef(new THREE.Vector3(0, 0.4, overviewZ));
+  // Initial y bumped 0.4 → 1.6 so the snake of the journey path is
+  // visible from above by default. The path now has y-amplitude ~0.55
+  // and z-amplitude ~1.4, so a low camera y reads it as roughly flat.
+  const overviewPos = useRef(new THREE.Vector3(0, 1.6, overviewZ));
   const targetPos = useRef(overviewPos.current.clone());
   const targetLook = useRef(OVERVIEW_LOOK.clone());
   const reducedMotion = usePrefersReducedMotion();
@@ -108,7 +111,7 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
     // can't capture it at render time.
     const zoomOffset = zoomRef?.current.z ?? 0;
     const effectiveZ = Math.max(2.5, overviewZ + zoomOffset);
-    overviewPos.current.set(0, 0.4, effectiveZ);
+    overviewPos.current.set(0, 1.6, effectiveZ);
 
     // ── Pan: clear instantly when transitioning from no-active → active ──
     // Clicking a beat is a deliberate cinematographic move; any residual pan
@@ -121,19 +124,19 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
 
     if (active) {
       const [ax, ay, az] = active;
-      // Drawer-aware offset: on desktop (md+, where the drawer is a fixed
-      // ~34rem panel anchored to the right edge), the active planet should
-      // sit in the LEFT half of the viewport so the drawer doesn't cover
-      // it. Shifting both camera position AND lookAt by the same amount
-      // preserves the look direction; only the framing shifts.
-      // 1.4 world units ≈ ~28% of the viewport width at our zoom — matches
-      // the drawer's screen footprint, so the planet ends up centered in
-      // the not-drawer area rather than behind it.
-      // On mobile, the drawer is a bottom sheet; no horizontal shift needed.
+      // "Drove up to the checkpoint" angle: camera is slightly behind +
+      // above + to the side of the planet (not dead-on like before) so
+      // the planet sits in 3D space, not flattened against the viewport.
+      // The journey path's curvature comes from y-amplitude 0.55 and
+      // z-amplitude 1.4; a plain (+ax, +ay+0.25, +az+1.9) shot from
+      // straight back would feel like the previous flat-row camera even
+      // though the planets are now snaking. Lifting y and shifting x
+      // slightly puts us ABOVE and to the SIDE of the road at this
+      // checkpoint — exactly the windy-road framing.
       const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
       const drawerOffsetX = isDesktop ? 1.4 : 0;
       const azimuth = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
-      targetPos.current.set(ax + 0.35 + drawerOffsetX + azimuth, ay + 0.25, az + 1.9);
+      targetPos.current.set(ax + 0.6 + drawerOffsetX + azimuth, ay + 0.7, az + 1.9);
       targetLook.current.set(ax + drawerOffsetX, ay, az);
     } else {
       // ── Free-orbit (left-drag on empty space) ──────────────────────
@@ -144,15 +147,15 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
       const azimuth = orbitRef?.current.azimuth ?? 0;
       const polar = orbitRef?.current.polar ?? 0;
       if (azimuth !== 0 || polar !== 0) {
-        // Orbit radius uses effectiveZ so wheel-zoom and orbit compose:
-        // user can rotate AND zoom simultaneously without one fighting
-        // the other. Without this the rotation would always be at the
-        // base distance and zoom-while-rotating felt broken.
+        // Orbit y-base also bumped 0.4 → 1.6 to match the lifted overview.
+        // Without this, orbiting from the elevated overview view dropped
+        // the camera back to the old low altitude — felt like the path
+        // was flat again the instant you started rotating.
         const rad = effectiveZ;
         const cosPolar = Math.cos(polar);
         const x = rad * Math.sin(azimuth) * cosPolar;
         const z = rad * Math.cos(azimuth) * cosPolar;
-        const y = 0.4 + rad * Math.sin(polar) * 0.4;
+        const y = 1.6 + rad * Math.sin(polar) * 0.4;
         targetPos.current.set(x, y, z);
       } else {
         targetPos.current.copy(overviewPos.current);
