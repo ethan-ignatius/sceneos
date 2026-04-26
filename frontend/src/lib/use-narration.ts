@@ -283,24 +283,15 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
     const key = _cacheKey(moment, beatId);
     const cached = _cache.get(key);
 
-    if (cached) {
+    // Only treat the cache as a hit when it has a real audioSrc.
+    // A cached entry with audioSrc:null was a backend failure path —
+    // re-fetching gives the user a chance to hear real audio once the
+    // upstream issue clears (ElevenLabs free-tier lockout, network
+    // blip, etc.). Without this guard, one bad response permanently
+    // poisons the moment for the rest of the session.
+    if (cached && cached.audioSrc) {
       _stopAudio();
       set({ currentText: cached.text, currentMoment: moment, currentBeatId: beatId ?? null });
-
-      if (!cached.audioSrc) {
-        if (cached.text) {
-          set({ status: "playing" });
-          _speakWithBrowserTTS(
-            cached.text,
-            () => set({ status: "done" }),
-            () => set({ status: "error" }),
-          );
-        } else {
-          set({ status: "done" });
-        }
-        return;
-      }
-
       _playAudio(cached.audioSrc, (s) => set({ status: s }));
       return;
     }
@@ -315,7 +306,12 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
         ? `data:audio/mpeg;base64,${res.audioBase64}`
         : res.audioUrl ?? null;
 
-      _cache.set(key, { text, audioSrc, durationSeconds: res.durationSeconds });
+      // Cache only successful syntheses. Failed ones (audioSrc=null)
+      // fall through to browser TTS this time but stay re-fetchable
+      // on the next moment.
+      if (audioSrc) {
+        _cache.set(key, { text, audioSrc, durationSeconds: res.durationSeconds });
+      }
 
       if (get().currentMoment !== moment) return;
 
@@ -358,22 +354,11 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
     const key = _cacheKey("summary");
     const cached = _cache.get(key);
 
-    if (cached) {
+    // Only treat the cache as a hit when it has real audio (see the
+    // playMoment comment for the rationale).
+    if (cached && cached.audioSrc) {
       _stopAudio();
       set({ currentText: cached.text, currentMoment: "summary", currentBeatId: null });
-      if (!cached.audioSrc) {
-        if (cached.text) {
-          set({ status: "playing" });
-          _speakWithBrowserTTS(
-            cached.text,
-            () => set({ status: "done" }),
-            () => set({ status: "error" }),
-          );
-        } else {
-          set({ status: "done" });
-        }
-        return;
-      }
       _playAudio(cached.audioSrc, (s) => set({ status: s }));
       return;
     }
@@ -385,7 +370,9 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
       const res = await api.narrateSummary({ manifest, continuityBible });
       const text = res.text ?? "";
       const audioSrc = res.audioUrl ?? null;
-      _cache.set(key, { text, audioSrc, durationSeconds: res.durationSeconds });
+      if (audioSrc) {
+        _cache.set(key, { text, audioSrc, durationSeconds: res.durationSeconds });
+      }
 
       set({ currentText: text });
       if (!audioSrc) {
