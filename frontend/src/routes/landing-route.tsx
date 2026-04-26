@@ -431,8 +431,8 @@ export function LandingRoute() {
                     ? "listening…"
                     : "tell me a moment you can't get out of your head…"
                 }
-                className="block w-full resize-none bg-transparent px-2 pt-1.5 pb-1 text-base leading-snug text-fg-primary placeholder:text-fg-tertiary/80 focus:outline-none"
-                style={{ maxHeight: 220 }}
+                className="block w-full resize-none bg-transparent px-2 py-2 text-base leading-normal text-fg-primary placeholder:text-fg-tertiary/80 focus:outline-none"
+                style={{ maxHeight: 220, minHeight: 36 }}
               />
 
               {/* Action row. Mic on the left (when supported); submit on the
