@@ -39,6 +39,28 @@ logger = logging.getLogger(__name__)
 SoulKind = Literal["character", "location"]
 
 
+# Per-kind variant prompts. Mirrors `vertex_imagen.KEYFRAME_VARIANTS` so
+# the orchestrator's `pick_keyframe_for_framing` can pick the right
+# variant per beat without a provider-specific code path.
+#
+# Each variant nudges the prompt toward a different framing register —
+# the resulting Soul images all show the SAME character / location but
+# from different angles, so beat 1 can use the front-facing portrait
+# and beat 5 can use the action shot without the protagonist's face
+# changing identity. That's the "videos actually relate to each other"
+# guarantee at the visual-anchor layer.
+_CHARACTER_VARIANTS: tuple[tuple[str, str], ...] = (
+    ("front", "frontal eye-level portrait, three-quarter framing, clear face"),
+    ("profile", "side profile, medium framing, distinctive silhouette"),
+    ("action", "dynamic mid-action pose, motivated movement, clear face"),
+)
+_LOCATION_VARIANTS: tuple[tuple[str, str], ...] = (
+    ("wide", "wide establishing frame, full setting visible"),
+    ("medium", "medium framing, signature features prominent"),
+    ("detail", "close detail of a signature element of the location"),
+)
+
+
 # Soul T2I model ids on the legacy platform. The public API auto-routes
 # /generate-soul, so model selection is a legacy-only concern.
 LEGACY_SOUL_MODEL = "higgsfield-ai/soul/standard"
@@ -67,24 +89,38 @@ def _soul_resolution(aspect_ratio: str) -> str:
     return _SOUL_RESOLUTION_BY_ASPECT.get(aspect_ratio, "1536x864")
 
 
-def _build_soul_payload(*, kind: SoulKind, description: str, aspect_ratio: str) -> dict:
+def _build_soul_payload(
+    *,
+    kind: SoulKind,
+    description: str,
+    aspect_ratio: str,
+    variant_hint: str | None = None,
+) -> dict:
     """Compose the Soul T2I request body. The prompt is shaped to produce
     a clean reference image — full-frame subject for character, full-frame
-    setting for location — rather than a finished cinematic shot."""
+    setting for location — rather than a finished cinematic shot.
+
+    `variant_hint` is appended to the prompt to nudge framing without
+    changing identity. Used by `generate_project_keyframes` to produce
+    front/profile/action character variants and wide/medium/detail
+    location variants from the same source description.
+    """
     if kind == "character":
         prompt = (
             f"Cinematic character portrait. {description}. Plain neutral background, "
-            "natural lighting, full-body or three-quarter framing, sharp focus on the "
-            "subject. Reference image — no environmental storytelling, no narrative "
-            "props, just the character clearly visible for visual consistency."
+            "natural lighting, sharp focus on the subject. Reference image — no "
+            "environmental storytelling, no narrative props, just the character "
+            "clearly visible for visual consistency."
         )
     else:
         prompt = (
-            f"Cinematic location reference. {description}. Wide establishing frame, "
-            "natural lighting, no people, no characters in frame. The location's "
-            "signature features (architecture, palette, time of day) clearly visible. "
-            "Reference image — no narrative storytelling, just the place itself."
+            f"Cinematic location reference. {description}. Natural lighting, no "
+            "people, no characters in frame. The location's signature features "
+            "(architecture, palette, time of day) clearly visible. Reference "
+            "image — no narrative storytelling, just the place itself."
         )
+    if variant_hint:
+        prompt = f"{prompt} Framing: {variant_hint}."
 
     payload: dict[str, Any] = {
         "prompt": prompt[:1000],
@@ -143,6 +179,8 @@ async def generate_reference(
     project_id: str | None = None,
     beat_id: str | None = None,
     aspect_ratio: str = "16:9",
+    variant: str | None = None,
+    variant_hint: str | None = None,
 ) -> dict:
     """Generate a Higgsfield Soul reference image. Returns a dict shaped
     like `vertex_imagen.generate_reference` so callers stay agnostic:
@@ -165,7 +203,10 @@ async def generate_reference(
         }
 
     payload = _build_soul_payload(
-        kind=kind, description=description, aspect_ratio=aspect_ratio
+        kind=kind,
+        description=description,
+        aspect_ratio=aspect_ratio,
+        variant_hint=variant_hint,
     )
     try:
         body = await _post_soul(payload)
@@ -211,15 +252,110 @@ async def generate_reference(
         }
 
     # The publicId here doubles as our local "soul ID" for the project.
-    # Format: `soul::{project_id}::{kind}::{request_id}` so we can trace
-    # which soul a beat used back to the original Higgsfield generation.
-    public_id = f"soul::{project_id or 'p'}::{kind}::{request_id}"
+    # Format: `soul::{project_id}::{kind}::{variant?}::{request_id}` so we
+    # can trace which soul a beat used back to the original Higgsfield
+    # generation, and which variant the orchestrator picked.
+    variant_tag = f"::{variant}" if variant else ""
+    public_id = f"soul::{project_id or 'p'}::{kind}{variant_tag}::{request_id}"
 
     return {
         "imageUrl": url,
         "publicId": public_id,
         "kind": kind,
+        "variant": variant,
         "prompt": payload["prompt"],
         "soulId": public_id,
         "soulRequestId": request_id,
+    }
+
+
+async def generate_project_keyframes(
+    *,
+    project_id: str | None,
+    character_description: str | None,
+    location_description: str | None,
+    aspect_ratio: str = "16:9",
+) -> dict:
+    """Project-level multi-variant Soul keyframes — character + location.
+
+    Mirrors `vertex_imagen.generate_project_keyframes` shape so the
+    orchestrator's `pick_keyframe_for_framing` can route Higgsfield
+    runs identically. Three character variants (front / profile /
+    action) and three location variants (wide / medium / detail) all
+    rendered from the SAME source description, so the resulting Soul
+    URLs share identity. Beat 1 picks front, beat 5 picks action —
+    same protagonist, same location, no drift.
+
+    Calls fan out concurrently. Each call is a ~30s Soul T2I
+    generation; six in parallel resolve in roughly 30-60s end-to-end
+    against the legacy platform's queue. Run ONCE per project at
+    session-start; the orchestrator caches the result and reuses it
+    for every beat.
+
+    Returns the same shape Imagen does:
+        {
+          "character": [ref, ref, ref],
+          "location":  [ref, ref, ref],
+          "characterPrimary": ref|None,
+          "locationPrimary":  ref|None,
+        }
+    Empty arrays + None primaries when no descriptions are provided
+    OR when every Soul call fails (degraded refs are filtered out).
+    """
+    char_coros = [
+        generate_reference(
+            kind="character",
+            description=character_description,
+            project_id=project_id,
+            aspect_ratio=aspect_ratio,
+            variant=name,
+            variant_hint=hint,
+        )
+        for name, hint in _CHARACTER_VARIANTS
+    ] if character_description else []
+
+    loc_coros = [
+        generate_reference(
+            kind="location",
+            description=location_description,
+            project_id=project_id,
+            aspect_ratio=aspect_ratio,
+            variant=name,
+            variant_hint=hint,
+        )
+        for name, hint in _LOCATION_VARIANTS
+    ] if location_description else []
+
+    char_results, loc_results = await asyncio.gather(
+        asyncio.gather(*char_coros, return_exceptions=True) if char_coros else asyncio.sleep(0, result=[]),
+        asyncio.gather(*loc_coros, return_exceptions=True) if loc_coros else asyncio.sleep(0, result=[]),
+    )
+
+    def _coerce(results) -> list[dict]:
+        out: list[dict] = []
+        for ref in results:
+            if isinstance(ref, Exception):
+                # gather(return_exceptions=True) shouldn't raise but be
+                # defensive — a single Soul failure shouldn't tank the
+                # whole keyframe set.
+                logger.warning("[higgsfield-soul] keyframe gen exception: %s", ref)
+                continue
+            if isinstance(ref, dict):
+                out.append(ref)
+        return out
+
+    character_set = _coerce(char_results)
+    location_set = _coerce(loc_results)
+
+    def _primary(refs: list[dict]) -> dict | None:
+        for ref in refs:
+            if not ref.get("degraded") and ref.get("imageUrl"):
+                return ref
+        return None
+
+    return {
+        "character": character_set,
+        "location": location_set,
+        "characterPrimary": _primary(character_set),
+        "locationPrimary": _primary(location_set),
     }

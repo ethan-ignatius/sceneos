@@ -99,14 +99,32 @@ def _movie_plan_motif(manifest: dict) -> str:
 
 
 def _previous_beat_summary(manifest: dict, beat: dict) -> str:
-    """Short text summary of the immediately-preceding beat — what its
-    refinedPrompt or beatFacts described — so the next beat's clipPrompt
-    can text-induce visual continuity, not just frame-chain.
+    """One-line narrative summary of the immediately-preceding beat —
+    fed to the next beat's clipPrompt as a "Continuing from" cue so the
+    text itself induces continuity, not just the I2V seed image.
 
-    Returns empty string for the first beat or when prior beat has no
-    usable summary. Capped at ~280 chars to keep the prompt budget under
-    control.
+    Source priority — narrative > prompt-soup:
+      1. sceneSummary  — the agent's one-line beat summary, hand-written
+                          register, ~80 chars. Best quality continuity cue.
+      2. beatFacts     — subject + action + setting reconstructed into a
+                          one-liner. Still narrative; no prompt-engineering
+                          noise.
+      3. refinedPrompt — last resort. This is the previous beat's full
+                          image+motion prompt, which leaks lighting / lens
+                          / film-grain register into the NEXT beat's
+                          induction. Acceptable when nothing else exists,
+                          but actively counterproductive otherwise.
+
+    Scene selection uses `continuity.memory_scene` so the agent's
+    cross-beat memory and the orchestrator's induction can never
+    disagree on which scene of a prior beat is canonical.
+
+    Returns empty string for the first beat. Capped at 200 chars (was
+    280) since narrative summaries are tighter than refinedPrompts and
+    the saved tokens give other continuity cues more room.
     """
+    from .continuity import memory_scene
+
     beats = manifest.get("beats") or []
     idx = next(
         (i for i, b in enumerate(beats) if b.get("beatId") == beat.get("beatId")),
@@ -115,21 +133,40 @@ def _previous_beat_summary(manifest: dict, beat: dict) -> str:
     if idx is None or idx == 0:
         return ""
     prior = beats[idx - 1]
-    scenes = prior.get("scenes") or []
-    scene = scenes[0] if scenes else {}
-    # Prefer refinedPrompt (richest); fall back to action+setting from beatFacts.
-    refined = (scene.get("refinedPrompt") or "").strip()
-    if refined:
-        compact = " ".join(refined.split())
-        return compact[:277].rstrip() + "…" if len(compact) > 280 else compact
+    scene = memory_scene(prior) or {}
+
+    # 1. Prefer the narrative scene summary if the agent emitted one.
+    summary = (scene.get("sceneSummary") or "").strip()
+    if summary:
+        compact = " ".join(summary.split())
+        return compact[:197].rstrip() + "…" if len(compact) > 200 else compact
+
+    # 2. Reconstruct from beatFacts (subject + action + setting) — same
+    #    register the agent uses, just stitched into a sentence here.
     facts = scene.get("beatFacts") or {}
-    pieces = [
-        facts.get("subject"),
-        facts.get("action"),
-        facts.get("setting"),
-    ]
-    summary = ", ".join(p for p in pieces if p)
-    return summary[:280]
+    subject = (facts.get("subject") or "").strip()
+    action = (facts.get("action") or "").strip()
+    setting = (facts.get("setting") or "").strip()
+    pieces: list[str] = []
+    if subject and action:
+        pieces.append(f"{subject} {action}")
+    elif subject:
+        pieces.append(subject)
+    elif action:
+        pieces.append(action)
+    if setting:
+        pieces.append(f"in {setting}")
+    if pieces:
+        compact = " ".join(" ".join(pieces).split())
+        return compact[:197].rstrip() + "…" if len(compact) > 200 else compact
+
+    # 3. Last-resort fall-through to refinedPrompt. Trims aggressively
+    #    so we don't bleed last-beat lens/lighting into this beat.
+    refined = (scene.get("refinedPrompt") or "").strip()
+    if not refined:
+        return ""
+    compact = " ".join(refined.split())
+    return compact[:197].rstrip() + "…" if len(compact) > 200 else compact
 
 
 # ── Prompt composition ────────────────────────────────────────────────────

@@ -58,18 +58,19 @@ async def _generate_keyframes_safe(
     location_description: str | None,
     aspect_ratio: str = "16:9",
 ) -> dict:
-    """Resilient wrapper around vertex_imagen.generate_project_keyframes.
+    """Provider-aware project-keyframe builder. Three guard rails:
 
-    Two guard rails:
-      1. If GENERATION_PROVIDER=higgsfield, skip Imagen entirely. Higgsfield
-         owns its own image surface (higgsfield_soul) and pulling in Imagen
-         is just an extra dep that can quota-exhaust without warning. The
-         orchestrator's per-beat path falls through to higgsfield_soul refs
-         cleanly when keyframes are empty.
-      2. If Imagen fails (quota, safety, network), log + return empty
-         keyframes instead of bubbling up. The session keeps booting and
-         orchestrator falls through to no-seed Veo, which is degraded but
-         not broken.
+      1. GENERATION_PROVIDER=higgsfield → use higgsfield_soul to build
+         the keyframe set. Same shape as Imagen's, so the orchestrator's
+         pick_keyframe_for_framing routes both providers identically.
+         Without this branch every Higgsfield beat would fall through
+         to per-beat Soul fallback — different protagonist face every
+         clip, identity drifts beat-to-beat.
+      2. Otherwise → Vertex Imagen (the canonical path).
+      3. Either provider can fail (quota, safety, network). On failure
+         we log and return empty arrays so the session keeps booting;
+         orchestrator falls through to chain-from-last-frame, which is
+         degraded but not broken.
     """
     from .provider import active_provider_name
     _provider_at_call = active_provider_name()
@@ -80,9 +81,25 @@ async def _generate_keyframes_safe(
         bool(character_description),
         bool(location_description),
     )
+
+    empty: dict = {"character": [], "location": [], "characterPrimary": None, "locationPrimary": None}
+
     if _provider_at_call == "higgsfield":
-        logger.info("[session] _generate_keyframes_safe higgsfield short-circuit — empty keyframes")
-        return {"character": [], "location": []}
+        from . import higgsfield_soul
+        try:
+            return await higgsfield_soul.generate_project_keyframes(
+                project_id=project_id,
+                character_description=character_description,
+                location_description=location_description,
+                aspect_ratio=aspect_ratio,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[session] higgsfield-soul keyframe gen failed (project=%s); continuing without refs: %s",
+                project_id, exc,
+            )
+            return empty
+
     from . import vertex_imagen
     try:
         return await vertex_imagen.generate_project_keyframes(
@@ -93,10 +110,10 @@ async def _generate_keyframes_safe(
         )
     except Exception as exc:
         logger.warning(
-            "[session] keyframe gen failed (project=%s); continuing without refs: %s",
+            "[session] vertex-imagen keyframe gen failed (project=%s); continuing without refs: %s",
             project_id, exc,
         )
-        return {"character": [], "location": []}
+        return empty
 
 
 # Hard ceiling on the speculative-kickoff phase of /api/session/start. Demo
