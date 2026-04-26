@@ -12,6 +12,8 @@ import { Minimap } from "@/components/canvas/minimap";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-events";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
+import { api } from "@/lib/api";
+import { sleep } from "@/lib/utils";
 
 const BeatMap3D = lazy(() =>
   import("@/components/canvas/beat-map-3d").then((m) => ({ default: m.BeatMap3D })),
@@ -45,6 +47,82 @@ export function CanvasRoute() {
     const stop = startAmbientProjector();
     return stop;
   }, []);
+
+  // ── Speculative-job poller ─────────────────────────────────────────
+  // The landing route fires /api/generate for every beat the moment
+  // /api/decompose returns refinedPrompts. Each pre-bake jobId is parked
+  // on `scene.speculativeJobId`. Here we poll every active jobId at the
+  // canvas-route level so the polls survive drawer mount/unmount as the
+  // user navigates between beats.
+  //
+  // When a speculative job succeeds:
+  //   - clipPublicId / clipUrl are written onto the scene
+  //   - speculativeJobId is cleared (so we stop polling)
+  //   - beat.status remains pending — agent conversation UX is unchanged
+  //
+  // The drawer's "I have enough — generate" / "Roll camera" handlers
+  // check for an existing clipPublicId first; if present, the beat
+  // flips straight to "preview" with no second Veo round-trip.
+  const polledJobsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!manifest) return;
+    let cancelled = false;
+
+    const pollOne = async (
+      beatId: string,
+      sceneId: string,
+      jobId: string,
+    ) => {
+      let delay = 1500;
+      const startMs = Date.now();
+      while (!cancelled) {
+        if (Date.now() - startMs > 8 * 60_000) return; // 8 min ceiling
+        await sleep(delay);
+        if (cancelled) return;
+        try {
+          const status = await api.status(jobId);
+          if (cancelled) return;
+          if (status.status === "succeeded") {
+            useBeatGraphStore.getState().updateScene(beatId, sceneId, {
+              clipPublicId: status.clipPublicId,
+              clipUrl: status.clipUrl,
+              speculativeJobId: undefined,
+            });
+            return;
+          }
+          if (status.status === "failed") {
+            // Drop the speculative jobId; the user can still trigger a
+            // fresh render manually. Don't write any error state — this
+            // is best-effort speculative compute.
+            useBeatGraphStore
+              .getState()
+              .updateScene(beatId, sceneId, { speculativeJobId: undefined });
+            return;
+          }
+          delay = status.pollAfterMs ?? 5000;
+        } catch {
+          // Transient network blip — back off and try again. The 8min
+          // ceiling above bounds the loop.
+          delay = Math.min(delay * 1.5, 15000);
+        }
+      }
+    };
+
+    for (const beat of manifest.beats) {
+      const scene = beat.scenes[0];
+      if (!scene?.speculativeJobId) continue;
+      // Don't double-attach: each (beatId, jobId) pair only polls once
+      // per canvas mount.
+      const key = `${beat.beatId}:${scene.speculativeJobId}`;
+      if (polledJobsRef.current.has(key)) continue;
+      polledJobsRef.current.add(key);
+      void pollOne(beat.beatId, scene.sceneId, scene.speculativeJobId);
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [manifest]);
 
   // Auto-arc into the first unfinished beat ~2s after canvas mount, so
   // the user lands on the overview, gets a breath to read the scene,

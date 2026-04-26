@@ -174,11 +174,13 @@ async def generate(params: GenerateClipParams) -> dict:
 
     # Log the actual prompt being sent to Veo. This is the source-of-truth
     # for "is the user's idea reaching the model" — print the full string
-    # at INFO level so any operator can grep the backend log and see what
-    # Veo is actually rendering for the given job.
-    logger.info(
-        "[vertex] PROMPT job=%s len=%d → %r",
-        provider_job_id, len(full_prompt), full_prompt[:600],
+    # at WARNING level (above the uvicorn default) so any operator can
+    # grep the backend log and see what Veo is actually rendering for
+    # the given job. WARNING used because uvicorn's --log-level INFO
+    # gates only its own loggers; application loggers default to WARN.
+    logger.warning(
+        "[vertex.PROMPT] job=%s len=%d → %s",
+        provider_job_id, len(full_prompt), full_prompt[:800],
     )
     instance: dict[str, Any] = {"prompt": full_prompt}
 

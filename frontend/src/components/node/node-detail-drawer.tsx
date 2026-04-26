@@ -114,6 +114,34 @@ export function NodeDetailDrawer() {
     setProviderStage(null);
     setStartedAt(null);
     setFallbackFrom(null);
+
+    // ── Speculative-result fast path ──────────────────────────────
+    // Landing route pre-bakes every beat the moment decompose
+    // resolves. By the time the user finishes their conversation and
+    // hits Roll camera, the speculative clip is often already done —
+    // canvas-route's poller will have written clipPublicId/clipUrl
+    // onto the scene. If we see it, skip Veo entirely and flip
+    // straight to preview. Wait collapses to ~0s on the user's side.
+    if (scene.clipPublicId && scene.clipUrl) {
+      updateBeat(beat.beatId, { status: "preview" });
+      return;
+    }
+    // If a speculative job is still running, attach to it instead of
+    // dispatching a new one. The pollUntilDone loop handles both
+    // running and succeeded states; on succeeded we flip to preview.
+    if (scene.speculativeJobId) {
+      updateScene(beat.beatId, scene.sceneId, { jobId: scene.speculativeJobId });
+      updateBeat(beat.beatId, { status: "generating" });
+      try {
+        await pollUntilDone(scene.speculativeJobId, beat.beatId, scene.sceneId, 1500);
+      } catch (err) {
+        if (cancelRef.current) return;
+        setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
+        updateBeat(beat.beatId, { status: "ready-to-generate" });
+      }
+      return;
+    }
+
     updateBeat(beat.beatId, { status: "generating" });
 
     try {
@@ -135,7 +163,7 @@ export function NodeDetailDrawer() {
       setGenError(err instanceof ApiError ? err.message : "Generation hit a snag.");
       updateBeat(beat.beatId, { status: "ready-to-generate" });
     }
-  }, [beat, manifest, updateBeat, pollUntilDone]);
+  }, [beat, manifest, updateBeat, updateScene, pollUntilDone]);
 
   // Re-attach an in-flight Veo / Higgsfield poll when the drawer mounts
   // and the persisted manifest reports beat.status === "generating" with a
@@ -342,10 +370,28 @@ export function NodeDetailDrawer() {
                 ]
                   .filter(Boolean)
                   .join(" ");
-                updateScene(beat.beatId, beat.scenes[0].sceneId, {
+                const scene = beat.scenes[0];
+                updateScene(beat.beatId, scene.sceneId, {
                   refinedPrompt: refined,
                   durationSeconds: beat.archetype.suggestedDuration,
                 });
+                // Speculative-result fast paths (mirror handleGenerate):
+                //   1. Clip already done → straight to preview, no Veo
+                //   2. Clip still running → attach to speculative job
+                //   3. No speculative → fall through to ready-to-generate
+                //      and let the user click Roll camera (which will
+                //      then dispatch a fresh Veo with the refined prompt)
+                if (scene.clipPublicId && scene.clipUrl) {
+                  updateBeat(beat.beatId, { status: "preview" });
+                  return;
+                }
+                if (scene.speculativeJobId) {
+                  updateScene(beat.beatId, scene.sceneId, {
+                    jobId: scene.speculativeJobId,
+                  });
+                  updateBeat(beat.beatId, { status: "generating" });
+                  return;
+                }
                 updateBeat(beat.beatId, { status: "ready-to-generate" });
               };
               // Promoted from a tertiary ghost to a Button-styled CTA so

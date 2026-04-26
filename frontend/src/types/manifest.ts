@@ -152,6 +152,16 @@ export interface Scene {
   /** Stamped by /api/orchestrate when it composes the final prompt. */
   clipPrompt?: ClipPrompt;
   jobId?: string;
+  /**
+   * Pre-bake job dispatched the moment /api/decompose returns refinedPrompt,
+   * BEFORE the user has done their agent conversation. Runs in parallel
+   * with the conversation; when it succeeds we promote the result into
+   * clipPublicId/clipUrl and clear this field. Lock-it-in / Roll camera
+   * checks for a ready speculative result first and flips straight to
+   * preview if found — no second Veo round-trip. The user's wait collapses
+   * from sum(N × Veo) to max(longest conversation, longest render).
+   */
+  speculativeJobId?: string;
   clipPublicId?: string;
   clipUrl?: string;
   /**

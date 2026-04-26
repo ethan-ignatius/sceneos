@@ -1,10 +1,28 @@
 examples/
 issues/
 .claude/
-
-# Local secrets / legacy backend leftovers
-backend/.env
-backend/.env.*
-!backend/.env.example
-backend/node_modules/
 examples-locked/
+
+# Node / Vite
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Env / secrets — keep .env.example tracked, ignore everything else
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

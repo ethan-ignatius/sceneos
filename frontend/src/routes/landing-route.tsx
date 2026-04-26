@@ -122,43 +122,54 @@ export function LandingRoute() {
         .then((res) => {
           applyDecomposition(res.clips, res.continuityBible);
           setDecomposeStatus("success");
-          // ── Speculative kickoff of beats[0] ─────────────────────────
-          // Bridge plays for 1.6s, decompose resolves around the same
-          // time, Veo dispatches in ~3s, then renders for 2-3 min. By
-          // pre-warming the FIRST beat the moment its refinedPrompt is
-          // ready, we shave 30-60s off the perceived wait — the user
-          // walks through the canvas + agent UX while Veo is already
-          // burning in the background. When they click into the first
-          // planet, the GenerationPanel re-attaches to the running job
-          // (drawer's poll-reattach effect handles this) and shows true
-          // elapsed via startedAt.
+          // ── CONCURRENT PRE-BAKE of every beat ───────────────────
+          // The moment decompose returns, fire /api/generate for ALL
+          // beats in parallel. While the user walks the canvas and
+          // does the per-beat agent conversation, Veo is rendering
+          // every beat simultaneously in the background.
           //
-          // Cost: one Veo call per landing. Tradeoff accepted for the
-          // hackathon demo perception. To turn off, drop this block.
+          // The wait collapses from sum(N × ~150s) to
+          // max(longest conversation, longest render). For 5 beats
+          // that's the difference between ~13min and ~3min total.
+          //
+          // Status stays as "pending" — agent conversation UX is
+          // unchanged. Speculative jobIds park on
+          // scene.speculativeJobId; canvas-route's poller (below)
+          // watches them. When a job succeeds we write the result
+          // into clipPublicId/clipUrl. Lock-it-in / Roll camera then
+          // checks for a ready clip first; if present, beat flips
+          // straight to "preview" with zero new Veo round-trip.
+          //
+          // Cost: N Veo calls per landing instead of N×1. Trade
+          // accepted for hackathon demo perception. User can discard
+          // a speculative result and re-roll with a refined prompt at
+          // a cost of one extra Veo round-trip per beat they iterate.
           const m2 = useBeatGraphStore.getState().manifest;
-          const firstBeat = m2?.beats[0];
-          const firstScene = firstBeat?.scenes[0];
-          if (m2 && firstBeat && firstScene?.refinedPrompt) {
-            api
-              .generate({
-                projectId: m2.projectId,
-                beatId: firstBeat.beatId,
-                sceneId: firstScene.sceneId,
-                refinedPrompt: firstScene.refinedPrompt,
-                durationSeconds:
-                  firstScene.durationSeconds ?? firstBeat.archetype.suggestedDuration,
-                beatTemplate: firstBeat.template,
-              })
-              .then((gen) => {
-                const store = useBeatGraphStore.getState();
-                store.updateScene(firstBeat.beatId, firstScene.sceneId, { jobId: gen.jobId });
-                store.updateBeat(firstBeat.beatId, { status: "generating" });
-              })
-              .catch(() => {
-                // Silent failure — the user can still trigger gen normally
-                // from the drawer. No reason to alarm them about the
-                // speculative path.
-              });
+          if (m2) {
+            for (const beat of m2.beats) {
+              const scene = beat.scenes[0];
+              if (!scene?.refinedPrompt) continue;
+              api
+                .generate({
+                  projectId: m2.projectId,
+                  beatId: beat.beatId,
+                  sceneId: scene.sceneId,
+                  refinedPrompt: scene.refinedPrompt,
+                  durationSeconds:
+                    scene.durationSeconds ?? beat.archetype.suggestedDuration,
+                  beatTemplate: beat.template,
+                })
+                .then((gen) => {
+                  useBeatGraphStore.getState().updateScene(beat.beatId, scene.sceneId, {
+                    speculativeJobId: gen.jobId,
+                  });
+                })
+                .catch(() => {
+                  // Silent: failed pre-bake leaves scene without a
+                  // speculative jobId; user can still Roll camera
+                  // manually from the drawer.
+                });
+            }
           }
         })
         .catch((err) => {

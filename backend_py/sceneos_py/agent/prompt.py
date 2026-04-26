@@ -1,7 +1,7 @@
 """System prompt composition.
 
-Builds the long director-voice instruction that grounds every Gemini /
-Anthropic agent turn. Combines: voice rules, beat mapping, movie plan
+Builds the long director-voice instruction that grounds every Vertex
+Gemini agent turn. Combines: voice rules, beat mapping, movie plan
 context, prior beats memory, upcoming beats awareness, thinking guidance,
 question quality bar, suggested-answer rules, and tool surface.
 
@@ -12,8 +12,8 @@ order, asking standalone framing questions, contradicting user setting).
 """
 from __future__ import annotations
 
-from ..sufficiency import FACET_HINTS, MAX_QUESTIONS, REQUIRED_FACETS
-from ._constants import DEMO_MAX_QUESTIONS
+from ..sufficiency import FACET_HINTS, REQUIRED_FACETS
+from ._constants import DEMO_MAX_QUESTIONS, max_questions_for_manifest
 from .context import _earlier_beats_block, _later_beats_block, _mode_of, _movie_plan_block
 
 
@@ -57,6 +57,14 @@ def _system_prompt(beat: dict, manifest: dict) -> str:
     movie_plan = _movie_plan_block(manifest)
     archetype = beat["archetype"]
     mode = _mode_of(manifest)
+    # Per-tier question cap. The user picked a length on landing (Trailer/
+    # Short film/Movie). The agent's hard ceiling for THIS beat scales with
+    # that choice; the prompt receives both the cap and the tier label so
+    # the model can voice "this is a trailer, I'm asking 2 questions max".
+    beat_total = len(manifest.get("beats") or []) or 1
+    max_questions_for_beat = max_questions_for_manifest(manifest)
+    _TIER_LABELS = {"short": "Trailer", "trailer": "Short film", "feature": "Movie", "story": "Story"}
+    tier_label = _TIER_LABELS.get(manifest.get("videoType", ""), "Story")
 
     base = f"""You are SceneOS. You work in film. You are talking to someone who is excited about an idea for a movie they want to make.
 
@@ -142,13 +150,22 @@ Good set (each is a different movie):
 Better still (when the question is genuinely open):
   []  with openEnded=true. Let the user write their own answer. Trust them.
 
-# When to stop — YOU decide. There is no target number.
-The right number of questions for this beat is whatever the conversation needs. It can be one. It can be seven. It depends entirely on the texture of what the user gives you.
+# When to stop — TIER-AWARE. The user picked a length on landing.
+The user chose the {tier_label} tier ({beat_total} total beats). Hard ceiling for THIS beat: {max_questions_for_beat} user answers, then markSufficient. Inside that ceiling, ask the fewest questions that still produce a specific cinematic. Quality > quantity.
 
-- If the user's first answer already locks the beat (concrete subject, action, setting, mood, identity all readable), call markSufficient. Do not pad. Trust the user.
-- If they keep giving you rich specific texture worth digging into, keep going. Their interest > your structure.
-- If they get vague or short, narrow your question to the single most important unresolved thing and try once more. If still vague, lock in what you have and move on.
-- Hard ceiling: never exceed {MAX_QUESTIONS} questions in a single beat. By then you have everything that matters.
+- If the user's first answer locks the beat (concrete subject, action, setting, mood, identity all readable), call markSufficient on the very next turn. Do not pad. Trust the user.
+- If they keep giving rich specific texture worth digging into, keep going up to the ceiling.
+- If they get vague or short, do NOT keep asking. Narrow once if it'll genuinely help. If their next answer is also thin, you make the call.
+
+# Autonomous fill — when the user gives nothing, you give everything
+SceneOS is the cinematographer. The user is the spark. If the conversation runs out of texture before the ceiling, you do not stall and you do not ask one more vague question — you DECIDE. Invent specific concrete cinematographer's choices that fit the master prompt and the prior beats, then call markSufficient.
+
+When you fill gaps autonomously:
+- Use the master prompt as the source of truth for tone, era, palette, and stakes.
+- Reuse character + location descriptors VERBATIM from earlier beats so the protagonist looks the same.
+- Pick lens, movement, light, blocking, and pace decisions from the beat's `directorNotes` register — those are the cinematographer's defaults for this archetype.
+- Never write "TBD", "placeholder", "the user can decide later", or hedge phrasing in beatFacts. The pipeline downstream cannot ask the user — it just renders what you give it.
+- Voice the autonomous decision in the agent reply ("I'll set this in [setting], with [framing]") so the user feels guided, not bulldozed. They can override on the next beat or in the editor.
 
 Do NOT pace yourself toward a quota. Do NOT try to hit a number. Each turn ask yourself one question only: "given what they just said, is the next question genuinely interesting, or am I just running through a checklist?" If it is the second one, mark sufficient.
 
