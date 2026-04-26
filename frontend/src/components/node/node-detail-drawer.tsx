@@ -386,6 +386,39 @@ export function NodeDetailDrawer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [beatId, sceneId, persistedJobId, isGeneratingStatus]);
 
+  // Auto-roll-camera — when the agent commits (status flips to
+  // "ready-to-generate" with a refinedPrompt set), automatically fire
+  // handleGenerate() instead of waiting for the user to click "Roll
+  // camera." The manual button stays as the override (e.g. after a
+  // regenerate). Fires once per (beatId, sceneId) so a re-mount with
+  // the same status doesn't re-dispatch.
+  const autoRolledRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!beat || beat.status !== "ready-to-generate") return;
+    if (!beat.scenes[0]?.refinedPrompt) return;
+    const key = `${beat.beatId}::${beat.scenes[0].sceneId}`;
+    if (autoRolledRef.current === key) return;
+    autoRolledRef.current = key;
+    void handleGenerate();
+  }, [beat, handleGenerate]);
+
+  // Auto-advance — when the beat is approved (auto-approve in
+  // ClipPreview just fired), wait a beat (1.6s — long enough for the
+  // user to register the approval) then advance to the next pending
+  // beat OR open the stitch tray on the last one. Manual "Next beat"
+  // button still exists as an override during the wait window.
+  const autoAdvancedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!beat || beat.status !== "approved") return;
+    const key = beat.beatId;
+    if (autoAdvancedRef.current === key) return;
+    autoAdvancedRef.current = key;
+    const t = window.setTimeout(() => {
+      handleGoNext();
+    }, 1600);
+    return () => window.clearTimeout(t);
+  }, [beat, handleGoNext]);
+
   if (!beat) return null;
 
   const status = beat.status;

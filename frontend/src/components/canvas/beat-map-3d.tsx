@@ -98,7 +98,13 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
   //   7 beats → cameraZ 10.95 → world half-width ≈ 7.5 → spread half 5.43 (margin 2.0)
   //   12 beats → cameraZ 15.2 → world half-width ≈ 10.4 → spread half 9.3 (margin 1.1)
   // FOV widens on portrait viewports (#152) — see `<ResponsiveCamera>` below.
-  const cameraZ = 5 + Math.max(beats.length, 5) * 0.85;
+  //
+  // Tier-aware tightening: 3-beat trailers should feel intimate (the user
+  // wanted "slightly focused" toward the active beat), 8-beat movies
+  // should breathe. Floor of 4 (instead of 5) lets the 3-beat camera
+  // sit ~0.85 closer than before so the planets read as substantial,
+  // not lost in space.
+  const cameraZ = 5 + Math.max(beats.length, 4) * 0.85;
 
   // ── Pan state ──────────────────────────────────────────────────────────
   // The pan ref lives outside React so middle-drag never triggers a route
