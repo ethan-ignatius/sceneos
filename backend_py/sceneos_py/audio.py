@@ -86,17 +86,106 @@ def _load_overrides() -> dict[str, dict[str, str]]:
 
 
 def pick_music(video_type: str, mood: str = "auto") -> str | None:
-    """Pick a music public_id for a given (videoType, mood).
+    """Pick a STATIC music public_id for a given (videoType, mood).
 
-    Returns the configured public_id or None if both the override env and
-    the defaults produce nothing. None signals to /api/stitch/url that
-    no l_audio: layer should be added.
+    Returns whatever's configured in `SCENEOS_MUSIC_LIBRARY` or the
+    defaults — but the defaults usually point at `sceneos/audio/default`
+    which is rarely uploaded on customer clouds, so this often returns a
+    stale string.
+
+    For real cinematic results use `ensure_music_bed()` below — it lazily
+    generates a per-project Lyria 2 score and uploads it to Cloudinary.
     """
     overrides = _load_overrides()
     library = {**_MUSIC_BY_VIDEOTYPE.get(video_type, {}), **overrides.get(video_type, {})}
     if not library:
         return None
     return library.get(mood) or library.get("auto")
+
+
+async def ensure_music_bed(
+    *,
+    project_id: str,
+    video_type: str = "story",
+    mood: str = "intimate-hook",
+) -> str | None:
+    """Get-or-generate the music bed for a project.
+
+    First checks if `sceneos/<project_id>/audio/music` already exists on
+    Cloudinary (cheap HEAD), and returns its publicId if so. Otherwise
+    generates a new 32s instrumental score via Lyria 2 (~25-40s call),
+    uploads to Cloudinary, returns the publicId.
+
+    Returns None on any failure — callers fall back to the static
+    `pick_music()` config or to silent.
+    """
+    if mock_mode():
+        return pick_music(video_type, mood) or _DEFAULT_PUBLIC_ID
+
+    expected_public_id = f"sceneos/{project_id}/audio/music"
+
+    # Cheap existence check — if Lyria already produced a bed for this
+    # project, reuse it. Saves ~30s + a Lyria quota tick on retries / a
+    # second stitch call. Cloudinary serves audio under /video/upload/.
+    cloud = env("CLOUDINARY_CLOUD_NAME") or ""
+    if cloud:
+        head_url = f"https://res.cloudinary.com/{cloud}/video/upload/{expected_public_id}.wav"
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=8) as client:
+                head = await client.head(head_url)
+            if head.status_code == 200:
+                logger.info("[audio] reusing existing music bed %s", expected_public_id)
+                return expected_public_id
+        except Exception:
+            pass
+
+    try:
+        from . import vertex_lyria
+        result = await vertex_lyria.generate_music_bed(
+            project_id=project_id,
+            video_type=video_type,
+            mood=mood,
+        )
+    except Exception as exc:
+        logger.warning("[audio] Lyria generation failed: %s", exc)
+        return pick_music(video_type, mood)
+
+    if result and result.get("publicId"):
+        return result["publicId"]
+    return pick_music(video_type, mood)
+
+
+async def audio_publicid_exists(public_id: str, *, timeout_seconds: float = 5.0) -> bool:
+    """
+    Probe whether `public_id` resolves to a real Cloudinary audio asset.
+
+    Cloudinary serves audio under the video pipeline, so we HEAD at:
+      https://res.cloudinary.com/{cloud}/video/upload/{public_id}.{ext}
+
+    We try .wav (Lyria default) then .mp3 (ElevenLabs default). Returns
+    True on the first 200 OK. Errors / timeouts fall through to False.
+
+    Used by `/api/stitch/url` to drop a phantom `l_audio:` overlay before
+    Cloudinary refuses the whole transformation.
+    """
+    if not public_id:
+        return False
+    cloud = env("CLOUDINARY_CLOUD_NAME") or ""
+    if not cloud:
+        # No cloud configured — can't verify; assume the caller knows.
+        return True
+    base = f"https://res.cloudinary.com/{cloud}/video/upload/{public_id}"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            for ext in ("wav", "mp3", "m4a"):
+                head = await client.head(f"{base}.{ext}")
+                if head.status_code == 200:
+                    return True
+    except Exception as exc:
+        logger.warning("[audio] HEAD probe failed for %s: %s", public_id, exc)
+    return False
 
 
 # ── Narration (optional) ─────────────────────────────────────────────────
@@ -170,4 +259,9 @@ async def synthesize_narration(
     }
 
 
-__all__ = ["pick_music", "synthesize_narration"]
+__all__ = [
+    "pick_music",
+    "ensure_music_bed",
+    "audio_publicid_exists",
+    "synthesize_narration",
+]

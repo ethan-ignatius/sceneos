@@ -295,6 +295,101 @@
       when the agent finishes a beat, the orchestrate call hits a cached job (<code class="mono">speculativeReused: true</code>)
       instead of doing fresh work.
     </p>
+
+    <!-- Pre-baked playback shortcut — shows the user what the live pipeline produces -->
+    <div class="mt-10 panel p-6 border-emerald-500/20 bg-emerald-900/[.03]">
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="label" style="color: rgb(52 211 153); border-color: rgba(52,211,153,.25);">already baked</p>
+          <h3 class="text-lg font-light text-zinc-100 mt-2 mb-1">Play the lighthouse demo right now</h3>
+          <p class="text-[12px] text-zinc-500 leading-relaxed max-w-2xl">
+            Seven beats, baked end-to-end with Veo 3 (1080p, native synced audio + voice acting),
+            scored by Lyria 2, captioned and stitched on Cloudinary. No waiting, no live calls.
+            Use this to verify the stack actually ships pixels and audio.
+          </p>
+        </div>
+        <button
+          id="playBakedBtn"
+          class="shrink-0 ml-4 panel border-emerald-500/40 hover:border-emerald-400/70 px-4 py-3 text-[12px] text-emerald-300 transition-colors mono"
+        >
+          ▶ play baked cut
+        </button>
+      </div>
+      <div class="text-[10px] text-zinc-700 mono mt-3 leading-relaxed">
+        GET /api/cached/lighthouse → delivers a single Cloudinary URL with fl_splice + l_text + l_audio
+      </div>
+    </div>
+  </section>
+
+  <!-- BAKED CUT — quick playback of the cached lighthouse demo ─────────────── -->
+  <section id="bakedView" class="hidden relative z-10 px-6 py-8 max-w-6xl mx-auto">
+    <div class="flex items-baseline justify-between mb-4">
+      <div>
+        <span class="label" style="color: rgb(52 211 153); border-color: rgba(52,211,153,.25);">baked demo · lighthouse-ship</span>
+        <span id="bakedTitle" class="ml-3 text-base font-medium text-zinc-100"></span>
+      </div>
+      <button id="bakedBackBtn" class="text-[11px] text-zinc-500 hover:text-zinc-300 mono">← back to mode picker</button>
+    </div>
+    <div class="grid grid-cols-12 gap-5">
+      <div class="col-span-12 lg:col-span-8">
+        <div class="panel p-3">
+          <video id="bakedVideo" class="w-full rounded-md bg-black border border-white/[.06]" controls preload="metadata"></video>
+          <div id="bakedMeta" class="grid grid-cols-4 gap-3 mt-3 text-[11px]"></div>
+        </div>
+
+        <!-- Editor agent panel — opens once the cut is loaded -->
+        <div id="editorPanel" class="hidden mt-5 panel p-5">
+          <div class="flex items-center justify-between mb-3">
+            <span class="label label-neural">editor agent · proposes the cut</span>
+            <span id="editorStatus" class="text-[10px] text-zinc-600 mono">idle</span>
+          </div>
+          <p class="text-[12px] text-zinc-500 leading-relaxed mb-4">
+            Same voice as the questionnaire, different job. The editor watches the assembled cut and
+            proposes one specific change at a time (trims, transitions, captions, music, look LUT). You
+            accept by replying with one of its three follow-ups, or push back in your own words.
+            Every commit is a deterministic Cloudinary URL — no render server, no ffmpeg.
+          </p>
+          <div class="grid grid-cols-12 gap-4">
+            <div class="col-span-7 panel p-4 thinking-frame" style="min-height: 30vh;">
+              <div class="flex items-center justify-between mb-2">
+                <span class="label label-neural">editor thinking</span>
+              </div>
+              <div id="editorThinking" class="mono text-[12px] leading-relaxed text-cyan-200/80 max-h-[28vh] overflow-y-auto whitespace-pre-wrap">
+                <p class="text-zinc-700 italic">silent — click "ask the editor" to start</p>
+              </div>
+            </div>
+            <div class="col-span-5 panel p-4 flex flex-col" style="min-height: 30vh;">
+              <div class="label label-accent mb-2">proposal</div>
+              <div id="editorProposal" class="text-[13px] text-zinc-200 leading-relaxed flex-1 mb-3">
+                <p class="text-zinc-700 italic">empty — proposeEdit / commitEdit lands here</p>
+              </div>
+              <div id="editorFollowups" class="space-y-2"></div>
+            </div>
+          </div>
+          <div class="mt-4 flex items-center gap-2">
+            <input
+              id="editorInput"
+              type="text"
+              placeholder="reply to the editor… (or pick a follow-up above)"
+              class="hero-input flex-1 rounded-md px-3 py-2 text-[13px] text-zinc-100 placeholder-zinc-700 font-light"
+            />
+            <button id="editorSendBtn" class="px-4 py-2 panel border-cyan-400/30 hover:border-cyan-400/70 text-[12px] text-cyan-300 mono transition-colors">ask the editor</button>
+            <button id="editorApplyBtn" class="hidden px-4 py-2 panel border-amber-500/30 hover:border-amber-500/70 text-[12px] text-amber-300 mono transition-colors">apply this cut ▶</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-span-12 lg:col-span-4 space-y-3">
+        <div class="panel p-4">
+          <div class="label label-accent mb-2">7 beats · in order</div>
+          <ol id="bakedBeats" class="text-[12px] text-zinc-300 space-y-2"></ol>
+        </div>
+        <div class="panel p-4">
+          <div class="label mb-2">bake details</div>
+          <dl id="bakedBakeFacts" class="text-[11px] mono text-zinc-400 space-y-1"></dl>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- LOOP ──────────────────────────────────────────────────────────────── -->
@@ -1026,7 +1121,50 @@
             <a href="${escapeHtml(url)}" target="_blank" rel="noreferrer noopener" class="text-amber-400 mono break-all hover:underline">open ↗</a>
           </div>
         </div>
+        <button id="openEditorFromLiveBtn" class="mt-4 px-4 py-2 panel border-cyan-400/30 hover:border-cyan-400/70 text-[12px] text-cyan-300 mono transition-colors">
+          ▸ refine in the editor agent
+        </button>
       `;
+      const openBtn = document.getElementById('openEditorFromLiveBtn');
+      if (openBtn) {
+        openBtn.addEventListener('click', () => {
+          // Pivot to baked-view UX with the live cut as the editor's seed.
+          bakedCut = {
+            demoId: manifest.projectId || 'live',
+            title: manifest.masterPrompt || 'Live cut',
+            masterPrompt: manifest.masterPrompt || '',
+            finalUrl: url,
+            thumbnailUrl: res.thumbnailUrl || '',
+            audioPublicId: audio || null,
+            durationSeconds: res.durationSeconds || 0,
+            beats: manifest.beats.map((b, i) => ({
+              index: i + 1,
+              beatName: b.beatName,
+              template: b.template,
+              publicId: (b.scenes && b.scenes[0] && b.scenes[0].clipPublicId) || '',
+              clipUrl: (b.scenes && b.scenes[0] && b.scenes[0].clipUrl) || '',
+              durationSeconds: (b.scenes && b.scenes[0] && b.scenes[0].durationSeconds) || (b.archetype && b.archetype.suggestedDuration) || 5,
+              thumbnailUrl: '',
+            })),
+            bake: { videoModel: 'veo-3.0-generate-001', musicModel: 'lyria-002', resolution: '1920x1080', captions: true, nativeAudio: true, musicDuckDb: -28 },
+          };
+          editorManifest = {
+            projectId: bakedCut.demoId,
+            videoType: manifest.videoType || 'story',
+            masterPrompt: bakedCut.masterPrompt,
+            beats: manifest.beats.map((b) => ({
+              ...b,
+              status: 'approved',
+              scenes: (b.scenes || []).map((s) => ({ ...s, approved: true })),
+            })),
+          };
+          renderBakedCut();
+          setBakedView(true);
+          editorConversation = [];
+          editorDecisions = null;
+          editorTurn(null);
+        });
+      }
     }
 
     async function sendAnswer(text) {
@@ -1208,10 +1346,238 @@
       $('finalCutRow').classList.add('hidden');
       $('finalCutBody').innerHTML = `<p class="text-zinc-700 italic text-sm">stitching kicks off automatically when all 7 clips are ready.</p>`;
       $('loop').classList.add('hidden');
+      $('bakedView').classList.add('hidden');
+      $('editorPanel').classList.add('hidden');
       $('boot').classList.remove('hidden');
       $('resetBtn').classList.add('hidden');
       $('demoBtn').removeAttribute('disabled');
       $('normalBtn').removeAttribute('disabled');
+      $('playBakedBtn').removeAttribute('disabled');
+      $('playBakedBtn').textContent = '▶ play baked cut';
+      bakedCut = null;
+      editorManifest = null;
+      editorDecisions = null;
+      editorConversation = [];
+    }
+
+    /* ── Baked cut + editor agent ─────────────────────────────────────── */
+    let bakedCut = null;             // /api/cached/lighthouse response
+    let editorManifest = null;       // synthesized manifest passed to editor endpoints
+    let editorDecisions = null;      // last EditDecisions emitted by the agent
+    let editorConversation = [];     // [{role, content}] history for the editor session
+    let editorBusy = false;
+
+    function setBakedView(visible) {
+      $('boot').classList.toggle('hidden', visible);
+      $('loop').classList.toggle('hidden', visible);  // hide loop too in case user came from there
+      $('bakedView').classList.toggle('hidden', !visible);
+      $('resetBtn').classList.toggle('hidden', !visible);
+    }
+
+    async function loadBakedCut() {
+      $('playBakedBtn').setAttribute('disabled', 'true');
+      $('playBakedBtn').textContent = 'loading…';
+      try {
+        const res = await fetch(`${apiBase()}/api/cached/lighthouse`);
+        if (!res.ok) throw new Error(`/api/cached/lighthouse ${res.status}`);
+        bakedCut = await res.json();
+        renderBakedCut();
+        // Synthesize a manifest the editor endpoints can chew on. The editor
+        // expects {beats:[{beatId, beatName, archetype:{mood}, scenes:[{clipPublicId, durationSeconds, beatFacts?}], status:"approved"}]}.
+        editorManifest = {
+          projectId: bakedCut.demoId,
+          videoType: 'story',
+          masterPrompt: bakedCut.masterPrompt,
+          beats: bakedCut.beats.map((b, i) => ({
+            beatId: `beat-${b.index}`,
+            beatName: b.beatName,
+            template: b.template,
+            status: 'approved',
+            archetype: { intent: '', mood: TEMPLATES.story[i] ? TEMPLATES.story[i].mood : 'intimate-hook', suggestedDuration: b.durationSeconds, directorNotes: '' },
+            scenes: [{
+              sceneId: `${b.template}-scene-1`,
+              conversation: [],
+              approved: true,
+              clipPublicId: b.publicId,
+              clipUrl: b.clipUrl,
+              durationSeconds: b.durationSeconds,
+            }],
+          })),
+        };
+        setBakedView(true);
+        // Greet the editor immediately — first turn fires automatically so
+        // the user sees thinking → proposal without typing anything.
+        editorConversation = [];
+        editorDecisions = null;
+        await editorTurn(null);
+      } catch (err) {
+        $('playBakedBtn').textContent = '▶ play baked cut';
+        $('playBakedBtn').removeAttribute('disabled');
+        alert('Could not load the baked demo. Is the backend up?\n\n' + (err && err.message || err));
+      }
+    }
+
+    function renderBakedCut() {
+      $('bakedTitle').textContent = bakedCut.title || 'lighthouse-ship';
+      const v = $('bakedVideo');
+      v.src = bakedCut.finalUrl;
+      v.poster = bakedCut.thumbnailUrl || '';
+      $('bakedMeta').innerHTML = `
+        <div><div class="label text-[9px] mb-1">duration</div><div class="text-zinc-300 mono">${bakedCut.durationSeconds}s</div></div>
+        <div><div class="label text-[9px] mb-1">resolution</div><div class="text-zinc-300 mono">${bakedCut.bake.resolution}</div></div>
+        <div><div class="label text-[9px] mb-1">video model</div><div class="text-zinc-300 mono">${bakedCut.bake.videoModel}</div></div>
+        <div><div class="label text-[9px] mb-1">music model</div><div class="text-zinc-300 mono">${bakedCut.bake.musicModel}</div></div>
+      `;
+      $('bakedBeats').innerHTML = bakedCut.beats.map((b) => `
+        <li class="flex items-baseline gap-2">
+          <span class="text-zinc-700 mono w-4">${b.index}</span>
+          <span class="flex-1">${escapeHtml(b.beatName)}</span>
+          <span class="text-zinc-700 mono">${b.durationSeconds}s</span>
+        </li>
+      `).join('');
+      const facts = bakedCut.bake;
+      $('bakedBakeFacts').innerHTML = `
+        <div class="flex justify-between"><dt class="text-zinc-700">audio</dt><dd>${escapeHtml(bakedCut.audioPublicId || '—')}</dd></div>
+        <div class="flex justify-between"><dt class="text-zinc-700">native audio</dt><dd>${facts.nativeAudio ? 'yes (Veo 3)' : 'no'}</dd></div>
+        <div class="flex justify-between"><dt class="text-zinc-700">captions</dt><dd>${facts.captions ? 'yes (l_text)' : 'no'}</dd></div>
+        <div class="flex justify-between"><dt class="text-zinc-700">music duck</dt><dd>${facts.musicDuckDb} dB</dd></div>
+        <div class="flex justify-between"><dt class="text-zinc-700">delivery</dt><dd>cloudinary</dd></div>
+      `;
+      $('editorPanel').classList.remove('hidden');
+    }
+
+    function setEditorStatus(text, tone) {
+      const el = $('editorStatus');
+      el.textContent = text;
+      el.style.color = tone === 'done' ? 'rgb(52 211 153)'
+        : tone === 'error' ? 'rgb(248 113 113)'
+        : tone === 'thinking' ? 'rgb(103 232 249)'
+        : 'rgb(161 161 170)';
+    }
+
+    function appendEditorThought(chunk) {
+      const t = $('editorThinking');
+      if (t.querySelector('.text-zinc-700.italic')) t.innerHTML = '';
+      const span = document.createElement('span');
+      span.className = 'thought-chunk';
+      span.textContent = chunk;
+      t.appendChild(span);
+      t.scrollTop = t.scrollHeight;
+    }
+
+    function clearEditorThinking() {
+      $('editorThinking').innerHTML = '';
+    }
+
+    function renderEditorProposal(result) {
+      const isCommit = result.kind === 'commit';
+      $('editorProposal').innerHTML = `
+        <div class="label ${isCommit ? 'label-accent' : 'label-neural'} mb-2">${isCommit ? 'commit' : 'propose'}</div>
+        <p class="leading-relaxed">${escapeHtml(result.rationale || '')}</p>
+        ${isCommit && result.summary ? `<p class="mt-3 text-[12px] text-zinc-500 italic">${escapeHtml(result.summary)}</p>` : ''}
+        ${result.decisions && result.decisions.look && result.decisions.look !== 'neutral' ? `<div class="mt-3 text-[11px] mono text-zinc-500">look: <span class="text-amber-300">${escapeHtml(result.decisions.look)}</span></div>` : ''}
+      `;
+      const followups = (result.suggestedFollowups || []).slice(0, 3);
+      $('editorFollowups').innerHTML = followups.map((f, i) => `
+        <button data-idx="${i}" class="chip text-left w-full px-3 py-2 rounded border border-white/[.08] text-[12px] text-zinc-300 hover:text-amber-300 transition-colors">
+          ${escapeHtml(f)}
+        </button>
+      `).join('');
+      $('editorFollowups').querySelectorAll('button').forEach((b) => {
+        b.addEventListener('click', () => {
+          $('editorInput').value = b.textContent.trim();
+          editorTurn(b.textContent.trim());
+        });
+      });
+      $('editorApplyBtn').classList.toggle('hidden', !result.decisions || !result.decisions.clips || !result.decisions.clips.length);
+    }
+
+    async function editorTurn(userMessage) {
+      if (editorBusy) return;
+      editorBusy = true;
+      setEditorStatus('thinking…', 'thinking');
+      clearEditorThinking();
+      if (userMessage) editorConversation.push({ role: 'user', content: userMessage });
+      const body = {
+        manifest: editorManifest,
+        decisions: editorDecisions || undefined,
+        conversation: editorConversation,
+      };
+      if (userMessage) body.userMessage = userMessage;
+
+      let result = null;
+      try {
+        const res = await fetch(`${apiBase()}/api/editor/stream`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok || !res.body) throw new Error(`editor stream ${res.status}`);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const events = buf.split('\n\n');
+          buf = events.pop() || '';
+          for (const ev of events) {
+            const line = ev.trim();
+            if (!line.startsWith('data:')) continue;
+            try {
+              const payload = JSON.parse(line.slice(line.indexOf(':') + 1).trim());
+              if (payload.type === 'thought') appendEditorThought(payload.chunk);
+              if (payload.type === 'result') result = payload;
+              if (payload.type === 'error') throw new Error(payload.message || 'editor error');
+            } catch (err) { /* ignore parse errors */ }
+          }
+        }
+      } catch (err) {
+        setEditorStatus('error: ' + (err.message || err), 'error');
+        editorBusy = false;
+        return;
+      }
+
+      if (!result) {
+        setEditorStatus('no result', 'error');
+        editorBusy = false;
+        return;
+      }
+      editorDecisions = result.decisions;
+      // Record the agent turn with its rationale so the next call has context.
+      editorConversation.push({ role: 'agent', content: result.rationale || result.summary || '' });
+      renderEditorProposal(result);
+      setEditorStatus(result.kind === 'commit' ? 'cut locked' : 'awaiting reply', result.kind === 'commit' ? 'done' : 'thinking');
+      $('editorInput').value = '';
+      editorBusy = false;
+    }
+
+    async function applyEditorCut() {
+      if (!editorDecisions || !editorManifest) return;
+      $('editorApplyBtn').setAttribute('disabled', 'true');
+      $('editorApplyBtn').textContent = 'baking…';
+      try {
+        const res = await postJson('/api/editor/apply', {
+          manifest: editorManifest,
+          decisions: editorDecisions,
+          // Make the freshly-baked URL point at the same cloud the source
+          // assets actually live on. Without this, the URL builder uses
+          // the backend's default cloud and the assets 404.
+          cloudName: bakedCut && bakedCut.cloudName ? bakedCut.cloudName : undefined,
+        });
+        // Replace the video source with the new edit and let the user see the diff immediately.
+        const v = $('bakedVideo');
+        v.src = res.finalUrl;
+        v.load();
+        v.play().catch(() => {});
+        setEditorStatus(`applied · ${res.durationSeconds}s`, 'done');
+      } catch (err) {
+        setEditorStatus('apply failed: ' + (err.message || err), 'error');
+      } finally {
+        $('editorApplyBtn').removeAttribute('disabled');
+        $('editorApplyBtn').textContent = 'apply this cut ▶';
+      }
     }
 
     /* ── Boot wiring ──────────────────────────────────────────────────── */
@@ -1221,6 +1587,21 @@
 
     $('demoBtn').addEventListener('click', () => begin('demo'));
     $('normalBtn').addEventListener('click', () => begin('normal'));
+    $('playBakedBtn').addEventListener('click', loadBakedCut);
+    $('bakedBackBtn').addEventListener('click', () => { setBakedView(false); $('boot').classList.remove('hidden'); $('playBakedBtn').textContent = '▶ play baked cut'; $('playBakedBtn').removeAttribute('disabled'); });
+    $('editorSendBtn').addEventListener('click', () => {
+      const txt = $('editorInput').value.trim();
+      if (!txt) return;
+      editorTurn(txt);
+    });
+    $('editorInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const txt = $('editorInput').value.trim();
+        if (txt) editorTurn(txt);
+      }
+    });
+    $('editorApplyBtn').addEventListener('click', applyEditorCut);
     $('resetBtn').addEventListener('click', reset);
     $('clearThinkingBtn').addEventListener('click', clearThinking);
     $('dumpBtn').addEventListener('click', () => {
@@ -1231,6 +1612,8 @@
     window.SceneOS = {
       get manifest() { return manifest; },
       get currentBeatIndex() { return currentBeatIndex; },
+      get bakedCut() { return bakedCut; },
+      get editorDecisions() { return editorDecisions; },
       reset,
     };
   </script>

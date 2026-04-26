@@ -393,9 +393,11 @@ async def start_session(
             video_type=video_type,
             mode=mode,
         )
-        # Stamp the picked music + (eventually) audio narration on the
-        # manifest. /api/stitch/url reads this when building the final
-        # splice URL — l_audio: overlay is what makes it feel like a film.
+        # Stamp the static music_library fallback on the manifest. This is
+        # diagnostic / optimistic — the stitch endpoint will OVERRIDE this
+        # with a per-project Lyria 2 score when no explicit `body.audioPublicId`
+        # is provided, because the static default is usually a placeholder
+        # that points at an unuploaded asset.
         from . import audio as audio_service
         manifest["audioPublicId"] = audio_service.pick_music(video_type, mood="auto")
         _SESSIONS[project_id] = {
