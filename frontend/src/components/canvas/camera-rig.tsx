@@ -106,31 +106,32 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
   };
 
   /**
-   * Over-the-shoulder camera — when active beat is N, this returns the
-   * position of beat N-1 (or, for the FIRST beat, an extrapolated point
-   * just before beat 0 along the journey direction).
+   * Returns the position of the NEXT beat in the journey, used as the
+   * lookAt anchor when active. For the LAST beat, extrapolates one step
+   * forward along the journey direction so the camera still has a
+   * "looking ahead" axis to angle toward.
    *
-   * Reads as: "we're standing at the previous checkpoint, looking AT
-   * the current one." Per user direction — looking from Earth's
-   * shoulder at the Sun, then from there looking forward at the next.
+   * Per user direction — when active beat is N, the camera's view
+   * direction should aim TOWARD beat N+1, not directly at N. The active
+   * planet ends up in the foreground, the next-up planet is the visual
+   * destination of the eye. Reads as "we're traveling, looking at
+   * what's coming next, with the current planet right in front of us."
    */
-  const findShoulderAnchor = (beatId: string | null): [number, number, number] | null => {
+  const findNextAnchor = (beatId: string | null): [number, number, number] | null => {
     if (!beatId) return null;
     const i = beats.findIndex((b) => b.beatId === beatId);
     if (i === -1) return null;
-    if (i === 0) {
-      // First beat — extrapolate one step BACK along the journey using
-      // the vector from beat 0 to beat 1 (or a default offset if there's
-      // only one beat). Camera ends up at "the start of the road,"
-      // looking forward at the first checkpoint.
-      const cur = positions[0];
-      const next = positions[1] ?? [cur[0] + 2, cur[1], cur[2]];
-      const dx = cur[0] - next[0];
-      const dy = cur[1] - next[1];
-      const dz = cur[2] - next[2];
+    if (i === beats.length - 1) {
+      // Last beat — extrapolate one step FORWARD using the vector from
+      // beat N-1 to beat N (or a default if there's only one beat).
+      const cur = positions[i];
+      const prev = positions[i - 1] ?? [cur[0] - 2, cur[1], cur[2]];
+      const dx = cur[0] - prev[0];
+      const dy = cur[1] - prev[1];
+      const dz = cur[2] - prev[2];
       return [cur[0] + dx, cur[1] + dy, cur[2] + dz];
     }
-    return positions[i - 1];
+    return positions[i + 1];
   };
 
   useFrame((state) => {
@@ -157,36 +158,47 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
 
     if (active) {
       const [ax, ay, az] = active;
-      // Over-the-shoulder zoom: camera sits at the PREVIOUS beat's
-      // position (slightly above + pulled back), looking AT the current
-      // active beat. Per user direction — "from Earth's shoulder at the
-      // Sun, then from there looking forward at the next."
+      // Active-beat camera framing — per user direction:
+      //   1. Active planet appears LARGE in the foreground
+      //   2. View direction aims toward the NEXT planet ("looking
+      //      forward in the journey")
+      //   3. Active planet sits on the LEFT half of viewport
+      //      (drawer occupies the right)
       //
-      // Drawer-aware offset: the previous version shifted along world-x.
-      // That worked for beats 0–2 (where the journey direction is
-      // mostly +x) but BROKE for beats 3+ because the journey snakes:
-      // by Mars→Saturn the forward vector has heavy z and y components,
-      // and shifting world-x there made the camera look PAST the planet
-      // along +x, putting the planet off-frame to the right.
+      // Math:
+      //   forward   = (next − active).normalised
+      //   right     = up × forward (camera-right axis, perpendicular to
+      //               view direction in the world)
+      //   camera    = active − forward × 1.6 (pull back)
+      //                       + worldUp × 0.45 (slight elevation)
+      //                       + right × drawerMag (shift right →
+      //                         active planet projects to viewport LEFT)
+      //   lookAt    = active + forward × 0.7 (look JUST past active
+      //                                       toward the next planet,
+      //                                       so active stays in the
+      //                                       lower-left foreground)
+      //                       + right × drawerMag (same shift as camera
+      //                         so view direction is preserved; only the
+      //                         frame slides)
       //
-      // Fix: compute camera-RIGHT (forward × world-up, normalised) per
-      // beat and shift both camera + lookAt along THAT axis. The planet
-      // ends up on the left half of the viewport regardless of which
-      // direction the journey is heading at this checkpoint.
-      const shoulder = findShoulderAnchor(activeBeatId);
+      // Why "forward × 0.7" not "next directly": looking at next
+      // directly would put it in viewport center and shrink active to
+      // a sliver in the lower-left. The 0.7 multiplier picks a point
+      // slightly past active so the active planet still dominates the
+      // frame, with the next planet clearly visible deeper in the shot.
+      const next = findNextAnchor(activeBeatId);
       const isDesktop = typeof window !== "undefined" && window.innerWidth >= 768;
-      const drawerMag = isDesktop ? 1.4 : 0;
+      const drawerMag = isDesktop ? 1.6 : 0;
       const breath = !reducedMotion ? Math.sin(t * 0.15) * 0.08 : 0;
-      if (shoulder) {
-        const [sx, sy, sz] = shoulder;
-        // Forward = active − shoulder, normalised.
-        const fx = ax - sx, fy = ay - sy, fz = az - sz;
+      if (next) {
+        const [nx, ny, nz] = next;
+        const fx = nx - ax, fy = ny - ay, fz = nz - az;
         const fmag = Math.max(Math.sqrt(fx * fx + fy * fy + fz * fz), 0.001);
         const fNx = fx / fmag, fNy = fy / fmag, fNz = fz / fmag;
-        // Camera-right = forward × worldUp (0, 1, 0). With forward (a, b, c):
-        //   right = (a, b, c) × (0, 1, 0) = (c, 0, -a)
-        // If forward is near-parallel to up (won't happen in our path,
-        // but defensive), fall back to world-x.
+        // Camera-right via Three.js convention: up × forward.
+        // up=(0,1,0), forward=(a,b,c) → up × forward = (c, 0, -a)
+        // (z component goes positive when forward has -x; that's the
+        // right side from the camera's POV looking down +x.)
         let rx = fNz, rz = -fNx;
         const rmag = Math.sqrt(rx * rx + rz * rz);
         if (rmag < 0.001) {
@@ -194,23 +206,22 @@ export function CameraRig({ beats, positions, activeBeatId, hoveredBeatId, overv
         } else {
           rx /= rmag; rz /= rmag;
         }
-        // Drawer shift along camera-right.
         const drx = rx * drawerMag, drz = rz * drawerMag;
-        // Camera = shoulder + (-forward × 0.3 = pull back) + (worldUp × 0.6) + drawer
-        // Pulling back 0.3 along -forward keeps the previous planet in
-        // the foreground; lifting y by 0.6 gives the slight elevation.
+        // Camera: pull back along -forward by 1.6, lift, drawer-shift right.
         targetPos.current.set(
-          sx - fNx * 0.3 + drx + breath,
-          sy + 0.6,
-          sz - fNz * 0.3 + drz,
+          ax - fNx * 1.6 + drx + breath,
+          ay - fNy * 1.6 + 0.45,
+          az - fNz * 1.6 + drz,
         );
-        // LookAt = active beat + drawer shift (same direction so the
-        // view direction is preserved; only the framing slides).
-        targetLook.current.set(ax + drx, ay, az + drz);
-        // Reference fNy so TS doesn't flag it (used implicitly via fNx/fNz
-        // normalisation; kept named for readability).
-        void fNy;
+        // LookAt: just past active toward next, plus same drawer shift.
+        targetLook.current.set(
+          ax + fNx * 0.7 + drx,
+          ay + fNy * 0.7,
+          az + fNz * 0.7 + drz,
+        );
       } else {
+        // Defensive fallback — shouldn't fire because findNextAnchor
+        // has the last-beat extrapolation, but keeps the rig robust.
         targetPos.current.set(ax + 0.7 + breath, ay + 0.45, az + 1.7);
         targetLook.current.set(ax, ay, az);
       }
