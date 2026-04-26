@@ -62,13 +62,29 @@ class ApiError extends Error {
   }
 }
 
+// Auth0 user.sub for the signed-in user, threaded onto every request as
+// X-User-Id so the backend can scope MongoDB project queries to the
+// caller. Set from <App /> via setApiUserId() whenever the Auth0 state
+// changes; cleared on logout. When null the backend treats the request
+// as anonymous (project list returns []).
+let _userId: string | null = null;
+export function setApiUserId(id: string | null): void {
+  _userId = id;
+}
+export function getApiUserId(): string | null {
+  return _userId;
+}
+
 async function request<TBody, TResponse>(
   path: string,
-  init: { method: "GET" | "POST"; body?: TBody; signal?: AbortSignal } = { method: "GET" },
+  init: { method: "GET" | "POST" | "DELETE"; body?: TBody; signal?: AbortSignal } = { method: "GET" },
 ): Promise<TResponse> {
+  const headers: Record<string, string> = {};
+  if (init.body) headers["content-type"] = "application/json";
+  if (_userId) headers["X-User-Id"] = _userId;
   const res = await fetch(`${BASE_URL}${path}`, {
     method: init.method,
-    headers: init.body ? { "content-type": "application/json" } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: init.body ? JSON.stringify(init.body) : undefined,
     signal: init.signal,
   });
@@ -504,12 +520,17 @@ export const api = {
       body,
     }),
 
-  deleteProject: (projectId: string) =>
-    fetch(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" })
-      .then(async (res) => {
-        if (!res.ok) throw new ApiError(res.status, "Delete failed");
-        return (await res.json()) as { ok: boolean; projectId: string };
-      }),
+  deleteProject: (projectId: string) => {
+    const headers: Record<string, string> = {};
+    if (_userId) headers["X-User-Id"] = _userId;
+    return fetch(`${BASE_URL}/api/projects/${encodeURIComponent(projectId)}`, {
+      method: "DELETE",
+      headers,
+    }).then(async (res) => {
+      if (!res.ok) throw new ApiError(res.status, "Delete failed");
+      return (await res.json()) as { ok: boolean; projectId: string };
+    });
+  },
 };
 
 export interface MongoProject {

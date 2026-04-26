@@ -1,13 +1,22 @@
 import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowUpRight, Trash2, Play, Plus, Cloud, HardDrive } from "lucide-react";
+import { useAuth0 } from "@auth0/auth0-react";
+import { ArrowLeft, ArrowUpRight, Trash2, Play, Plus, Cloud, HardDrive, LogIn, Lock } from "lucide-react";
 import { useBeatGraphStore, type ArchivedProject } from "@/stores/beat-graph-store";
 import type { BeatStatus } from "@/types/manifest";
 import { api, type MongoProject } from "@/lib/api";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { SceneOSMark } from "@/components/ui/sceneos-mark";
+import { AuthChip } from "@/components/ui/auth-chip";
+
+// Whether Auth0 is wired up for this build. When unset, we fall back to
+// the previous "everyone sees their localStorage" behavior so dev
+// without env vars still works. See main.tsx for the same flag.
+const AUTH_REQUIRED = Boolean(
+  import.meta.env.VITE_AUTH0_DOMAIN && import.meta.env.VITE_AUTH0_CLIENT_ID,
+);
 
 interface MergedProject {
   id: string;

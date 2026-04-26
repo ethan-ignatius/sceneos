@@ -12,8 +12,9 @@
  */
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Volume2, SkipForward } from "lucide-react";
+import { Volume2, VolumeX, SkipForward } from "lucide-react";
 import { useNarrationStore } from "@/lib/use-narration";
+import { isAudioMuted, setAudioMuted } from "@/lib/audio-cues";
 import { EASE } from "@/lib/motion-presets";
 
 const MOMENT_LABELS: Record<string, string> = {
@@ -32,7 +33,20 @@ export function NarrationBar() {
   const stop = useNarrationStore((s) => s.stop);
 
   const [visible, setVisible] = useState(false);
+  const [muted, setMuted] = useState(() => isAudioMuted());
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const toggleMute = () => {
+    const next = !muted;
+    setAudioMuted(next);
+    setMuted(next);
+    if (next) {
+      // Mute mid-line: stop the current playback so the user gets
+      // immediate silence (otherwise the in-flight HTMLAudioElement
+      // keeps playing until ended).
+      stop();
+    }
+  };
 
   useEffect(() => {
     if (dismissTimer.current) {
@@ -105,7 +119,25 @@ export function NarrationBar() {
               </motion.p>
             )}
 
-            {/* Skip button */}
+            {/* Mute toggle — persists across moments via localStorage.
+                Muting mid-line stops the current playback immediately;
+                unmuting takes effect on the NEXT moment, not the current
+                one (the in-flight audio object is gone). */}
+            <button
+              onClick={toggleMute}
+              className="flex shrink-0 items-center gap-1 rounded-full px-2 py-1 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
+              aria-label={muted ? "Unmute narrator" : "Mute narrator"}
+              aria-pressed={muted}
+              title={muted ? "Narrator muted — click to unmute" : "Mute narrator"}
+            >
+              {muted ? (
+                <VolumeX size={12} strokeWidth={1.5} />
+              ) : (
+                <Volume2 size={12} strokeWidth={1.5} />
+              )}
+            </button>
+
+            {/* Skip button — only while a moment is active */}
             {(status === "playing" || status === "loading") && (
               <button
                 onClick={() => {
@@ -114,6 +146,7 @@ export function NarrationBar() {
                 }}
                 className="flex shrink-0 items-center gap-1 rounded-full px-2 py-1 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
                 aria-label="Skip narration"
+                title="Skip this line"
               >
                 <SkipForward size={12} strokeWidth={1.5} />
               </button>

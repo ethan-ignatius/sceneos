@@ -14,10 +14,15 @@ export const usePromptStore = create<PromptState>()(
   persist(
     (set) => ({
       masterPrompt: "",
-      videoType: "trailer",
+      // Default to the chip labeled "Trailer" (videoType "short" = 3 beats).
+      // Shortest tier = demo-safe pick + matches the user's phrasing of
+      // "default to trailer" (referring to the chip label, not the
+      // internal videoType id which confusingly is named "trailer" but
+      // labeled "Short film").
+      videoType: "short",
       setMasterPrompt: (masterPrompt) => set({ masterPrompt }),
       setVideoType: (videoType) => set({ videoType }),
-      reset: () => set({ masterPrompt: "", videoType: "trailer" }),
+      reset: () => set({ masterPrompt: "", videoType: "short" }),
     }),
     { name: "sceneos:prompt" },
   ),

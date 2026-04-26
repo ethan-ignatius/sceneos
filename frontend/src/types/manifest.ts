@@ -181,6 +181,16 @@ export interface Scene {
   generateFallbackFrom?: string;
   /** Human-readable from backend (quota, safety, network, …). */
   generateFallbackReason?: string;
+  /**
+   * ISO-8601 timestamp captured server-side when the job was first
+   * dispatched. Persisted on the scene (not just in drawer-local state)
+   * so the GenerationPanel's progress bar restores at the correct
+   * elapsed position the moment the user navigates back into a
+   * mid-render beat — no ~3s "looks like the first time" lag while
+   * polling re-syncs. Written by the drawer's pollUntilDone on the
+   * first status response that includes startedAt.
+   */
+  startedAt?: string;
 }
 
 /**

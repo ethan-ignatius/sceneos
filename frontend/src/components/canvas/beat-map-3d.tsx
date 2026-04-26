@@ -370,24 +370,41 @@ export function BeatMap3D({ beats }: BeatMap3DProps) {
               behind the planets and the journey path. See cosmic-scene.tsx. */}
           <CosmicScene />
           <ConnectingPath positions={positions} />
-          {beats.map((beat, i) => (
-            <NodeMesh
-              key={beat.beatId}
-              beat={beat}
-              position={positions[i]}
-              onHoverChange={setHoveredBeatId}
-              introIndex={i}
-              // Guide the user to the first beat that hasn't been
-              // worked yet. As soon as ANY beat is active, all guides
-              // hide so the camera/drawer take focus. Once the user
-              // closes the drawer, the guide returns on the next
-              // unfinished beat — gentle nudge, not blocker.
-              isGuidedTarget={
-                activeBeatId === null &&
-                guidedTargetId === beat.beatId
-              }
-            />
-          ))}
+          {beats.map((beat, i) => {
+            // Sequential gate: a beat is locked until every beat before it
+            // has been "directed" — i.e., the user has had at least one
+            // exchange with the agent and the prompt has been locked in
+            // (status flips past pending/questioning). Without this, the
+            // user can jump to beat 4 with empty conversations on 1-3,
+            // and the agent has no prior-beat context to draw on (the
+            // backend's _earlier_beats_block sees no user turns / no
+            // beatFacts and falls back to generic questions). Strong-
+            // induction context propagation only works if the chain is
+            // walked in order at least once.
+            const isLocked = i > 0 && beats.slice(0, i).some((prev) => {
+              const s = prev.status;
+              return s === "pending" || s === "questioning";
+            });
+            return (
+              <NodeMesh
+                key={beat.beatId}
+                beat={beat}
+                position={positions[i]}
+                onHoverChange={setHoveredBeatId}
+                introIndex={i}
+                isLocked={isLocked}
+                // Guide the user to the first beat that hasn't been
+                // worked yet. As soon as ANY beat is active, all guides
+                // hide so the camera/drawer take focus. Once the user
+                // closes the drawer, the guide returns on the next
+                // unfinished beat — gentle nudge, not blocker.
+                isGuidedTarget={
+                  activeBeatId === null &&
+                  guidedTargetId === beat.beatId
+                }
+              />
+            );
+          })}
         </Suspense>
 
         <AmbientParticles velocityRef={velocityRef} />

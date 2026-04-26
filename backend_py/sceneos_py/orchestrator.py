@@ -98,6 +98,40 @@ def _movie_plan_motif(manifest: dict) -> str:
     return (plan.get("visualMotif") or "").strip()
 
 
+def _previous_beat_summary(manifest: dict, beat: dict) -> str:
+    """Short text summary of the immediately-preceding beat — what its
+    refinedPrompt or beatFacts described — so the next beat's clipPrompt
+    can text-induce visual continuity, not just frame-chain.
+
+    Returns empty string for the first beat or when prior beat has no
+    usable summary. Capped at ~280 chars to keep the prompt budget under
+    control.
+    """
+    beats = manifest.get("beats") or []
+    idx = next(
+        (i for i, b in enumerate(beats) if b.get("beatId") == beat.get("beatId")),
+        None,
+    )
+    if idx is None or idx == 0:
+        return ""
+    prior = beats[idx - 1]
+    scenes = prior.get("scenes") or []
+    scene = scenes[0] if scenes else {}
+    # Prefer refinedPrompt (richest); fall back to action+setting from beatFacts.
+    refined = (scene.get("refinedPrompt") or "").strip()
+    if refined:
+        compact = " ".join(refined.split())
+        return compact[:277].rstrip() + "…" if len(compact) > 280 else compact
+    facts = scene.get("beatFacts") or {}
+    pieces = [
+        facts.get("subject"),
+        facts.get("action"),
+        facts.get("setting"),
+    ]
+    summary = ", ".join(p for p in pieces if p)
+    return summary[:280]
+
+
 # ── Prompt composition ────────────────────────────────────────────────────
 
 
@@ -128,11 +162,21 @@ def compose_clip_prompt(beat: dict, beat_facts: dict, motion_preset: dict, aspec
     if len(mclip) > 400:
         mclip = mclip[:399].rstrip() + "…"
 
+    # Strong-induction: pull the previous beat's refinedPrompt and surface
+    # it as a "Continuing from" cue. Without this, each beat reads as an
+    # independent shot — the I2V seed handles VISUAL chaining but the
+    # PROMPT itself doesn't say "follow the previous moment". Adding the
+    # prior beat's intent here makes Higgsfield Soul / Veo treat this clip
+    # as the next breath, not a fresh scene.
+    prior_summary = _previous_beat_summary(manifest or {}, beat)
+
     image_prompt_parts: list[str] = []
     if mclip:
         image_prompt_parts.append(
             f"One continuous story — same film and world as this premise: {mclip}"
         )
+    if prior_summary:
+        image_prompt_parts.append(f"Continuing from the prior beat: {prior_summary}")
     image_prompt_parts.extend([
         f"Cinematic still of {subject} {action}.",
         f"Setting: {setting}.",
@@ -246,12 +290,17 @@ def _pick_keyframe_seed(
     char_pick = vertex_imagen.pick_keyframe_for_framing(refs=character_set, framing=framing, mood=mood)
     loc_pick = vertex_imagen.pick_keyframe_for_framing(refs=location_set, framing=framing, mood=mood)
 
+    # Seed-image priority: the protagonist's face is the load-bearing
+    # identity anchor, so character ref always wins UNLESS the framing
+    # is explicitly establishing/wide (then a location wide-shot is the
+    # right seed for Higgsfield I2V). The other ref still rides along as
+    # `referenceImageUrls` for Soul mode, so location stays an anchor too.
     seed = None
     if prefer_location and _ref_is_real(loc_pick):
         seed = loc_pick.get("imageUrl")
-    elif _ref_is_real(char_pick):
+    if not seed and _ref_is_real(char_pick):
         seed = char_pick.get("imageUrl")
-    elif _ref_is_real(loc_pick):
+    if not seed and _ref_is_real(loc_pick):
         seed = loc_pick.get("imageUrl")
 
     return char_pick, loc_pick, seed, character_set, location_set

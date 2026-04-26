@@ -266,12 +266,32 @@ async def generate_summary_script(
 
 
 async def synthesize_speech(text: str, voice_id: str | None = None) -> tuple[bytes, float] | None:
-    """ElevenLabs TTS. Returns (mp3_bytes, estimated_duration_seconds) or None."""
+    """ElevenLabs TTS. Returns (mp3_bytes, estimated_duration_seconds) or None.
+
+    Voice doctrine: SceneOS's narrator should sound like a calm, deep
+    co-director reading the user's story back. Default voice is "Brian"
+    (ElevenLabs stock, US narrator register) — measured cadence, deep
+    timbre, sounds like someone who has read scripts at midnight.
+
+    Voice settings tuned for a "serenading" register:
+      - stability 0.65 (was 0.45) — more measured, less variability;
+        calmer delivery, less performative excitement.
+      - similarity_boost 0.8 — locks the voice closer to the reference
+        so successive lines sound like the same character.
+      - style 0.15 — slight dramatic shape, but not theatrical.
+      - use_speaker_boost true — cleaner, fuller sound.
+
+    Override via the ELEVEN_LABS_VOICE_ID env var if a different voice
+    is loaded into the project's ElevenLabs roster.
+    """
     api_key = env("ELEVEN_LABS_API_KEY") or env("ELEVENLABS_API_KEY")
     if not api_key:
         logger.info("[narration] no ElevenLabs API key — skipping TTS")
         return None
-    voice = voice_id or env("ELEVEN_LABS_VOICE_ID") or "21m00Tcm4TlvDq8ikWAM"
+    # "Brian" — calm deep US narrator. Replaces the previous default
+    # (Rachel, warm female) because the user asked for a calm deep voice
+    # specifically.
+    voice = voice_id or env("ELEVEN_LABS_VOICE_ID") or "nPczCjzI2devNBz1zQrb"
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(
@@ -280,7 +300,12 @@ async def synthesize_speech(text: str, voice_id: str | None = None) -> tuple[byt
                 json={
                     "text": text,
                     "model_id": "eleven_flash_v2_5",
-                    "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
+                    "voice_settings": {
+                        "stability": 0.65,
+                        "similarity_boost": 0.8,
+                        "style": 0.15,
+                        "use_speaker_boost": True,
+                    },
                 },
             )
             r.raise_for_status()

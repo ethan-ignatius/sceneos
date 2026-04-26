@@ -206,19 +206,24 @@ const FEATURE7: DemoFixture = {
   continuityBible: LH_CONTINUITY,
   audioPublicId: LH_AUDIO,
   masterCutPublicId: LH_BEAT_1.publicId,
-  // The full lighthouse master cut from cached.py.
+  // l_text title cards REMOVED. With the original lighthouse fixture
+  // they read clean ("Cape Disappointment Light. November 1957."), but
+  // when the text overlay applied across an arbitrary fl_splice'd
+  // composition the type clipped mid-frame and rendered as garbled
+  // partial words — visible in the user's screenshot ("Fos…t'o7").
+  // For a 36-hour demo, dropping the captioning is safer than half-
+  // rendered titles. If we want titles back, they need to be added at
+  // the per-clip level (with the clip's own duration as the layer
+  // window) rather than across the whole composition where positioning
+  // is unstable. Same composition primitives — just no caption layer.
   masterCutUrl:
     `${CLOUD}/c_fill,w_1920,h_1080` +
-    `/l_text:Arial_52_bold:Cape%20Disappointment%20Light.%20November%201957.,co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140` +
     `/l_video:sceneos:lighthouse31:beat-2:beat-2-scene-1,fl_splice/c_fill,w_1920,h_1080/fl_layer_apply` +
-    `/l_video:sceneos:lighthouse31:beat-3:beat-3-scene-1,fl_splice/c_fill,w_1920,h_1080` +
-    `/l_text:Arial_52_bold:23%3A42%20hours.,co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140/fl_layer_apply` +
+    `/l_video:sceneos:lighthouse31:beat-3:beat-3-scene-1,fl_splice/c_fill,w_1920,h_1080/fl_layer_apply` +
     `/l_video:sceneos:lighthouse31:beat-4:beat-4-scene-1,fl_splice/c_fill,w_1920,h_1080/fl_layer_apply` +
-    `/l_video:sceneos:lighthouse31:beat-5:beat-5-scene-1,fl_splice/c_fill,w_1920,h_1080` +
-    `/l_text:Arial_52_bold:The%20Astoria.%20Lost%3A%20October%2031%20%201922.,co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140/fl_layer_apply` +
+    `/l_video:sceneos:lighthouse31:beat-5:beat-5-scene-1,fl_splice/c_fill,w_1920,h_1080/fl_layer_apply` +
     `/l_video:sceneos:lighthouse31:beat-6:beat-6-scene-1,fl_splice/c_fill,w_1920,h_1080/fl_layer_apply` +
-    `/l_video:sceneos:lighthouse31:beat-7:beat-7-scene-1,fl_splice/c_fill,w_1920,h_1080` +
-    `/l_text:Arial_52_bold:From%20Logbook%2041.,co_white,e_outline:2:000000/fl_layer_apply,g_south,y_140/fl_layer_apply` +
+    `/l_video:sceneos:lighthouse31:beat-7:beat-7-scene-1,fl_splice/c_fill,w_1920,h_1080/fl_layer_apply` +
     `/l_audio:sceneos:8dbb956c76a7:audio:music,e_volume:-28/fl_layer_apply` +
     `/${LH_BEAT_1.publicId}.mp4`,
   beats: [

@@ -1,10 +1,55 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Manifest, Beat, Scene, AgentTurn, VideoType } from "@/types/manifest";
-import type { DecomposedClip, EditDecisions } from "@/types/api";
+import type { DecomposedClip, EditDecisions, GenerationProvider, StatusResponse } from "@/types/api";
 import { buildInitialBeats } from "@/lib/beat-templates";
 import { uuid, nowISO } from "@/lib/utils";
 import { api } from "@/lib/api";
+
+/**
+ * Per-beat runtime state — survives drawer mount/unmount.
+ *
+ * Without this slice, navigating Planet 1 → Planet 2 → Planet 1 wipes
+ * the drawer's local React state (provider, stage, sample history) and
+ * the user sees a "fresh" connecting screen even though the backend job
+ * is still running. The status poller eventually reconciles, but the
+ * visible reset reads as a bug. Holding this on the store keeps each
+ * beat's panel exactly where the user left it.
+ *
+ * Not persisted (excluded via partialize) — these reset on page reload,
+ * but the manifest scene fields (jobId, clipPublicId) survive and the
+ * re-attach effect rebuilds runtime on next mount.
+ */
+export interface BeatRuntime {
+  provider: GenerationProvider | null;
+  providerStage: string | null;
+  /** ISO timestamp from the backend status response. Drives elapsed-time. */
+  startedAt: string | null;
+  latestStatus: StatusResponse | null;
+  statusSamples: Array<{
+    atMs: number;
+    status: string;
+    stage?: string | null;
+    pollAfterMs?: number | null;
+  }>;
+  dispatchMs: number | null;
+  fallbackFrom: GenerationProvider | null;
+  genError: string | null;
+  /** True while the markSufficient round-trip is in flight. */
+  lockingIn: boolean;
+}
+
+export const EMPTY_BEAT_RUNTIME: BeatRuntime = {
+  provider: null,
+  providerStage: null,
+  startedAt: null,
+  latestStatus: null,
+  statusSamples: [],
+  dispatchMs: null,
+  fallbackFrom: null,
+  genError: null,
+  lockingIn: false,
+};
 
 /** Conversation entries the editor session keeps separately from the per-beat questionnaire. */
 export interface EditorTurn {
@@ -89,6 +134,13 @@ interface BeatGraphState {
    * resumeProject(); rendered on the landing recent-3 rail and on /projects.
    */
   projects: ArchivedProject[];
+  /**
+   * Per-beat runtime state, keyed by beatId. Survives drawer mount/unmount
+   * so navigating between planets doesn't wipe the in-flight visualization.
+   * Cleared by setBeatRuntimeReset() when a beat's job is cancelled or the
+   * project resets. Not persisted (transient).
+   */
+  beatRuntime: Record<string, BeatRuntime>;
 
   // mutations
   initialize: (params: { masterPrompt: string; videoType: VideoType }) => void;
@@ -137,6 +189,15 @@ interface BeatGraphState {
   appendEditorTurn: (turn: EditorTurn) => void;
   resetEditor: () => void;
   markEditorCommitted: () => void;
+  /** Patch this beat's runtime — values not in patch are kept. */
+  setBeatRuntime: (beatId: string, patch: Partial<BeatRuntime>) => void;
+  /** Reset this beat's runtime to the empty shape. Used on cancel + remount. */
+  setBeatRuntimeReset: (beatId: string) => void;
+  /** Append a status sample, keeping the last 80. */
+  appendBeatRuntimeSample: (
+    beatId: string,
+    sample: BeatRuntime["statusSamples"][number],
+  ) => void;
   reset: () => void;
 }
 
@@ -159,6 +220,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
       stitchTrayOpen: false,
       minimapOpen: false,
       projects: [],
+      beatRuntime: {},
 
       initialize: ({ masterPrompt, videoType }) => {
         const beats = buildInitialBeats(videoType);
@@ -175,6 +237,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
           editor: EDITOR_INITIAL,
           stitchTrayOpen: false,
           minimapOpen: false,
+          beatRuntime: {},
         });
       },
 
@@ -375,6 +438,9 @@ export const useBeatGraphStore = create<BeatGraphState>()(
           stitchTrayOpen: false,
           minimapOpen: false,
           projects: archivedHead.slice(0, PROJECTS_CAP),
+          // Resumed projects start fresh runtime — their saved jobIds (if
+          // any) trigger the drawer's re-attach effect on first mount.
+          beatRuntime: {},
         });
       },
 
@@ -382,6 +448,31 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         api.deleteProject(projectId).catch(() => {});
         set((s) => ({ projects: s.projects.filter((p) => p.id !== projectId) }));
       },
+
+      setBeatRuntime: (beatId, patch) =>
+        set((s) => ({
+          beatRuntime: {
+            ...s.beatRuntime,
+            [beatId]: { ...EMPTY_BEAT_RUNTIME, ...s.beatRuntime[beatId], ...patch },
+          },
+        })),
+
+      setBeatRuntimeReset: (beatId) =>
+        set((s) => ({
+          beatRuntime: { ...s.beatRuntime, [beatId]: EMPTY_BEAT_RUNTIME },
+        })),
+
+      appendBeatRuntimeSample: (beatId, sample) =>
+        set((s) => {
+          const current = s.beatRuntime[beatId] ?? EMPTY_BEAT_RUNTIME;
+          const next = [...current.statusSamples, sample];
+          return {
+            beatRuntime: {
+              ...s.beatRuntime,
+              [beatId]: { ...current, statusSamples: next.slice(-80) },
+            },
+          };
+        }),
 
       reset: () => {
         const state = get();
@@ -416,6 +507,7 @@ export const useBeatGraphStore = create<BeatGraphState>()(
           stitchTrayOpen: false,
           minimapOpen: false,
           projects,
+          beatRuntime: {},
         });
       },
     }),
@@ -446,6 +538,8 @@ export const useBeatGraphStore = create<BeatGraphState>()(
               ? { ...EDITOR_INITIAL, ...p.editor }
               : EDITOR_INITIAL,
           projects: Array.isArray(p.projects) ? p.projects.slice(0, PROJECTS_CAP) : [],
+          // beatRuntime is transient; never rehydrate.
+          beatRuntime: {},
         };
       },
     },

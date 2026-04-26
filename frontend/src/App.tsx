@@ -9,6 +9,7 @@ import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
 import { NarrationBar } from "@/components/narration/narration-bar";
+import { ManifestAutoSync } from "@/components/manifest-autosync";
 import { useLenis } from "@/lib/use-lenis";
 
 export default function App() {
@@ -32,6 +33,7 @@ export default function App() {
       <CinematicCursor />
       <CommandMenuMount />
       <NarrationBar />
+      <ManifestAutoSync />
     </AppErrorBoundary>
   );
 }

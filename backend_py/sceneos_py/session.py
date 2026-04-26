@@ -72,7 +72,16 @@ async def _generate_keyframes_safe(
          not broken.
     """
     from .provider import active_provider_name
-    if active_provider_name() == "higgsfield":
+    _provider_at_call = active_provider_name()
+    logger.info(
+        "[session] _generate_keyframes_safe entry provider=%s project=%s char=%s loc=%s",
+        _provider_at_call,
+        project_id,
+        bool(character_description),
+        bool(location_description),
+    )
+    if _provider_at_call == "higgsfield":
+        logger.info("[session] _generate_keyframes_safe higgsfield short-circuit — empty keyframes")
         return {"character": [], "location": []}
     from . import vertex_imagen
     try:

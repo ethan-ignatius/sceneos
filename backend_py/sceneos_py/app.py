@@ -152,7 +152,7 @@ async def agent_stream(body: dict):
 
 
 @app.post("/api/session/start")
-async def session_start(body: dict | None = None):
+async def session_start(request: Request, body: dict | None = None):
     """
     Start a new SceneOS session in either 'demo' or 'normal' mode.
 
@@ -195,12 +195,18 @@ async def session_start(body: dict | None = None):
             prompt_id=body.get("promptId"),
             aspect_ratio=aspect_ratio,
         )
-        # Persist the new project to MongoDB (fire-and-forget).
+        # Persist the new project to MongoDB (fire-and-forget). Only
+        # when the caller is identified — anonymous sessions don't
+        # leave a Mongo trail. The X-User-Id header is the same
+        # convention the /api/projects routes use.
         manifest = result.get("manifest")
         pid = result.get("projectId")
-        if pid and manifest:
+        owner = (request.headers.get("X-User-Id") or "").strip() or None
+        if pid and manifest and owner:
             from . import db
-            db.fire_and_forget(db.upsert_project(pid, manifest=manifest, status="active"))
+            db.fire_and_forget(
+                db.upsert_project(pid, manifest=manifest, status="active", owner_id=owner)
+            )
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1445,13 +1451,31 @@ async def cutos_import(body: dict):
 
 
 # ── /api/projects — MongoDB-backed project persistence ─────────────────────
+#
+# Owner scoping: every request reads X-User-Id (Auth0 user.sub) and
+# scopes the query to that owner. Without the header all routes act as
+# if the user has no projects — anonymous browsing is intentionally
+# inert, both for "intellectual property" protection and because the
+# product flow always has the user signed in by the time they reach
+# /projects. Pre-Auth0 dev records (no owner_id field) are likewise
+# invisible to every caller.
+
+
+def _owner_id(request: Request) -> str | None:
+    """Pull the Auth0 user.sub from the X-User-Id header. Returns None
+    when the header is absent or empty so the caller can decide
+    whether to 401 or just return empty results."""
+    raw = request.headers.get("X-User-Id") or ""
+    return raw.strip() or None
 
 
 @app.get("/api/projects")
-async def projects_list():
-    """List all persisted projects, newest first."""
+async def projects_list(request: Request):
+    """List the caller's persisted projects, newest first. Returns an
+    empty list when X-User-Id is absent — never leaks across users."""
     from . import db
-    rows = await db.list_projects(limit=50)
+    owner = _owner_id(request)
+    rows = await db.list_projects(limit=50, owner_id=owner)
     return [
         {
             "id": row["_id"],
@@ -1470,10 +1494,11 @@ async def projects_list():
 
 
 @app.get("/api/projects/{project_id}")
-async def projects_get(project_id: str):
-    """Get a single project by ID."""
+async def projects_get(project_id: str, request: Request):
+    """Get a single project by ID, scoped to the caller's owner_id."""
     from . import db
-    row = await db.get_project(project_id)
+    owner = _owner_id(request)
+    row = await db.get_project(project_id, owner_id=owner)
     if not row:
         raise HTTPException(status_code=404, detail="Project not found")
     return {
@@ -1491,27 +1516,35 @@ async def projects_get(project_id: str):
 
 
 @app.post("/api/projects")
-async def projects_save(body: dict):
-    """Save or update a project. Body: { projectId, manifest, status?, editor? }"""
+async def projects_save(body: dict, request: Request):
+    """Save or update a project. Body: { projectId, manifest, status?, editor? }
+    Stamps the owner_id from X-User-Id so subsequent list/get/delete
+    can scope by the caller. Without an X-User-Id the project is
+    rejected — anonymous saves would orphan the record."""
     from . import db
     manifest = body.get("manifest")
     project_id = body.get("projectId") or (manifest or {}).get("projectId")
     if not project_id or not manifest:
         raise HTTPException(status_code=400, detail="projectId and manifest are required")
+    owner = _owner_id(request)
+    if not owner:
+        raise HTTPException(status_code=401, detail="X-User-Id header is required")
     await db.upsert_project(
         project_id,
         manifest=manifest,
         status=body.get("status", "archived"),
         editor=body.get("editor"),
+        owner_id=owner,
     )
     return {"ok": True, "projectId": project_id}
 
 
 @app.delete("/api/projects/{project_id}")
-async def projects_delete(project_id: str):
-    """Delete a project permanently."""
+async def projects_delete(project_id: str, request: Request):
+    """Delete a project permanently, scoped to the caller's owner_id."""
     from . import db
-    deleted = await db.delete_project(project_id)
+    owner = _owner_id(request)
+    deleted = await db.delete_project(project_id, owner_id=owner)
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found or already deleted")
     return {"ok": True, "projectId": project_id}
