@@ -155,14 +155,28 @@ def _stub_question_turn(beat: dict, master: str, conversation: list[dict], idx: 
 def _stub_beat_facts(beat: dict, conversation: list[dict]) -> dict:
     user_answers = " ".join(t.get("content", "") for t in conversation if t.get("role") == "user")
     archetype = beat.get("archetype", {})
+    mood = archetype.get("mood", "cinematic")
+    # Always populate character + location descriptions even when the user
+    # gave nothing — these are what Higgsfield Soul T2I anchors on, and
+    # without them the orchestrator's pre-flight skips Higgsfield entirely
+    # and falls all the way back to cached pixels. Anchor descriptions
+    # always have SOMETHING concrete so Soul T2I has fuel.
+    char_desc = _truncate(user_answers, 200) or (
+        "A grounded, expressive protagonist; mid-30s; weathered features, "
+        "neutral cinematic wardrobe, calm presence. Single hero, framed cleanly."
+    )
+    loc_desc = _truncate(user_answers, 200) or (
+        f"A cinematic environment matching the {mood} register — atmospheric "
+        "lighting, deliberate composition, no people in the wide. Practical lights motivated."
+    )
     return {
         "subject": _truncate(user_answers, 80) or "the protagonist",
         "action": "the action drawn from the user's answers",
         "setting": "the location described by the user",
         "framing": "cinematic, motivated camera",
-        "mood": archetype.get("mood", "cinematic"),
-        "characterDescription": _truncate(user_answers, 200),
-        "locationDescription": _truncate(user_answers, 200),
+        "mood": mood,
+        "characterDescription": char_desc,
+        "locationDescription": loc_desc,
     }
 
 

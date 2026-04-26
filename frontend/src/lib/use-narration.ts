@@ -46,8 +46,49 @@ function _stopAudio() {
     _audio.currentTime = 0;
     _audio.onended = null;
     _audio.onerror = null;
+    _audio.oncanplaythrough = null;
+    // Detach the source so the browser stops decoding any buffered MP3.
+    // Without this, a fast re-play of the same `Audio` instance can
+    // overlap the still-decoding tail of the previous one — that's the
+    // glitchy stutter the user heard.
+    _audio.src = "";
+    _audio.load();
     _audio = null;
   }
+}
+
+/**
+ * Single shared playback helper used by every narration entry point.
+ *
+ * Glitch defense: explicit `preload = "auto"` + waiting for
+ * `canplaythrough` before calling `play()` so we never start playback
+ * while the MP3 is still decoding (the user's "glitchy" report).
+ *
+ * Volume defense: the HTMLAudioElement defaults to 1.0 already, but we
+ * set it explicitly so the system mixer never picks an attenuated
+ * default. ElevenLabs' MP3 output is pre-mastered at a moderate level —
+ * the perceived "quiet" ramp comes from the browser pacing the buffer.
+ */
+function _playAudio(
+  src: string,
+  setStatus: (s: NarrationStatus) => void,
+): void {
+  _stopAudio();
+  const audio = new Audio();
+  _audio = audio;
+  audio.volume = 1.0;
+  audio.preload = "auto";
+  // Don't fight other media — narration is the priority voice in the
+  // canvas, so we don't auto-duck (frontend has its own video volume).
+  audio.onended = () => setStatus("done");
+  audio.onerror = () => setStatus("error");
+  audio.oncanplaythrough = () => {
+    if (_audio !== audio) return; // stopped while loading
+    setStatus("playing");
+    audio.play().catch(() => setStatus("error"));
+  };
+  audio.src = src;
+  audio.load();
 }
 
 export const useNarrationStore = create<NarrationState>((set, get) => ({
@@ -76,12 +117,7 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
         return;
       }
 
-      const audio = new Audio(cached.audioSrc);
-      _audio = audio;
-      set({ status: "playing" });
-      audio.onended = () => set({ status: "done" });
-      audio.onerror = () => set({ status: "error" });
-      audio.play().catch(() => set({ status: "error" }));
+      _playAudio(cached.audioSrc, (s) => set({ status: s }));
       return;
     }
 
@@ -106,12 +142,7 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
         return;
       }
 
-      const audio = new Audio(audioSrc);
-      _audio = audio;
-      set({ status: "playing" });
-      audio.onended = () => set({ status: "done" });
-      audio.onerror = () => set({ status: "error" });
-      audio.play().catch(() => set({ status: "error" }));
+      _playAudio(audioSrc, (s) => set({ status: s }));
     } catch (err) {
       console.warn(`[narration] ${moment} failed:`, err);
       set({ status: "error" });
@@ -141,12 +172,7 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
         set({ status: "done" });
         return;
       }
-      const audio = new Audio(cached.audioSrc);
-      _audio = audio;
-      set({ status: "playing" });
-      audio.onended = () => set({ status: "done" });
-      audio.onerror = () => set({ status: "error" });
-      audio.play().catch(() => set({ status: "error" }));
+      _playAudio(cached.audioSrc, (s) => set({ status: s }));
       return;
     }
 
@@ -164,12 +190,7 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
         set({ status: "done" });
         return;
       }
-      const audio = new Audio(audioSrc);
-      _audio = audio;
-      set({ status: "playing" });
-      audio.onended = () => set({ status: "done" });
-      audio.onerror = () => set({ status: "error" });
-      audio.play().catch(() => set({ status: "error" }));
+      _playAudio(audioSrc, (s) => set({ status: s }));
     } catch (err) {
       console.warn("[narration] summary failed:", err);
       set({ status: "error" });
