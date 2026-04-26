@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { api, formatDirectorReachabilityError } from "@/lib/api";
 import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { useSpeechSynthesis } from "@/lib/use-speech-synthesis";
+import { useNarrationStore } from "@/lib/use-narration";
 import { isAudioMuted } from "@/lib/audio-cues";
 import { nowISO } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -140,6 +141,17 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     if (beat.status === "pending" || beat.status === "questioning") return;
     if (speech.listening) speech.stop();
   }, [beat.status, speech]);
+
+  // Mute the mic the instant the agent starts thinking (inFlight=true).
+  // Otherwise the mic keeps capturing during the "Thinking…" period and
+  // anything the user mumbles between turns gets concatenated onto the
+  // transcript that's already been submitted. The re-arm effect above
+  // brings the mic back automatically when inFlight flips false AND the
+  // next agent turn lands — hands-free flow continues.
+  useEffect(() => {
+    if (!inFlight) return;
+    if (speech.listening) speech.stop();
+  }, [inFlight, speech]);
   useEffect(() => {
     if (speech.listening && speech.transcript) {
       setDraft(speech.transcript);
@@ -149,7 +161,12 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // Voice OUTPUT — speak the agent's reply back when the last user submission
   // was via voice. This gives a true voice-chat feel; typed submissions stay
   // silent (the visual char reveal is the right affordance for type-mode).
-  // Respects the global mute toggle.
+  // Respects the global mute toggle. ALSO suppressed while the global
+  // ElevenLabs narrator is mid-line — otherwise the browser's default voice
+  // (Web Speech API) competes with the narrator and the user hears two
+  // overlapping voices saying different things. ElevenLabs wins by deferral:
+  // the agent's question can wait the few seconds until the narrator
+  // finishes its moment-line.
   const tts = useSpeechSynthesis({ muted: isAudioMuted() });
   const lastSubmitWasVoiceRef = useRef(false);
   const lastSpokenIndexRef = useRef(-1);
@@ -161,6 +178,11 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
     const last = turns[lastIdx];
     if (last.role !== "agent") return;
     if (lastSpokenIndexRef.current >= lastIdx) return;
+    // Defer if the ElevenLabs narrator currently has the floor — its
+    // calm deep voice is the canonical "co-director" register, and we
+    // don't want a competing browser TTS layered on top.
+    const narrationStatus = useNarrationStore.getState().status;
+    if (narrationStatus === "loading" || narrationStatus === "playing") return;
     lastSpokenIndexRef.current = lastIdx;
     tts.speak(last.content);
     // After the agent speaks, reset — user must submit via voice again to
@@ -206,17 +228,21 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   // messages still use api.agentStream below.
   useEffect(() => {
     cancelledRef.current = false;
-    // Skip the seed fire if:
+    // Skip the seed fire only when there's nothing to seed:
     //   - manifest isn't ready yet, OR
-    //   - we already have conversation turns (agent asked + user replied), OR
-    //   - the beat's status moved past `pending`. The status flip means we
-    //     ALREADY started a seed fire on a prior drawer open. Re-entering
-    //     a beat mid-conversation was re-triggering "Composing the shot."
-    //     because an aborted request leaves conversation empty but status
-    //     was bumped — guard on status to short-circuit cleanly.
+    //   - we already have conversation turns (agent asked + user replied)
+    //
+    // We deliberately do NOT short-circuit on `beat.status !== "pending"`.
+    // The seed-effect optimistically flips status to "questioning" BEFORE
+    // the API call (line below); if the request gets aborted (drawer closed
+    // mid-fire, React StrictMode remount, network blip), status stays at
+    // "questioning" with empty conversation — and a status-based guard
+    // would deadlock that beat into showing only "Composing the shot."
+    // forever. Conversation-length is the right invariant: re-fire when
+    // we have nothing to show, no matter how status got there. Status
+    // self-heals via the abort/error revert in the catch block.
     if (!manifest) return;
     if (scene.conversation.length > 0) return;
-    if (beat.status !== "pending") return;
 
     let active = true;
     setInFlight(true);

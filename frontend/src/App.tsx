@@ -1,4 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import { useEffect } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { LandingRoute } from "@/routes/landing-route";
 import { CrumpleBridgeRoute } from "@/routes/crumple-bridge-route";
 import { CanvasRoute } from "@/routes/canvas-route";
@@ -9,12 +11,23 @@ import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { CinematicCursor } from "@/components/ui/cinematic-cursor";
 import { CommandMenuMount } from "@/components/ui/command-menu-mount";
 import { NarrationBar } from "@/components/narration/narration-bar";
+import { ManifestAutoSync } from "@/components/manifest-autosync";
 import { useLenis } from "@/lib/use-lenis";
+import { setApiUserId } from "@/lib/api";
 
 export default function App() {
   // Lenis at App root → smooth-scroll on every route except canvas (which is
   // overflow-hidden so Lenis no-ops there). Skipped under reduced-motion.
   useLenis();
+
+  // Bridge Auth0 state into the API client. Every backend request
+  // thereafter carries X-User-Id so MongoDB project queries scope to
+  // the caller. Cleared on logout so an anonymous browser never sees
+  // anyone else's archive.
+  const { user, isAuthenticated } = useAuth0();
+  useEffect(() => {
+    setApiUserId(isAuthenticated && user?.sub ? user.sub : null);
+  }, [isAuthenticated, user?.sub]);
 
   return (
     <AppErrorBoundary>
@@ -32,6 +45,7 @@ export default function App() {
       <CinematicCursor />
       <CommandMenuMount />
       <NarrationBar />
+      <ManifestAutoSync />
     </AppErrorBoundary>
   );
 }

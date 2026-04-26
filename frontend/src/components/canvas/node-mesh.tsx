@@ -4,6 +4,7 @@ import { Html, Sparkles, useTexture } from "@react-three/drei";
 import { motion } from "motion/react";
 import { ChevronDown } from "lucide-react";
 import * as THREE from "three";
+import { toast } from "sonner";
 import type { Beat } from "@/types/manifest";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { usePrefersReducedMotion } from "@/lib/use-prefers-reduced-motion";
@@ -23,6 +24,11 @@ interface NodeMeshProps {
    *  overlay (pulsing halo + floating callout) drawing the user's eye
    *  to the right place. Set by BeatMap3D for the first unfinished beat. */
   isGuidedTarget?: boolean;
+  /** Sequential gate from BeatMap3D — true when at least one earlier
+   *  beat hasn't been directed yet. Locked planets refuse clicks (with
+   *  a toast nudge) and render in a desaturated register so the user
+   *  reads them as "not yet" rather than "broken". */
+  isLocked?: boolean;
 }
 
 /**
@@ -46,7 +52,7 @@ interface NodeMeshProps {
  * Texture detail dominates silhouette detail at our render distances —
  * see RESEARCH_PLANETARY.md and CANVAS_PLANETARY_OVERHAUL.md §6.
  */
-export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuidedTarget = false }: NodeMeshProps) {
+export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuidedTarget = false, isLocked = false }: NodeMeshProps) {
   const groupRef = useRef<THREE.Group>(null);
   const formRef = useRef<THREE.Group>(null);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -76,7 +82,19 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
   const isPending = status === "pending";
   const isQuestioning = status === "questioning";
   const isReady = status === "ready-to-generate";
-  const isGenerating = status === "generating";
+  // Speculative pre-bake (fired by landing-route immediately after
+  // decompose) parks a jobId on the scene without flipping status. The
+  // user said "ensure all shots are in 'composing the shot' state asap"
+  // — so we treat any beat with an in-flight speculative job (jobId
+  // set, clip not yet) as visually "generating," even when the agent
+  // conversation hasn't started. Once the speculative succeeds and
+  // promotes to clipPublicId/clipUrl OR the user lands on the beat
+  // and the real flow takes over, the regular status drives visuals
+  // again.
+  const speculativeScene = beat.scenes[0];
+  const isSpeculating =
+    !!speculativeScene?.speculativeJobId && !speculativeScene?.clipPublicId;
+  const isGenerating = status === "generating" || (isPending && isSpeculating);
   const isPreviewState = status === "preview";
   const isApproved = status === "approved";
   // "Needs work" = pending or questioning. The user is still figuring this
@@ -308,7 +326,13 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       // Combined with the JSX-level emissiveIntensity={0} init, the planet
       // starts dark and either stays dark (pending) or ramps up smoothly
       // over ~10 frames to the active/approved level — no first-frame flash.
-      const targetEmissive = baseEmissive + readyPulse + genPulse + approvedPulse;
+      // Locked planets render dim — multiply emissive by 0.3 so they
+      // read as "not yet" rather than "inert" (still some warmth from
+      // the texture under the key/fill lights, but no glow). Combined
+      // with the not-allowed cursor + the toast on click attempt, the
+      // user reads the gate clearly without a hard "DISABLED" stamp.
+      const lockedFactor = isLocked ? 0.3 : 1.0;
+      const targetEmissive = (baseEmissive + readyPulse + genPulse + approvedPulse) * lockedFactor;
       materialRef.current.emissiveIntensity = THREE.MathUtils.lerp(
         materialRef.current.emissiveIntensity,
         targetEmissive,
@@ -347,6 +371,10 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
       else if (isQuestioning) baseOpacity = 0.06; // faint, "in conversation"
       else baseOpacity = hover ? 0.08 : 0.04; // pending — faint limb glow so silhouette reads warm, not inert
       baseOpacity *= emissiveFactor;
+      // Same locked-dim treatment as the emissive ramp above. Halo
+      // collapses to a hint so locked planets sit visually beneath the
+      // unlocked one — directs the eye to the active work.
+      if (isLocked) baseOpacity *= 0.3;
       // Approved planets get a slow halo breath synced with the
       // emissive heartbeat, phase-offset by introIndex so 5 approved
       // beats don't pulse in lockstep. Halved again — the halo's
@@ -399,7 +427,9 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
             e.stopPropagation();
             setHover(true);
             onHoverChange?.(beat.beatId);
-            document.body.style.cursor = "pointer";
+            // Locked planets get the not-allowed cursor as a tactile
+            // signal that they're not yet interactive.
+            document.body.style.cursor = isLocked ? "not-allowed" : "pointer";
           }}
           onPointerOut={() => {
             setHover(false);
@@ -408,6 +438,16 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
           }}
           onClick={(e) => {
             e.stopPropagation();
+            if (isLocked) {
+              // Don't open the drawer; nudge the user back to the
+              // unfinished prior beat so context flows in order.
+              toast("Direct the previous beat first.", {
+                description:
+                  "Each beat builds on the last — your director needs the prior context to keep characters and world consistent.",
+                duration: 3000,
+              });
+              return;
+            }
             setActiveBeat(isActive ? null : beat.beatId);
           }}
         >

@@ -118,11 +118,37 @@ export function StitchTray({ onClose }: StitchTrayProps) {
     setRenderError(null);
     playRenderWhoosh();
     try {
+      // ── Bake the narrator into the master cut ──────────────────────
+      // Per the video script: ElevenLabs reads the cinematic over the
+      // final video. We call /api/narrate/summary first to generate the
+      // narration audio (Gemini writes the script, ElevenLabs voices
+      // it, Cloudinary uploads it as a public_id). Then we pass that
+      // publicId to /api/stitch/url as audioPublicId — Cloudinary
+      // composes l_audio:<narration> on top of the splice, so the
+      // narrator's voice is permanently part of the rendered URL.
+      // No client-side audio mixing needed; the cinematic IS the
+      // narrated cinematic.
+      let narrationPublicId: string | undefined;
+      try {
+        const narrationRes = await api.narrateSummary({ manifest });
+        if (narrationRes?.publicId) {
+          narrationPublicId = narrationRes.publicId;
+        }
+      } catch (err) {
+        // Narration is best-effort — if it fails (ElevenLabs key
+        // missing, quota, etc.) we fall through to a silent or
+        // music-only stitch. Render must not block on narration.
+        console.warn("[stitch] narration failed; rendering without narrator", err);
+      }
+
       // The stitch URL is the OPENING cut. The editor route will re-bake it
       // through /api/editor/apply once the user lands and refines the edit.
       // We seed the same fields here so the final-delivery route still works
       // as a fallback if the user skips the editor.
-      const res = await api.stitchUrl({ manifest });
+      const res = await api.stitchUrl({
+        manifest,
+        ...(narrationPublicId ? { audioPublicId: narrationPublicId } : {}),
+      });
       if (!mountedRef.current) return;
       setFinalCinematic({
         finalUrl: res.finalUrl,
@@ -256,7 +282,14 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             animate={{ opacity: segments ? 1 : 0.6 }}
             transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
             className={cn(
-              "rounded-lg border border-fg-tertiary/15 bg-bg-base/60 p-4",
+              // overflow-hidden on the panel + overflow-wrap:anywhere on
+              // the inner URL block. Without these, the master cut URL
+              // (one ~600-char "word" when fl_splice'd across 5 beats)
+              // bleeds past the panel's rounded right edge — TextSplitter's
+              // per-word inline-block groups have whiteSpace:nowrap, so
+              // break-all alone doesn't break inside them. overflow-wrap:
+              // anywhere overrides that and forces the chars to wrap.
+              "overflow-hidden rounded-lg border border-fg-tertiary/15 bg-bg-base/60 p-4",
             )}
           >
             {!segments ? (
@@ -264,7 +297,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
                 Approve a take and watch the URL compose itself.
               </div>
             ) : (
-              <div className="break-all font-mono text-caption leading-[1.65] text-fg-secondary">
+              <div className="font-mono text-caption leading-[1.65] text-fg-secondary [overflow-wrap:anywhere] [word-break:break-all]">
                 <span className="text-fg-tertiary/70">{segments.head}</span>
                 <span>{renderHighlightedUrl(segments.middle)}</span>
                 {segments.tail ? (

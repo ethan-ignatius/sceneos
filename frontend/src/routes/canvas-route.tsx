@@ -12,7 +12,7 @@ import { Minimap } from "@/components/canvas/minimap";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-events";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { sleep } from "@/lib/utils";
 
 const BeatMap3D = lazy(() =>
@@ -127,9 +127,20 @@ export function CanvasRoute() {
             return;
           }
           delay = status.pollAfterMs ?? 5000;
-        } catch {
-          // Transient network blip — back off and try again. The 8min
-          // ceiling above bounds the loop.
+        } catch (err) {
+          // 404 = backend lost the speculative job (server restart,
+          // eviction). Drop the speculativeJobId silently — the user
+          // can re-dispatch from the drawer when they get there.
+          // Anything else is a transient network blip; back off + retry.
+          if (err instanceof ApiError && err.status === 404) {
+            const scene = liveScene(beatId, sceneId);
+            if (scene && scene.speculativeJobId === jobId) {
+              useBeatGraphStore
+                .getState()
+                .updateScene(beatId, sceneId, { speculativeJobId: undefined });
+            }
+            return;
+          }
           delay = Math.min(delay * 1.5, 15000);
         }
       }

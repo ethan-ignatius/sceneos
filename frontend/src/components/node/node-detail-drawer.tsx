@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { X, Clapperboard, ChevronRight, Volume2 } from "lucide-react";
-import { useBeatGraphStore, selectActiveBeat } from "@/stores/beat-graph-store";
+import { useBeatGraphStore, selectActiveBeat, EMPTY_BEAT_RUNTIME } from "@/stores/beat-graph-store";
 import { AgentBubbleStream } from "@/components/agent/agent-bubble-stream";
 import { GenerationPanel } from "./generation-panel";
 import { ClipPreview } from "./clip-preview";
@@ -45,6 +45,10 @@ export function NodeDetailDrawer() {
   const updateBeat = useBeatGraphStore((s) => s.updateBeat);
   const updateScene = useBeatGraphStore((s) => s.updateScene);
   const appendAgentTurn = useBeatGraphStore((s) => s.appendAgentTurn);
+  // Per-beat runtime store actions — let runtime survive drawer mount
+  // cycles. Without this, navigating Planet 1 → 2 → 1 wipes provider /
+  // stage / sample history even though the backend job is still running.
+  const setBeatRuntimeAction = useBeatGraphStore((s) => s.setBeatRuntime);
 
   const narration = useNarration();
 
@@ -68,6 +72,11 @@ export function NodeDetailDrawer() {
     Array<{ atMs: number; status: string; stage?: string | null; pollAfterMs?: number | null }>
   >([]);
   const [dispatchMs, setDispatchMs] = useState<number | null>(null);
+  // Locks the "I have enough — generate" button while the markSufficient
+  // round-trip is in flight. Without it, double-clicks spam the canned
+  // "OK — that's enough" instruction into the agent stream multiple
+  // times before the first call resolves (Image #47 from the user).
+  const [lockingIn, setLockingIn] = useState(false);
   // Set to true on unmount; the polling loop checks each iteration so an
   // orphaned poll can't write to a stale beat after the drawer closes.
   const cancelRef = useRef(false);
@@ -78,6 +87,67 @@ export function NodeDetailDrawer() {
       cancelRef.current = true;
     };
   }, []);
+
+  // Hydrate runtime state from the store when the active beat changes.
+  // Without this, navigating Planet 1 → Planet 2 → Planet 1 leaves the
+  // drawer showing Planet 2's stale provider/stage/samples (or empty
+  // initial values) until the next status poll arrives. The store keeps
+  // a per-beat runtime snapshot that we restore on each beat switch.
+  // Tracked via a ref so the mirror effect below doesn't write back
+  // BEFORE we've hydrated (would clobber the persisted runtime with
+  // empty initial state).
+  const hydratedBeatIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = beat?.beatId;
+    if (!id) {
+      hydratedBeatIdRef.current = null;
+      return;
+    }
+    if (hydratedBeatIdRef.current === id) return;
+    const r = useBeatGraphStore.getState().beatRuntime[id] ?? EMPTY_BEAT_RUNTIME;
+    setProvider(r.provider);
+    setProviderStage(r.providerStage);
+    setStartedAt(r.startedAt);
+    setLatestStatus(r.latestStatus);
+    setStatusSamples(r.statusSamples);
+    setDispatchMs(r.dispatchMs);
+    setFallbackFrom(r.fallbackFrom);
+    setGenError(r.genError);
+    setLockingIn(r.lockingIn);
+    hydratedBeatIdRef.current = id;
+  }, [beat?.beatId]);
+
+  // Mirror local runtime back to the store on every change. Only fires
+  // AFTER hydration for the current beat so we never overwrite an active
+  // beat's persisted runtime with empty initial state during the brief
+  // window between component render and the hydrate effect running.
+  useEffect(() => {
+    const id = beat?.beatId;
+    if (!id || hydratedBeatIdRef.current !== id) return;
+    setBeatRuntimeAction(id, {
+      provider,
+      providerStage,
+      startedAt,
+      latestStatus,
+      statusSamples,
+      dispatchMs,
+      fallbackFrom,
+      genError,
+      lockingIn,
+    });
+  }, [
+    beat?.beatId,
+    provider,
+    providerStage,
+    startedAt,
+    latestStatus,
+    statusSamples,
+    dispatchMs,
+    fallbackFrom,
+    genError,
+    lockingIn,
+    setBeatRuntimeAction,
+  ]);
 
   // Extracted from handleGenerate so it can be re-attached on mount when
   // the user reloads /canvas mid-generation: persisted manifest will have
@@ -99,7 +169,29 @@ export function NodeDetailDrawer() {
         }
         await sleep(delay);
         if (cancelRef.current) return;
-        const status = await api.status(jobId);
+        let status: StatusResponse;
+        try {
+          status = await api.status(jobId);
+        } catch (err) {
+          if (cancelRef.current) return;
+          // 404 on the status endpoint = backend lost the orchestrator
+          // handle (server restart, eviction, manifest reset). Same
+          // recovery as "Unknown vertex jobId" below — clear the stale
+          // jobId so the drawer can re-dispatch on the next Roll camera
+          // click. Surfacing the raw URL ("orch%3A%3A...failed: 404")
+          // to the user reads as a server bug; treat it as a cold-start.
+          if (err instanceof ApiError && err.status === 404) {
+            updateScene(beatId, sceneId, {
+              jobId: undefined,
+              speculativeJobId: undefined,
+            });
+            throw new ApiError(
+              0,
+              "The previous render expired. Click Roll camera to start fresh.",
+            );
+          }
+          throw err;
+        }
         if (cancelRef.current) return;
         setLatestStatus(status);
         setStatusSamples((prev) => {
@@ -116,9 +208,20 @@ export function NodeDetailDrawer() {
         });
         setProviderStage(status.stage ?? null);
         // First status response with a startedAt locks our elapsed-time
-        // source. Backend value wins over drawer-mount time.
+        // source. Backend value wins over drawer-mount time. Also
+        // persist on the scene so a drawer remount (user navigates
+        // away mid-render and back) hydrates the progress bar at the
+        // correct elapsed position immediately, instead of showing
+        // "0s" for the 1.5-3s window before the next poll lands.
         if (status.startedAt) {
           setStartedAt((prev) => prev ?? status.startedAt!);
+          const m = useBeatGraphStore.getState().manifest;
+          const live = m?.beats
+            .find((b) => b.beatId === beatId)
+            ?.scenes.find((s) => s.sceneId === sceneId);
+          if (live && !live.startedAt) {
+            updateScene(beatId, sceneId, { startedAt: status.startedAt });
+          }
         }
         if (status.status === "succeeded") {
           // Race-aware write: canvas-route's speculative poller may have
@@ -590,7 +693,12 @@ export function NodeDetailDrawer() {
               suggestedDurationSeconds={beat.archetype.suggestedDuration}
               provider={provider}
               stage={providerStage}
-              startedAt={startedAt}
+              // Prefer the persisted scene.startedAt — that's set on
+              // first poll AND survives drawer-unmount/remount, so the
+              // progress bar lights up at the correct elapsed value
+              // instantly. Local startedAt is the secondary source for
+              // first-mount-before-first-poll cases.
+              startedAt={beat.scenes[0]?.startedAt ?? startedAt}
               fallbackFrom={fallbackFrom}
               debug={{
                 dispatchMs,
@@ -689,23 +797,20 @@ export function NodeDetailDrawer() {
               }
 
               const lockIn = async () => {
-                if (!manifest) return;
+                if (!manifest || lockingIn) return;
                 const scene = beat.scenes[0];
-                // Force the agent to emit markSufficient now. We must NOT
-                // skip the agent and synthesize a refinedPrompt locally —
-                // doing so leaves scene.beatFacts undefined, which breaks
-                // continuity for every later beat (no shared character /
-                // location anchors to lock against) and forces the
-                // orchestrator down the per-beat-Imagen fallback path
-                // instead of using shared keyframes. Round-tripping
-                // through the agent costs ~2-4s but is the only way to
-                // produce real beatFacts.
+                // Force the agent to emit markSufficient. The canned
+                // "OK — that's enough" string is a SYSTEM instruction
+                // sent through the userMessage channel — not a real
+                // user dialogue line. We deliberately do NOT append it
+                // to the visible conversation (was the screen-spam bug:
+                // every click of the button stamped a duplicate user
+                // bubble even when the agent stream errored). The
+                // agent only needs it as a streamed userMessage to
+                // trigger forceMarkSufficient.
                 setGenError(null);
-                appendAgentTurn(beat.beatId, scene.sceneId, {
-                  role: "user",
-                  content: "OK — that's enough. Wrap this beat now.",
-                  timestamp: nowISO(),
-                });
+                setLockingIn(true);
+                let sufficient = false;
                 try {
                   for await (const ev of api.agentStream({
                     manifest,
@@ -731,33 +836,92 @@ export function NodeDetailDrawer() {
                         timestamp: nowISO(),
                       });
                       updateBeat(beat.beatId, { status: "ready-to-generate" });
+                      // Narrate the lock-in moment so the user hears
+                      // "we got it" instead of a silent state-flip.
+                      // useNarrationStore is the concurrent ElevenLabs
+                      // hook; the playMoment helper resolves the right
+                      // line for this transition.
                       if (manifest) {
                         useNarrationStore.getState().playMoment("beat_locked", {
                           beat, manifest, masterPrompt: manifest.masterPrompt,
                         }, beat.beatId);
                       }
+                      sufficient = true;
                       return;
                     }
                     if (ev.type === "error") {
-                      setGenError(ev.message);
-                      return;
+                      // Don't surface the cryptic Gemini error; fall through
+                      // to the synthesized fallback below so the user can
+                      // still proceed.
+                      break;
                     }
                   }
-                } catch (err) {
+                } catch {
                   if (cancelRef.current) return;
-                  setGenError(err instanceof ApiError ? err.message : "Couldn't wrap the beat — try again.");
+                  // Network / abort — fall through to fallback.
                 }
+
+                if (sufficient || cancelRef.current) return;
+
+                // ── Stream-failure fallback ────────────────────────
+                // Agent failed (Gemini cold-retry exhausted, network
+                // blip, etc.). Rather than dead-end the user with a
+                // red error and a duplicate "OK — that's enough"
+                // bubble, synthesize a refinedPrompt locally from the
+                // beat archetype + the user's actual answers. This
+                // skips beatFacts (continuity for LATER beats may
+                // degrade slightly), but unblocks the demo flow —
+                // better partial continuity than total stuck.
+                const userAnswers = scene.conversation
+                  .filter((t) => t.role === "user")
+                  .map((t) => t.content)
+                  .join(". ");
+                const synthesizedPrompt = [
+                  beat.archetype.intent,
+                  beat.archetype.directorNotes ?? "",
+                  userAnswers ? `Director's notes: ${userAnswers}.` : "",
+                  `Mood ${beat.archetype.mood}; cinematic, ~${beat.archetype.suggestedDuration}s.`,
+                ]
+                  .filter(Boolean)
+                  .join(" ");
+                updateScene(beat.beatId, scene.sceneId, {
+                  refinedPrompt: synthesizedPrompt,
+                  durationSeconds: beat.archetype.suggestedDuration,
+                  speculativeJobId: undefined,
+                  jobId: undefined,
+                  clipPublicId: undefined,
+                  clipUrl: undefined,
+                  lastFrameUrl: undefined,
+                });
+                appendAgentTurn(beat.beatId, scene.sceneId, {
+                  role: "agent",
+                  content: "Cued from your notes. Call action when ready.",
+                  timestamp: nowISO(),
+                });
+                updateBeat(beat.beatId, { status: "ready-to-generate" });
               };
               return (
                 <Button
                   size="lg"
                   variant="ghost"
-                  className="w-full justify-center border-brand-ember/55 text-fg-primary hover:bg-brand-ember/10 hover:text-brand-ember"
-                  onClick={lockIn}
-                  aria-label="I have enough — lock it in and prepare to generate"
+                  disabled={lockingIn}
+                  className="w-full justify-center border-brand-ember/55 text-fg-primary hover:bg-brand-ember/10 hover:text-brand-ember disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        await lockIn();
+                      } finally {
+                        if (!cancelRef.current) setLockingIn(false);
+                      }
+                    })();
+                  }}
+                  aria-label={lockingIn ? "Wrapping the beat" : "I have enough — lock it in and prepare to generate"}
+                  aria-busy={lockingIn}
                 >
                   <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
-                  <span className="font-body text-meta font-medium">I have enough — generate</span>
+                  <span className="font-body text-meta font-medium">
+                    {lockingIn ? "Wrapping the beat…" : "I have enough — generate"}
+                  </span>
                 </Button>
               );
             })()}

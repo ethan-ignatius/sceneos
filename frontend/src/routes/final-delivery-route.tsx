@@ -1,5 +1,5 @@
 import { MotionConfig, motion } from "motion/react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { Download, Link2, ArrowRight, Copy, Check, FolderClock } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
@@ -8,6 +8,7 @@ import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
 import { SceneOSMark } from "@/components/ui/sceneos-mark";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
+import { useNarrationStore } from "@/lib/use-narration";
 import { toast } from "sonner";
 
 /**
@@ -41,6 +42,18 @@ export function FinalDeliveryRoute() {
     resetPrompt();
     navigate("/");
   }, [reset, resetPrompt, navigate]);
+
+  // Auto-fire the summary narration on first mount so the master cut
+  // plays with the narrator's voice on top — closes the loop on the
+  // "narrator reads your story back" promise. Once-per-session via a
+  // ref guard so navigating away and back doesn't re-narrate.
+  const summarySpokenRef = useRef(false);
+  useEffect(() => {
+    if (summarySpokenRef.current) return;
+    if (!manifest) return;
+    summarySpokenRef.current = true;
+    void useNarrationStore.getState().playSummaryNarration(manifest);
+  }, [manifest]);
 
   if (!manifest) {
     return <Navigate to="/" replace />;

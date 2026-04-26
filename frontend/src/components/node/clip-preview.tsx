@@ -1,6 +1,6 @@
-import { motion } from "motion/react";
-import { useEffect, useRef } from "react";
-import { RotateCcw } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { useEffect, useRef, useState } from "react";
+import { RotateCcw, AlertTriangle } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
 import { VideoPlayer } from "@/components/ui/video-player";
 import { Button } from "@/components/ui/button";
@@ -67,7 +67,21 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
     );
   }
 
+  // Two-step retake: click once → confirmation pops; click "Confirm
+  // retake" → actual regeneration fires. Veo renders cost real money
+  // (~$2-3 per take), and the user explicitly flagged that an
+  // accidental click should not silently torch a finished take.
+  const [confirmingRetake, setConfirmingRetake] = useState(false);
+  const cancelConfirm = () => setConfirmingRetake(false);
   const handleRegenerate = () => {
+    if (!confirmingRetake) {
+      setConfirmingRetake(true);
+      // Auto-dismiss confirmation after 5s if user doesn't act —
+      // they probably hovered the wrong button and walked away.
+      window.setTimeout(() => setConfirmingRetake(false), 5000);
+      return;
+    }
+    setConfirmingRetake(false);
     regenerateScene(beat.beatId, scene.sceneId);
   };
 
@@ -118,22 +132,68 @@ export function ClipPreview({ beat }: ClipPreviewProps) {
       </motion.div>
 
       {/* Approve button removed — auto-approve fires the moment the clip
-          lands. Regenerate is the only manual override the user needs. */}
+          lands. Regenerate is the only manual override the user needs.
+          Two-step confirmation: first click arms (button shifts to a
+          warning register + asks "Confirm retake?"); second click within
+          5s actually fires regenerateScene. Without this, an accidental
+          click silently torches a finished take that cost real Veo
+          compute (~$2-3 per render). */}
       <motion.div
         variants={fadeUp}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-        className="mt-auto flex justify-end border-t border-fg-tertiary/30 pt-4"
+        className="mt-auto flex items-center justify-end gap-2 border-t border-fg-tertiary/30 pt-4"
       >
-        <Button
-          variant="ghost"
-          size="lg"
-          className="btn--edge-underline"
-          onClick={handleRegenerate}
-          title="Regenerate this beat"
-        >
-          <RotateCcw size={16} strokeWidth={1.5} aria-hidden="true" />
-          Regenerate
-        </Button>
+        <AnimatePresence mode="wait">
+          {confirmingRetake ? (
+            <motion.div
+              key="confirm"
+              initial={{ opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              transition={{ duration: 0.18, ease: EASE.outQuart }}
+              className="flex items-center gap-2"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={cancelConfirm}
+                aria-label="Cancel retake"
+                className="text-fg-tertiary hover:text-fg-secondary"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="ghost"
+                size="lg"
+                onClick={handleRegenerate}
+                aria-label="Confirm retake — discard this clip and re-render"
+                className="border border-state-warning/50 bg-state-warning/10 text-state-warning hover:bg-state-warning/15"
+              >
+                <AlertTriangle size={14} strokeWidth={1.7} aria-hidden="true" />
+                Confirm retake
+              </Button>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="idle"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18, ease: EASE.outQuart }}
+            >
+              <Button
+                variant="ghost"
+                size="lg"
+                className="btn--edge-underline"
+                onClick={handleRegenerate}
+                title="Regenerate this beat (asks for confirmation)"
+              >
+                <RotateCcw size={16} strokeWidth={1.5} aria-hidden="true" />
+                Regenerate
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
     </motion.div>
   );

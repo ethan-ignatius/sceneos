@@ -37,6 +37,32 @@ from .stub import _stub_agent_turn
 logger = logging.getLogger(__name__)
 
 
+def _synthesize_fallback_result(
+    beat: dict,
+    manifest: dict,
+    conversation: list[dict],
+    force_mark: bool,
+) -> dict:
+    """Last-resort synthesizer when both the streaming agent and the
+    one-shot recovery raise (Gemini quota exhausted or content-policy
+    block on copyrighted IP). Routes through the stub so the conversation
+    still moves forward — better a slightly-generic question or a
+    template-derived markSufficient than a hard error pill that demands
+    user retry. force_mark mirrors the agent's "I have enough" affordance.
+    """
+    user_turn_count = sum(1 for t in conversation if t.get("role") == "user")
+    if force_mark:
+        # Push hard toward sufficient: bump the user-turn count past the
+        # threshold so the stub picks the markSufficient path.
+        user_turn_count = max(user_turn_count, 99)
+    return _stub_agent_turn(
+        beat,
+        manifest.get("masterPrompt") or "",
+        conversation,
+        user_turn_count,
+    )
+
+
 # ── Non-streaming entry point ──────────────────────────────────────────────
 
 
@@ -79,18 +105,34 @@ async def run_agent_turn(req: dict) -> dict:
             config=retry_config,
         )
 
-    response = await with_reliability(
-        "vertex.gemini.agent",
-        lambda: asyncio.to_thread(_call_sync),
-        timeout_seconds=30.0,
-        max_attempts=2,
-        base_backoff=1.0,
-        breaker_name="vertex.gemini",
-    )
+    try:
+        response = await with_reliability(
+            "vertex.gemini.agent",
+            lambda: asyncio.to_thread(_call_sync),
+            timeout_seconds=30.0,
+            max_attempts=2,
+            base_backoff=1.0,
+            breaker_name="vertex.gemini",
+        )
+    except Exception as call_exc:
+        # Vertex Gemini errored out (quota, billing-disabled, network).
+        # Don't dead-end the user — synthesize a stub turn so the
+        # conversation keeps moving. The 403 PERMISSION_DENIED ("billing
+        # disabled") path lands here and would otherwise surface as an
+        # opaque 502 to the frontend.
+        import logging
+        logging.getLogger(__name__).warning(
+            "[agent] Gemini call failed (%s); falling back to stub turn",
+            type(call_exc).__name__,
+        )
+        return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
 
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
-        raise RuntimeError("Gemini agent returned no candidates after retry.")
+        # No candidates after retry — same fallback as call failure.
+        import logging
+        logging.getLogger(__name__).warning("[agent] Gemini returned no candidates; falling back to stub")
+        return _stub_agent_turn(beat, manifest["masterPrompt"], conversation, user_turn_count)
     parts = getattr(candidates[0].content, "parts", None) or []
     function_call = next(
         (getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)),
@@ -98,7 +140,12 @@ async def run_agent_turn(req: dict) -> dict:
     )
     if function_call is None:
         # Gemini occasionally emits MALFORMED_FUNCTION_CALL under load.
-        # One colder retry, then stub fallback — never crash with 502.
+        # One colder retry, then graceful stub fallback — raising would
+        # dead-end the user mid-demo (Vertex Gemini quota is volatile,
+        # and copyrighted-IP prompts trip the safety filter unpredictably).
+        # The stub emits a contextually-reasonable question so the
+        # conversation can continue; the user can also force-mark-sufficient
+        # to push forward.
         response = await asyncio.to_thread(lambda: _call_sync(0.25))
         candidates = getattr(response, "candidates", None) or []
         parts = getattr(candidates[0].content, "parts", None) if candidates else []
@@ -141,13 +188,17 @@ async def run_agent_turn(req: dict) -> dict:
 # stalled Gemini stream blocks the consumer coroutine (and thus the SSE
 # connection) forever. 45s gives Gemini 2.5 generous room for its thinking
 # budget while still recovering via one-shot fallback.
-STREAM_TIMEOUT_SECONDS = 45.0
+STREAM_TIMEOUT_SECONDS = 60.0
 
 # Per-chunk liveness: if the producer hasn't put ANYTHING on the queue for
 # this many seconds, the consumer treats it as a stall even if the overall
 # timeout hasn't fired yet. Catches the case where Gemini sends a few
-# thinking tokens then goes silent mid-stream.
-CHUNK_SILENCE_SECONDS = 20.0
+# thinking tokens then goes silent mid-stream. Raised 20→30s after the
+# trial-tier hit a 20-25s "silent thinking" pause that was incorrectly
+# being classified as a stall. Combined with the wider 60s overall
+# wall-clock, the stream now survives Gemini's longer thinking budgets
+# without giving up.
+CHUNK_SILENCE_SECONDS = 30.0
 
 
 async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
@@ -376,12 +427,23 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
         try:
             result = await run_agent_turn(req)
         except Exception as exc:
-            logger.exception("vertex.gemini.agent: recovery after empty stream failed")
+            # Both stream and cold-retry failed. Rather than dead-end the
+            # user with a red error, synthesize a sensible result locally
+            # so the conversation moves forward. For forceMarkSufficient
+            # (Lock-it-in path) this synthesizes a prompt; otherwise it
+            # asks a beat-archetype-anchored question. Continuity may
+            # degrade slightly (no fresh beatFacts), but the demo flow
+            # never hard-stops.
+            logger.exception("vertex.gemini.agent: recovery after empty stream failed — synthesizing fallback")
+            result = _synthesize_fallback_result(beat, manifest, conversation, force_mark)
+            logger.warning(
+                "[agent/stream] using synthesized %s fallback after recovery failure, beat=%s",
+                result["kind"], beat_name,
+            )
             yield {
-                "type": "error",
-                "message": f"Stream completed without a tool call, and recovery failed: {exc}",
+                "type": "thought",
+                "chunk": f"[director fallback engaged after stream failure: {type(exc).__name__}]",
             }
-            return
         yield {
             "type": "tool_call",
             "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),

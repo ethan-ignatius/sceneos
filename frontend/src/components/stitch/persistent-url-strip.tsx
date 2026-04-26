@@ -49,6 +49,13 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
   // (in fuller form) inside the tray, and leaving it visible underneath
   // creates the bottom-left bleed seen in the screenshot.
   const stitchTrayOpen = useBeatGraphStore((s) => s.stitchTrayOpen);
+  // Also hide while a beat drawer is open. The drawer occupies the right
+  // half of the canvas; the strip's centered pill bleeds into the drawer's
+  // footer area (caught in screenshot — the URL pill intersected "On
+  // comms."). When the user is inside a beat conversation, the master cut
+  // URL is incidental — they'll see it again the moment they Esc back to
+  // the canvas overview.
+  const activeBeatId = useBeatGraphStore((s) => s.activeBeatId);
 
   // ALL hooks must run on every render — early returns mid-component cause
   // "Rendered fewer hooks than expected" under React 19. The visibility
@@ -72,6 +79,7 @@ export function PersistentUrlStrip({ onOpenTray }: PersistentUrlStripProps) {
 
   // Visibility gate now AFTER hooks (was a bug — early-return crash).
   if (stitchTrayOpen) return null;
+  if (activeBeatId) return null;
   const segments = buildSpliceUrlSegments(approvedIds);
   const fullUrl = buildSpliceUrl(approvedIds);
 

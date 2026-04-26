@@ -58,22 +58,31 @@ async def upsert_project(
     manifest: dict,
     status: str = "active",
     editor: dict | None = None,
+    owner_id: str | None = None,
 ) -> None:
     if projects_col is None:
         return
     try:
         now = _now_iso()
+        set_fields: dict[str, Any] = {
+            "master_prompt": manifest.get("masterPrompt", ""),
+            "video_type": manifest.get("videoType", ""),
+            "mode": manifest.get("mode"),
+            "status": status,
+            "updated_at": now,
+            "manifest": manifest,
+            "editor": editor,
+            "thumbnail_url": manifest.get("thumbnailUrl"),
+        }
+        # Owner id stamps which Auth0 user (user.sub) created this
+        # project. Set on insert and on every update — once a project
+        # has an owner it stays with that owner. Pre-Auth0 records
+        # have no owner_id and are effectively orphaned (not visible
+        # to any logged-in user; they were dev-state anyway).
+        if owner_id:
+            set_fields["owner_id"] = owner_id
         doc: dict[str, Any] = {
-            "$set": {
-                "master_prompt": manifest.get("masterPrompt", ""),
-                "video_type": manifest.get("videoType", ""),
-                "mode": manifest.get("mode"),
-                "status": status,
-                "updated_at": now,
-                "manifest": manifest,
-                "editor": editor,
-                "thumbnail_url": manifest.get("thumbnailUrl"),
-            },
+            "$set": set_fields,
             "$setOnInsert": {
                 "_id": project_id,
                 "created_at": now,
@@ -86,32 +95,47 @@ async def upsert_project(
         logger.exception("[db] upsert_project failed project=%s", project_id)
 
 
-async def list_projects(limit: int = 50) -> list[dict]:
+async def list_projects(limit: int = 50, *, owner_id: str | None = None) -> list[dict]:
+    """List projects. When owner_id is provided, scope to that owner only.
+    When None, return an empty list — anonymous browsing should never
+    leak across users. Pre-Auth0 dev records (no owner_id) are not
+    visible to any caller."""
     if projects_col is None:
         return []
+    if not owner_id:
+        return []
     try:
-        cursor = projects_col.find().sort("updated_at", -1).limit(limit)
+        cursor = projects_col.find({"owner_id": owner_id}).sort("updated_at", -1).limit(limit)
         return await cursor.to_list(length=limit)
     except Exception:
         logger.exception("[db] list_projects failed")
         return []
 
 
-async def get_project(project_id: str) -> dict | None:
+async def get_project(project_id: str, *, owner_id: str | None = None) -> dict | None:
+    """Fetch one project. When owner_id is provided, only returns the
+    document if it matches — prevents one user from reading another
+    user's project by guessing the id."""
     if projects_col is None:
         return None
+    if not owner_id:
+        return None
     try:
-        return await projects_col.find_one({"_id": project_id})
+        return await projects_col.find_one({"_id": project_id, "owner_id": owner_id})
     except Exception:
         logger.exception("[db] get_project failed project=%s", project_id)
         return None
 
 
-async def delete_project(project_id: str) -> bool:
+async def delete_project(project_id: str, *, owner_id: str | None = None) -> bool:
+    """Delete a project, scoped to owner. Without an owner the call is
+    a no-op — no user input ever causes a cross-user delete."""
     if projects_col is None:
         return False
+    if not owner_id:
+        return False
     try:
-        result = await projects_col.delete_one({"_id": project_id})
+        result = await projects_col.delete_one({"_id": project_id, "owner_id": owner_id})
         return result.deleted_count > 0
     except Exception:
         logger.exception("[db] delete_project failed project=%s", project_id)

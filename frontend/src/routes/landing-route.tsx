@@ -10,8 +10,10 @@ import { useSpeechRecognition } from "@/lib/use-speech-recognition";
 import { cn } from "@/lib/utils";
 import { SparkleField } from "@/components/landing/sparkle-field";
 import { SceneOSMark } from "@/components/ui/sceneos-mark";
-import { VIDEO_TYPE_TIERS, pickVideoTypeFromPrompt } from "@/lib/beat-templates";
+import { AuthChip } from "@/components/ui/auth-chip";
+import { VIDEO_TYPE_TIERS } from "@/lib/beat-templates";
 import { useNarrationStore } from "@/lib/use-narration";
+import { pickExamplePrompt } from "@/lib/example-prompts";
 
 /**
  * Landing — the hook.
@@ -75,6 +77,20 @@ export function LandingRoute() {
   // is kept fresh so onSettle calls into the latest closure (it runs
   // from inside a hook timer).
   const submitRef = useRef<((text: string) => void) | null>(null);
+  // Tracks the last example prompt surfaced via the "Try an example"
+  // button so consecutive clicks never repeat. Resets on full reload.
+  const lastExampleIdRef = useRef<string | null>(null);
+  const handleExample = () => {
+    const next = pickExamplePrompt(lastExampleIdRef.current);
+    lastExampleIdRef.current = next.id;
+    setDraft(next.prompt);
+    // Stop any active mic so the dictated transcript doesn't overwrite
+    // the freshly-filled example. The user can re-arm the mic to dictate
+    // edits, or just type directly. Then refocus the textarea so a
+    // press of Enter fires submit immediately.
+    if (speech.listening) speech.stop();
+    inputRef.current?.focus();
+  };
   const speech = useSpeechRecognition({
     lang: "en-US",
     silenceMs: 2000,
@@ -307,25 +323,30 @@ export function LandingRoute() {
           <SceneOSMark />
         </motion.div>
 
-        {/* Top-right Projects affordance — always reachable from landing.
-            Subdued by default (caption-track register), lifts to fg-primary
-            on hover. Mirrors the same chrome pattern canvas/editor/final
-            already use, so the button looks the same everywhere it appears. */}
-        <motion.button
-          type="button"
-          onClick={() => navigate("/projects")}
-          aria-label="Open projects archive"
-          title="Projects"
+        {/* Top-right chrome row — Projects archive + AuthChip. The chip
+            handles its own login/logout state; when Auth0 isn't
+            configured (env vars unset) it renders a passive label so
+            the chrome doesn't flicker between states. */}
+        <motion.div
           initial={{ opacity: 0, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.6 }}
-          className="group absolute right-4 top-4 z-20 inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base md:right-6 md:top-5"
+          className="absolute right-4 top-4 z-20 flex items-center gap-2 md:right-6 md:top-5"
         >
-          <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
-          <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
-            Projects
-          </span>
-        </motion.button>
+          <button
+            type="button"
+            onClick={() => navigate("/projects")}
+            aria-label="Open projects archive"
+            title="Projects"
+            className="group inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+          >
+            <FolderClock size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
+            <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+              Projects
+            </span>
+          </button>
+          <AuthChip />
+        </motion.div>
 
         {/* Content — single centered composition. */}
         <section className="relative z-10 flex min-h-[100svh] flex-col items-center justify-center px-6 py-16 sm:px-10">
@@ -410,8 +431,8 @@ export function LandingRoute() {
                     ? "listening…"
                     : "tell me a moment you can't get out of your head…"
                 }
-                className="block w-full resize-none bg-transparent px-2 pt-1.5 pb-1 text-base leading-snug text-fg-primary placeholder:text-fg-tertiary/80 focus:outline-none"
-                style={{ maxHeight: 220 }}
+                className="block w-full resize-none bg-transparent px-2 py-2 text-base leading-normal text-fg-primary placeholder:text-fg-tertiary/80 focus:outline-none"
+                style={{ maxHeight: 220, minHeight: 36 }}
               />
 
               {/* Action row. Mic on the left (when supported); submit on the
@@ -483,21 +504,41 @@ export function LandingRoute() {
               </div>
             </div>
 
-            {/* Microhint — one line, fades in after the input lands. The
-                only secondary copy on the page. */}
+            {/* Microhint — one line, fades in after the input lands.
+                Now also offers an "explore an example" path: clicking
+                fills the draft with a fully-fleshed prompt so the agent
+                can lock the beat on its first turn. The button just
+                cycles examples; the user still hits Enter to submit. */}
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 1.6 }}
-              className="mt-4 text-center text-pill leading-snug text-fg-tertiary"
+              className="mt-4 flex flex-wrap items-center justify-center gap-2 text-center text-pill leading-snug text-fg-tertiary"
             >
-              {!reducedMotion ? (
-                <>
-                  press <span className="font-mono text-fg-secondary">enter</span> or speak.
-                </>
-              ) : (
-                <>press enter or speak.</>
-              )}
+              <span>
+                {!reducedMotion ? (
+                  <>
+                    press <span className="font-mono text-fg-secondary">enter</span> or speak
+                  </>
+                ) : (
+                  <>press enter or speak</>
+                )}
+              </span>
+              <span aria-hidden className="text-fg-tertiary/40">·</span>
+              <button
+                type="button"
+                onClick={handleExample}
+                disabled={submitting}
+                className={cn(
+                  "rounded-full px-2 py-0.5 font-body text-pill transition-colors duration-200",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base",
+                  "text-brand-ember/85 hover:bg-brand-ember/10 hover:text-brand-ember",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                )}
+                aria-label="Fill the input with an example cinematic prompt — click again to cycle"
+              >
+                or try an example →
+              </button>
             </motion.p>
 
             {/* Video-type tier picker — Trailer / Short film / Movie.
