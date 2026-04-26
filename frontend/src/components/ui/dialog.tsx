@@ -80,7 +80,7 @@ export function Dialog({
 
             <DialogPrimitive.Title asChild>
               {caption ? (
-                <div className="font-body text-[12px] font-medium text-fg-tertiary">
+                <div className="font-body text-pill font-medium text-fg-tertiary">
                   {caption}
                 </div>
               ) : (

@@ -144,12 +144,12 @@ export function VideoPlayer({
       />
 
       {caption ? (
-        <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-bg-base/55 px-2.5 py-1 font-body text-[12px] font-medium text-fg-secondary backdrop-blur">
+        <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-bg-base/55 px-2.5 py-1 font-body text-pill font-medium text-fg-secondary backdrop-blur">
           {caption}
         </div>
       ) : null}
 
-      <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-bg-base/55 px-2 py-1 font-mono text-[11px] tabular-nums text-fg-secondary backdrop-blur">
+      <div className="pointer-events-none absolute right-3 top-3 rounded-md bg-bg-base/55 px-2 py-1 font-mono text-caption tabular-nums text-fg-secondary backdrop-blur">
         {formatTime(currentTime)}
         <span className="mx-1.5 text-fg-tertiary/70">/</span>
         {formatTime(duration)}

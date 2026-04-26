@@ -86,7 +86,18 @@ export function NodeDetailDrawer() {
           return;
         }
         if (status.status === "failed") {
-          throw new ApiError(0, status.error ?? "Generation failed");
+          // "Unknown vertex jobId" / "Unknown … jobId" means the backend
+          // restarted and lost its in-memory _JOBS dict. The job isn't
+          // actually failed in any meaningful sense — it's gone. Clear
+          // the stale jobId from the scene so the drawer doesn't keep
+          // re-attaching to a ghost, and surface a friendly message
+          // instead of the cryptic backend string.
+          const errMsg = status.error ?? "Generation failed";
+          if (/unknown\s+\w+\s+jobid/i.test(errMsg)) {
+            updateScene(beatId, sceneId, { jobId: undefined });
+            throw new ApiError(0, "The previous render expired. Click Roll camera to start fresh.");
+          }
+          throw new ApiError(0, errMsg);
         }
         delay = status.pollAfterMs ?? 800;
       }
@@ -221,12 +232,15 @@ export function NodeDetailDrawer() {
           className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-6 pb-4 pt-5"
         >
           <div>
-            <div className="font-body text-[12px] font-medium tabular-nums text-fg-tertiary">
-              <span className="text-brand-ember">{(beatIndex + 1).toString().padStart(2, "0")}</span>
+            {/* Plain "4 of 5" — leading-zero "04 of 05" read as mechanical
+                and ugly per the user. Tabular-nums kept so digits don't
+                jitter when the count grows. */}
+            <div className="font-body text-pill font-medium tabular-nums text-fg-tertiary">
+              <span className="text-brand-ember">{beatIndex + 1}</span>
               <span className="mx-1.5 text-fg-tertiary/45">of</span>
-              <span>{totalBeats.toString().padStart(2, "0")}</span>
+              <span>{totalBeats}</span>
             </div>
-            <h2 className="text-balance mt-1.5 font-body text-[18px] font-medium leading-[1.15] text-fg-primary">
+            <h2 className="text-balance mt-1.5 font-body text-body-lg font-medium leading-[1.15] text-fg-primary">
               {beat.beatName}
             </h2>
           </div>
@@ -307,7 +321,7 @@ export function NodeDetailDrawer() {
                     onClick={handleGenerate}
                   >
                     <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
-                    <span className="font-body text-[13px] font-medium">Roll camera</span>
+                    <span className="font-body text-meta font-medium">Roll camera</span>
                   </Button>
                 );
               }
@@ -348,7 +362,7 @@ export function NodeDetailDrawer() {
                   aria-label="I have enough — lock it in and prepare to generate"
                 >
                   <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
-                  <span className="font-body text-[13px] font-medium">I have enough — generate</span>
+                  <span className="font-body text-meta font-medium">I have enough — generate</span>
                 </Button>
               );
             })()}

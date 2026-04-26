@@ -6,8 +6,9 @@ and surfaces Gemini's thinking tokens live as SSE events.
 
 Both paths share:
   - Stub fallback when no Gemini client is available (mock mode + tests).
-  - Anthropic Haiku fallback when Gemini fails (quota, malformed tool call,
-    no candidates). The Anthropic fallback itself is wrapped in retry.
+  - On Gemini failure (quota, malformed tool call, no candidates): one
+    cold retry, then raise. There is no second-LLM fallback — Vertex
+    Gemini is the only model SceneOS uses.
   - `_repair_question_if_redundant` defense-in-depth on the final result.
 
 The streaming producer runs in a thread because google.genai is sync.
@@ -23,7 +24,6 @@ from typing import Any, AsyncIterator
 from ..config import mock_mode
 from ..genai_client import default_gemini_model_for, make_genai_client
 from ..retry import with_reliability
-from .anthropic import _run_anthropic_agent_turn
 from .context import _collect_conversation
 from .messages import _build_request_config, _to_gemini_contents
 from .normalizer import _normalize_args, _normalize_call_to_result
@@ -72,29 +72,18 @@ async def run_agent_turn(req: dict) -> dict:
             config=retry_config,
         )
 
-    try:
-        response = await with_reliability(
-            "vertex.gemini.agent",
-            lambda: asyncio.to_thread(_call_sync),
-            timeout_seconds=30.0,
-            max_attempts=2,
-            base_backoff=1.0,
-            breaker_name="vertex.gemini",
-        )
-    except Exception:
-        return await _run_anthropic_agent_turn(
-            beat=beat,
-            manifest=manifest,
-            conversation=conversation,
-        )
+    response = await with_reliability(
+        "vertex.gemini.agent",
+        lambda: asyncio.to_thread(_call_sync),
+        timeout_seconds=30.0,
+        max_attempts=2,
+        base_backoff=1.0,
+        breaker_name="vertex.gemini",
+    )
 
     candidates = getattr(response, "candidates", None) or []
     if not candidates:
-        return await _run_anthropic_agent_turn(
-            beat=beat,
-            manifest=manifest,
-            conversation=conversation,
-        )
+        raise RuntimeError("Gemini agent returned no candidates after retry.")
     parts = getattr(candidates[0].content, "parts", None) or []
     function_call = next(
         (getattr(p, "function_call", None) for p in parts if getattr(p, "function_call", None)),
@@ -102,23 +91,16 @@ async def run_agent_turn(req: dict) -> dict:
     )
     if function_call is None:
         # Gemini occasionally emits MALFORMED_FUNCTION_CALL under load.
-        # Retry once colder, then fall back to Anthropic rather than 502.
-        try:
-            response = await asyncio.to_thread(lambda: _call_sync(0.25))
-            candidates = getattr(response, "candidates", None) or []
-            parts = getattr(candidates[0].content, "parts", None) if candidates else []
-            function_call = next(
-                (getattr(p, "function_call", None) for p in (parts or []) if getattr(p, "function_call", None)),
-                None,
-            )
-        except Exception:
-            function_call = None
+        # One colder retry, then raise — there is no second-LLM fallback.
+        response = await asyncio.to_thread(lambda: _call_sync(0.25))
+        candidates = getattr(response, "candidates", None) or []
+        parts = getattr(candidates[0].content, "parts", None) if candidates else []
+        function_call = next(
+            (getattr(p, "function_call", None) for p in (parts or []) if getattr(p, "function_call", None)),
+            None,
+        )
         if function_call is None:
-            return await _run_anthropic_agent_turn(
-                beat=beat,
-                manifest=manifest,
-                conversation=conversation,
-            )
+            raise RuntimeError("Gemini agent did not emit a tool call after cold retry.")
 
     return _repair_question_if_redundant(
         _normalize_call_to_result(function_call.name, _normalize_args(function_call.args), beat),
@@ -241,46 +223,16 @@ async def run_agent_turn_streaming(req: dict) -> AsyncIterator[dict]:
             final_call = {"name": item["name"], "args": item["args"]}
             yield {"type": "tool_call", "name": item["name"], "args": item["args"]}
         elif kind == "error":
-            # Stream-level Gemini error → pivot to Anthropic fallback so the
-            # user gets a real answer instead of a dead stream. We surface a
-            # short status thought so the visualizer can show the pivot.
-            yield {"type": "thought", "chunk": f"[gemini stream error: {item['message']}; falling back to Anthropic Haiku]"}
-            try:
-                result = await _run_anthropic_agent_turn(
-                    beat=beat,
-                    manifest=manifest,
-                    conversation=conversation,
-                )
-            except Exception as exc:
-                yield {"type": "error", "message": f"Both Gemini stream and Anthropic fallback failed: {exc}"}
-                return
-            yield {
-                "type": "tool_call",
-                "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
-                "args": result,
-            }
-            yield {"type": "result", **result}
+            # Stream-level Gemini error → surface to client. There is no
+            # second-LLM fallback; the frontend handles errors with a toast.
+            yield {"type": "error", "message": f"Gemini stream error: {item['message']}"}
             return
 
     if final_call is None:
-        # Stream ended with no function_call. Pivot to Anthropic instead of
-        # surfacing a dead stream.
-        yield {"type": "thought", "chunk": "[gemini stream produced no tool call; falling back to Anthropic Haiku]"}
-        try:
-            result = await _run_anthropic_agent_turn(
-                beat=beat,
-                manifest=manifest,
-                conversation=conversation,
-            )
-        except Exception as exc:
-            yield {"type": "error", "message": f"Stream completed without tool call and fallback failed: {exc}"}
-            return
         yield {
-            "type": "tool_call",
-            "name": ("markSufficient" if result["kind"] == "sufficient" else "askQuestion"),
-            "args": result,
+            "type": "error",
+            "message": "Gemini stream completed without emitting a tool call.",
         }
-        yield {"type": "result", **result}
         return
 
     try:

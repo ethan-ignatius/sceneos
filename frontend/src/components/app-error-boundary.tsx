@@ -44,26 +44,26 @@ export class AppErrorBoundary extends Component<Props, State> {
     return (
       <div className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
         <div className="max-w-2xl space-y-4">
-          <div className="font-body text-[12px] font-medium text-state-error">
+          <div className="font-body text-pill font-medium text-state-error">
             Uncaught render error
           </div>
           <p className="font-display text-2xl italic leading-snug text-fg-primary">
             The app threw before it could mount the route.
           </p>
-          <pre className="overflow-auto rounded-md border border-state-error/30 bg-state-error/5 p-3 font-mono text-[11px] leading-relaxed text-fg-secondary">
+          <pre className="overflow-auto rounded-md border border-state-error/30 bg-state-error/5 p-3 font-mono text-caption leading-relaxed text-fg-secondary">
             {this.state.error.message}
           </pre>
           {this.state.info?.componentStack ? (
             <div className="rounded-md border border-fg-tertiary/25 bg-bg-elev-1/60 p-3">
-              <div className="mb-2 font-body text-[12px] font-medium text-fg-tertiary">
+              <div className="mb-2 font-body text-pill font-medium text-fg-tertiary">
                 Component stack
               </div>
-              <pre className="overflow-auto font-mono text-[10px] leading-relaxed text-fg-tertiary">
+              <pre className="overflow-auto font-mono text-overline leading-relaxed text-fg-tertiary">
                 {this.state.info.componentStack}
               </pre>
             </div>
           ) : (
-            <p className="font-mono text-[10px] text-fg-tertiary">
+            <p className="font-mono text-overline text-fg-tertiary">
               Component stack not yet captured — open DevTools console; the
               boundary printed it via console.error on crash.
             </p>

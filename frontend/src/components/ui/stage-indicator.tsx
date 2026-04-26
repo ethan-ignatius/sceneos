@@ -87,7 +87,7 @@ export function StageIndicator() {
             <span className="font-mono text-chip tabular-nums text-fg-tertiary/70">
               {(activeIndex + 1).toString().padStart(2, "0")}
             </span>
-            <span className="font-body text-[13px] font-medium text-fg-primary">
+            <span className="font-body text-meta font-medium text-fg-primary">
               {activeStage.label}
             </span>
           </motion.span>

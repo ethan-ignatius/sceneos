@@ -1,12 +1,11 @@
-"""Tool schemas exposed to Gemini + Anthropic.
+"""Tool schemas exposed to Vertex Gemini.
 
 Suggested answers are NON-DETERMINISTIC in count (0-4 + openEnded flag).
 The user explicitly does not want every question to be a forced 3-choice
 multiple choice — that constrained the conversation and made it feel
 loaded.
 
-Both schemas are kept structurally identical between Gemini (parameters)
-and Anthropic (input_schema) shapes so the two SDKs can share normalization.
+Vertex Gemini is the only LLM SceneOS uses. Anthropic was removed.
 """
 from __future__ import annotations
 
@@ -109,11 +108,3 @@ _AGENT_TOOLS: list[dict[str, Any]] = [
 ]
 
 
-_ANTHROPIC_AGENT_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": tool["name"],
-        "description": tool["description"],
-        "input_schema": tool["parameters"],
-    }
-    for tool in _AGENT_TOOLS
-]

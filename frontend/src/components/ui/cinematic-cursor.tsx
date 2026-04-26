@@ -40,13 +40,15 @@ export function CinematicCursor() {
       targetX.current = e.clientX;
       targetY.current = e.clientY;
       const t = e.target as HTMLElement | null;
-      // Text-editable surfaces — fade the cursor entirely so the native
-      // caret + I-beam carry the affordance.
+      // Text-editable surfaces + explicit `data-cursor="hide"` opt-outs
+      // (resize handles, scrubber thumbs, anywhere the OS cursor's
+      // affordance trumps ours) → fade the ring/dot entirely so the
+      // native caret/resize cursor reads uninterrupted.
       textHoverRef.current = !!t?.closest(
-        "input, textarea, [contenteditable='true']",
+        "input, textarea, [contenteditable='true'], [data-cursor='hide']",
       );
-      // Hover for ring expansion — buttons/links only. Inputs are excluded
-      // here because they're handled by textHoverRef above.
+      // Hover for ring expansion — buttons/links only. Inputs and
+      // hide-targets are excluded here because they're handled above.
       hoverRef.current =
         !textHoverRef.current &&
         !!t?.closest(

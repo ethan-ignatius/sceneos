@@ -38,13 +38,13 @@ export class CanvasErrorBoundary extends Component<Props, State> {
       return (
         <div className="absolute inset-0 grid place-items-center bg-bg-base p-8">
           <div className="max-w-lg space-y-4 text-center">
-            <div className="font-body text-[12px] font-medium text-state-error">
+            <div className="font-body text-pill font-medium text-state-error">
               Canvas render failed
             </div>
             <p className="font-display text-2xl italic leading-snug text-fg-primary">
               The 3D scene threw an error.
             </p>
-            <pre className="overflow-auto rounded-md border border-state-error/30 bg-state-error/5 p-3 text-left font-mono text-[11px] leading-relaxed text-fg-secondary">
+            <pre className="overflow-auto rounded-md border border-state-error/30 bg-state-error/5 p-3 text-left font-mono text-caption leading-relaxed text-fg-secondary">
               {this.state.error.message}
             </pre>
             <button

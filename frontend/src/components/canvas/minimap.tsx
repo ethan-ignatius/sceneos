@@ -69,15 +69,15 @@ export function Minimap({ beats, activeBeatId }: MinimapProps) {
       initial={{ opacity: 0, y: -4 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.36, ease: [0.25, 1, 0.5, 1], delay: 0.5 }}
-      className="pointer-events-auto fixed bottom-20 right-4 z-20 rounded-xl border border-fg-tertiary/20 bg-bg-elev-1/70 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)]"
+      className="pointer-events-auto fixed bottom-20 right-4 z-20 rounded-xl border border-fg-tertiary/20 bg-bg-elev-1/70 backdrop-blur-xl shadow-(--shadow-pill)"
       aria-label="Beat-map minimap"
     >
       {/* Eyebrow — names the surface. The user who's never seen this canvas
           before gets one tiny line of "this is what you're looking at,"
           where without it the SVG is just dots. */}
       <div className="flex items-center justify-between border-b border-fg-tertiary/15 px-3 py-2">
-        <span className="font-body text-[12px] font-medium text-fg-secondary">Timeline</span>
-        <span className="font-body text-[11px] text-fg-tertiary" title="Scroll to zoom · click empty to reset">
+        <span className="font-body text-pill font-medium text-fg-secondary">Timeline</span>
+        <span className="font-body text-caption text-fg-tertiary" title="Scroll to zoom · click empty to reset">
           Scroll to zoom
         </span>
       </div>

@@ -1,9 +1,9 @@
-"""Conversation → SDK-shaped messages, plus Gemini config builder.
+"""Conversation → Gemini-shaped messages, plus Gemini config builder.
 
-Anthropic-style 'agent'/'user' turns are the canonical SceneOS shape.
-This module converts that into Gemini's 'model'/'user' contents and
-Anthropic's messages format. Also builds the GenerateContentConfig for
-the Gemini path (mode-aware tool restriction + temperature + thinking).
+The canonical SceneOS conversation shape uses 'agent'/'user' role tags;
+this module converts that into Gemini's 'model'/'user' contents. Also
+builds the GenerateContentConfig (mode-aware tool restriction +
+temperature + thinking budget).
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from .tools import _AGENT_TOOLS
 
 
 def _to_gemini_contents(conversation: list[dict], opening_master_prompt: str) -> list[dict]:
-    """Anthropic-style 'agent'/'user' turns → Gemini 'model'/'user' contents."""
+    """SceneOS-style 'agent'/'user' turns → Gemini 'model'/'user' contents."""
     if not conversation:
         return [
             {
@@ -39,26 +39,6 @@ def _to_gemini_contents(conversation: list[dict], opening_master_prompt: str) ->
         text = t.get("content", "") or ""
         contents.append({"role": role, "parts": [{"text": text}]})
     return contents
-
-
-def _to_anthropic_messages(conversation: list[dict], opening_master_prompt: str) -> list[dict]:
-    if not conversation:
-        return [
-            {
-                "role": "user",
-                "content": (
-                    f"My idea: {opening_master_prompt}. "
-                    "Ask me your first question about this part of the story."
-                ),
-            }
-        ]
-    messages: list[dict] = []
-    for turn in conversation:
-        role = "assistant" if turn.get("role") == "agent" else "user"
-        text = str(turn.get("content", "") or "").strip()
-        if text:
-            messages.append({"role": role, "content": text})
-    return messages or _to_anthropic_messages([], opening_master_prompt)
 
 
 def _build_request_config(

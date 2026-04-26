@@ -191,6 +191,18 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   }, [scene.conversation.length]);
 
   // Seed question — fire on first mount when conversation is empty.
+  // Drawer-lifetime unmount guard. The seed-effect below aborts its own
+  // controller, but a user-turn callAgent fires AFTER the seed effect
+  // has already returned; without this dedicated cleanup, an in-flight
+  // user turn would leak its fetch on close. abortRef always points at
+  // the most recent controller so aborting it covers either path.
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+      abortRef.current?.abort();
+    };
+  }, []);
+
   // Uses /api/agent/stream so the user sees Gemini's thinking tokens
   // accumulate in real time. The one-shot endpoint (api.agent) returns
   // in 6–8s on the trial Vertex tier, which read as a hung UI.
@@ -216,7 +228,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
       try {
         for await (const ev of api.agentStream({ manifest, beatId: beat.beatId }, ctrl.signal)) {
           if (!active || cancelledRef.current) break;
-          if (ev.type === "thought") {
+          if (ev.type === "thought" || ev.type === "text") {
             setStreamingThought((prev) => prev + ev.chunk);
           } else if (ev.type === "result") {
             if (ev.kind === "question") {
@@ -232,6 +244,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               updateScene(beat.beatId, scene.sceneId, {
                 refinedPrompt: ev.refinedPrompt,
                 durationSeconds: ev.suggestedDuration,
+                beatFacts: ev.beatFacts,
               });
               updateBeat(beat.beatId, { status: "ready-to-generate" });
             }
@@ -280,7 +293,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         ctrl.signal,
       )) {
         if (cancelledRef.current) break;
-        if (ev.type === "thought") {
+        if (ev.type === "thought" || ev.type === "text") {
+          // Gemini emits "text" when the model returns prose without a
+          // tool call. Treat it the same as "thought" so the user sees
+          // the agent's words instead of a frozen "Composing" loader.
           setStreamingThought((prev) => prev + ev.chunk);
         } else if (ev.type === "result") {
           if (ev.kind === "question") {
@@ -294,6 +310,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             updateScene(beat.beatId, scene.sceneId, {
               refinedPrompt: ev.refinedPrompt,
               durationSeconds: ev.suggestedDuration,
+              beatFacts: ev.beatFacts,
             });
             updateBeat(beat.beatId, { status: "ready-to-generate" });
             appendAgentTurn(beat.beatId, scene.sceneId, {
@@ -384,7 +401,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-md border-2 border-dashed border-brand-ember/60 bg-brand-ember/5 backdrop-blur-sm"
         >
-          <div className="font-body text-[13px] font-medium text-brand-ember">
+          <div className="font-body text-meta font-medium text-brand-ember">
             Drop frames, mood, references.
           </div>
         </div>
@@ -421,7 +438,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllTurns(true)}
-                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-[12px] font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-pill font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                   aria-label={`Show ${collapsedCount} earlier turn${collapsedCount === 1 ? "" : "s"}`}
                 >
                   ↑ {collapsedCount} earlier turn{collapsedCount === 1 ? "" : "s"}
@@ -431,7 +448,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 <button
                   type="button"
                   onClick={() => setShowAllTurns(false)}
-                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-[12px] font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+                  className="mx-auto block rounded-full border border-fg-tertiary/25 bg-bg-elev-2/40 px-3.5 py-1.5 font-body text-pill font-medium text-fg-tertiary transition-colors hover:border-brand-ember/40 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
                   aria-label="Collapse earlier turns"
                 >
                   ↓ collapse
@@ -464,7 +481,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
               transition={{ duration: 0.24, ease: [0.25, 1, 0.5, 1] }}
               className="rounded-md border border-fg-tertiary/15 bg-bg-base/40 px-4 py-3"
             >
-              <div className="caption-track mb-2 flex items-center gap-1.5 text-[10px] text-fg-tertiary">
+              <div className="caption-track mb-2 flex items-center gap-1.5 text-overline text-fg-tertiary">
                 <motion.span
                   aria-hidden="true"
                   className="h-1.5 w-1.5 rounded-full bg-brand-ember"
@@ -473,7 +490,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 />
                 <span>Thinking</span>
               </div>
-              <p className="font-body text-[12.5px] leading-relaxed text-fg-tertiary/85">
+              <p className="font-body text-pill leading-relaxed text-fg-tertiary/85">
                 {renderThoughtMarkdown(streamingThought)}
               </p>
             </motion.div>
@@ -481,7 +498,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             <div
               role="status"
               aria-live="polite"
-              className="flex items-center gap-2 font-body text-[12.5px] text-fg-tertiary"
+              className="flex items-center gap-2 font-body text-pill text-fg-tertiary"
             >
               <Loader2 size={12} className="animate-spin" strokeWidth={1.5} aria-hidden="true" />
               Composing the shot.
@@ -491,7 +508,7 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
         {error ? (
           <div
             role="alert"
-            className="flex items-center justify-between gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-[11px] text-state-error"
+            className="flex items-center justify-between gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-mono text-caption text-state-error"
           >
             <span>{error}</span>
             {pendingRetryMessage ? (

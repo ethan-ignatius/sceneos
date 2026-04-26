@@ -162,8 +162,8 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       {/* Header — eyebrow + headline + close */}
       <header className="flex items-start justify-between gap-4 border-b border-fg-tertiary/15 px-7 pb-5 pt-6">
         <div className="space-y-2">
-          <div className="font-body text-[12px] font-medium text-fg-tertiary">Stitch</div>
-          <h2 className="text-balance font-body text-[1.35rem] font-semibold leading-[1.18] tracking-[-0.018em] text-fg-primary">
+          <div className="font-body text-pill font-medium text-fg-tertiary">Stitch</div>
+          <h2 className="text-balance font-body text-lede font-semibold leading-[1.18] tracking-[-0.018em] text-fg-primary">
             {headline}
           </h2>
         </div>
@@ -182,7 +182,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         data-lenis-prevent
         className="flex-1 space-y-6 overflow-y-auto px-7 py-5 [scrollbar-width:thin]"
       >
-        <ul className="divide-y divide-fg-tertiary/12">
+        <ul className="divide-y divide-fg-tertiary/12 border-t border-fg-tertiary/12">
           {manifest?.beats.map((b, i) => (
             <li key={b.beatId}>
               <BeatRow
@@ -202,13 +202,13 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         {/* Live URL block */}
         <section className="space-y-2 pt-2">
           <div className="flex items-baseline justify-between">
-            <span className="font-body text-[12px] font-medium text-fg-secondary">
+            <span className="font-body text-pill font-medium text-fg-secondary">
               Master cut URL
             </span>
             <button
               onClick={copy}
               disabled={!fullUrl}
-              className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary disabled:opacity-40"
               aria-label="Copy master cut URL"
             >
               <AnimatePresence mode="wait" initial={false}>
@@ -250,11 +250,11 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             )}
           >
             {!segments ? (
-              <div className="font-body text-[12px] italic leading-relaxed text-fg-tertiary">
+              <div className="font-body text-pill italic leading-relaxed text-fg-tertiary">
                 Approve a take and watch the URL compose itself.
               </div>
             ) : (
-              <div className="break-all font-mono text-[11px] leading-[1.65] text-fg-secondary">
+              <div className="break-all font-mono text-caption leading-[1.65] text-fg-secondary">
                 <span className="text-fg-tertiary/70">{segments.head}</span>
                 <span>{segments.middle}</span>
                 {segments.tail ? (
@@ -285,7 +285,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         {renderError ? (
           <div
             role="alert"
-            className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-body text-[12px] leading-snug text-state-error"
+            className="rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-body text-pill leading-snug text-state-error"
           >
             {renderError}
           </div>
@@ -304,7 +304,7 @@ export function StitchTray({ onClose }: StitchTrayProps) {
             ) : (
               <Clapperboard size={16} strokeWidth={1.5} aria-hidden="true" />
             )}
-            <span className="font-body text-[13px]">
+            <span className="font-body text-meta">
               {rendering ? "Stitching the cut" : allReady ? "Open the editor" : "Render"}
             </span>
           </span>
@@ -396,7 +396,7 @@ function BeatRow({
               icon. Resuming an old archived project hits this path most
               often. */}
           {mediaUnavailable ? (
-            <div className="absolute inset-0 grid place-items-center bg-bg-base/80 px-1 text-center font-body text-[10px] text-fg-tertiary">
+            <div className="absolute inset-0 grid place-items-center bg-bg-base/80 px-1 text-center font-body text-overline text-fg-tertiary">
               Clip unavailable
             </div>
           ) : null}
@@ -409,7 +409,7 @@ function BeatRow({
       ) : (
         <span
           className={cn(
-            "flex w-8 flex-shrink-0 items-center font-body text-[12px] font-medium tabular-nums sm:w-10",
+            "flex w-8 flex-shrink-0 items-center font-body text-pill font-medium tabular-nums sm:w-10",
             isApproved ? "text-brand-ember/80" : "text-fg-tertiary/65",
           )}
         >
@@ -429,13 +429,13 @@ function BeatRow({
             display register fighting itself. */}
         <span
           className={cn(
-            "truncate font-body text-[14px] font-semibold leading-[1.25] tracking-[-0.005em]",
+            "truncate font-body text-body-sm font-semibold leading-[1.25] tracking-[-0.005em]",
             isApproved ? "text-brand-ember" : "text-fg-primary",
           )}
         >
           {beat.beatName}
         </span>
-        <span className="font-body text-[12px] leading-snug text-fg-tertiary">
+        <span className="font-body text-pill leading-snug text-fg-tertiary">
           <BeatStatusLabel status={status} approved={isApproved} />
         </span>
       </div>
@@ -447,7 +447,7 @@ function BeatRow({
           <button
             type="button"
             onClick={onApprove}
-            className="inline-flex items-center gap-1 rounded-full bg-brand-ember px-2.5 py-1.5 font-body text-[11px] font-medium text-bg-base transition-colors hover:bg-brand-ember/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elev-1"
+            className="inline-flex items-center gap-1 rounded-full bg-brand-ember px-2.5 py-1.5 font-body text-caption font-medium text-bg-base transition-colors hover:bg-brand-ember/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-elev-1"
             aria-label="Approve this take"
             title="Approve"
           >
@@ -459,7 +459,7 @@ function BeatRow({
           <button
             type="button"
             onClick={onRetake}
-            className="inline-flex items-center gap-1 rounded-full border border-fg-tertiary/20 px-2.5 py-1.5 font-body text-[11px] text-fg-secondary transition-colors hover:border-fg-tertiary/45 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-fg-tertiary"
+            className="inline-flex items-center gap-1 rounded-full border border-fg-tertiary/20 px-2.5 py-1.5 font-body text-caption text-fg-secondary transition-colors hover:border-fg-tertiary/45 hover:text-fg-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-fg-tertiary"
             aria-label="Send this take back to be regenerated"
             title="Re-take"
           >
@@ -471,7 +471,7 @@ function BeatRow({
           <button
             type="button"
             onClick={onOpen}
-            className="inline-flex items-center gap-1 rounded-full border border-fg-tertiary/20 px-2.5 py-1.5 font-body text-[11px] text-fg-secondary transition-colors hover:border-brand-ember/50 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
+            className="inline-flex items-center gap-1 rounded-full border border-fg-tertiary/20 px-2.5 py-1.5 font-body text-caption text-fg-secondary transition-colors hover:border-brand-ember/50 hover:text-brand-ember focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-brand-ember"
             aria-label={isGenerating ? "Open beat (generating)" : "Direct this beat"}
             title={isGenerating ? "Generating" : "Direct"}
           >

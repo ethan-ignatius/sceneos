@@ -23,11 +23,11 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
     <section className="space-y-4 border-t border-fg-tertiary/15 pt-4">
       <header className="flex items-baseline justify-between gap-3">
         <div className="flex items-baseline gap-3">
-          <span className="font-mono text-[11px] tabular-nums text-fg-tertiary">
+          <span className="font-mono text-caption tabular-nums text-fg-tertiary">
             {(index + 1).toString().padStart(2, "0")}
           </span>
           <span className="font-body text-meta-lg font-medium text-fg-primary">{label}</span>
-          <span className="font-mono text-[11px] tabular-nums text-fg-tertiary">
+          <span className="font-mono text-caption tabular-nums text-fg-tertiary">
             {trimStart.toFixed(2)}–{trimEnd.toFixed(2)}s · {beatDur.toFixed(2)}s
           </span>
         </div>
@@ -47,7 +47,7 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
             <span className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
               Transition in
             </span>
-            <span className="font-mono text-[11px] tabular-nums text-fg-tertiary">
+            <span className="font-mono text-caption tabular-nums text-fg-tertiary">
               {transition === 0 ? "hard cut" : `${transition}ms cross-fade`}
             </span>
           </div>
@@ -63,7 +63,7 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
           />
         </div>
       ) : (
-        <p className="font-body text-[12px] text-fg-tertiary">First beat — no transition in.</p>
+        <p className="font-body text-pill text-fg-tertiary">First beat — no transition in.</p>
       )}
 
       {/* Caption */}
@@ -72,7 +72,7 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
           <span className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
             Caption
           </span>
-          <span className="font-body text-[11px] text-fg-tertiary/70">
+          <span className="font-body text-caption text-fg-tertiary/70">
             {clip.caption ? "shown" : "off"}
           </span>
         </div>
@@ -83,7 +83,7 @@ export function EditorClipDetail({ index, label, clip, onPatch, onClose }: Edito
           placeholder="Optional title for this beat"
           className={cn(
             "w-full border-b border-fg-tertiary/25 bg-transparent px-1 py-1.5",
-            "font-body text-[13px] text-fg-primary outline-none",
+            "font-body text-meta text-fg-primary outline-none",
             "placeholder:text-fg-tertiary/60 focus:border-brand-ember-dim/60",
             "transition-colors",
           )}

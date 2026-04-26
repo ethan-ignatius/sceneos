@@ -400,6 +400,25 @@ export const useBeatGraphStore = create<BeatGraphState>()(
         editor: state.editor,
         projects: state.projects,
       }) as unknown as BeatGraphState,
+      // Clamp the rehydrated payload back onto the canonical shape. Older
+      // persisted states pre-date the `editor` field; corrupted/forged
+      // localStorage could ship missing or wrong-typed top-level keys.
+      // Falling back to defaults keeps the app booting instead of
+      // exploding inside a selector. The action methods come from
+      // `current` (the live store factory) — they are never persisted.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<BeatGraphState>;
+        return {
+          ...current,
+          manifest: p.manifest ?? null,
+          activeBeatId: typeof p.activeBeatId === "string" ? p.activeBeatId : null,
+          editor:
+            p.editor && typeof p.editor === "object"
+              ? { ...EDITOR_INITIAL, ...p.editor }
+              : EDITOR_INITIAL,
+          projects: Array.isArray(p.projects) ? p.projects.slice(0, PROJECTS_CAP) : [],
+        };
+      },
     },
   ),
 );

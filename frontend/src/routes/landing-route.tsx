@@ -362,7 +362,7 @@ export function LandingRoute() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 1.6 }}
-              className="mt-4 text-center text-[12px] leading-snug text-fg-tertiary"
+              className="mt-4 text-center text-pill leading-snug text-fg-tertiary"
             >
               {!reducedMotion ? (
                 <>
@@ -385,7 +385,7 @@ export function LandingRoute() {
               transition={{ duration: 0.6, delay: 1.8 }}
               className="mt-10 w-full max-w-[40rem]"
             >
-              <div className="mb-2.5 text-center font-body text-[11px] font-medium text-fg-tertiary">
+              <div className="mb-2.5 text-center font-body text-caption font-medium text-fg-tertiary">
                 Pick up where you left off
               </div>
               <div className="flex flex-col items-stretch gap-1.5">

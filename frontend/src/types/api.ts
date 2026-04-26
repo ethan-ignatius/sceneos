@@ -6,6 +6,7 @@
 import type {
   Beat,
   BeatArchetype,
+  BeatFacts,
   BeatTemplate,
   ClipPrompt,
   Manifest,
@@ -13,27 +14,15 @@ import type {
   VideoType,
 } from "./manifest";
 
+// BeatFacts lives in manifest.ts so Scene can reference it without an import
+// cycle. Re-exported here because the rest of the app imports it from
+// "@/types/api" alongside the request/response shapes that consume it.
+export type { BeatFacts } from "./manifest";
+
 export interface AgentRequest {
   manifest: Manifest;
   beatId: string;
   userMessage?: string;
-}
-
-/**
- * Structured facts the agent emits at markSufficient. The deterministic
- * orchestrator (see /api/orchestrate) reads BeatFacts — never raw
- * conversation. Without this, the orchestrator has nothing to dispatch on.
- */
-export interface BeatFacts {
-  subject?: string;
-  action?: string;
-  setting?: string;
-  framing?: string;
-  mood?: string;
-  /** Free-form character description; used for Imagen reference image. */
-  characterDescription?: string;
-  /** Free-form location description; used for Imagen reference image. */
-  locationDescription?: string;
 }
 
 export type AgentResponse =
@@ -64,6 +53,9 @@ export type AgentResponse =
 export type AgentStreamEvent =
   | { type: "ready" }
   | { type: "thought"; chunk: string }
+  // Gemini emits "text" when the model returns prose without selecting a
+  // tool. Treated like "thought" by the UI so the user sees live tokens.
+  | { type: "text"; chunk: string }
   | { type: "tool_call"; name: string; args: Record<string, unknown> }
   | ({ type: "result" } & (
       | { kind: "question"; question: string; reasoning: string; estimatedRemaining: number; suggestedAnswers?: [string, string, string] }

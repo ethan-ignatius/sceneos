@@ -17,16 +17,17 @@ orchestrator reads this — never the raw conversation.
 
 # Package layout (SOLID split from the old single-file agent.py)
 
-  tools.py        — askQuestion + markSufficient schemas (Gemini + Anthropic)
+  tools.py        — askQuestion + markSufficient schemas (Gemini-only)
   context.py      — conversation collection + cross-beat memory blocks
   prompt.py       — system prompt composition (huge string, mode-aware)
   stub.py         — no-LLM fallback (deterministic question bank)
   normalizer.py   — tool-call → AgentResponse shape
   repair.py       — redundancy / contradiction repair
-  messages.py     — Anthropic / Gemini message + config builders
-  anthropic.py    — Claude Haiku fallback path (with retry)
-  gemini.py       — main Gemini dispatch (non-streaming + streaming)
+  messages.py     — Gemini message + config builder
+  gemini.py       — Vertex Gemini dispatch (non-streaming + streaming)
   _constants.py   — TARGET_CLIP_SECONDS, THINKING_BUDGET_*, DEMO_MAX_QUESTIONS
+
+Vertex Gemini is the only LLM SceneOS uses; Anthropic was removed.
 
 # Public surface (back-compat)
 

@@ -2,7 +2,6 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { ArrowLeft, Trash2, Play } from "lucide-react";
 import { useBeatGraphStore } from "@/stores/beat-graph-store";
-import { Button } from "@/components/ui/button";
 import { DURATIONS, EASE, STAGGER } from "@/lib/motion-presets";
 
 /**
@@ -27,36 +26,31 @@ export function ProjectsRoute() {
   };
 
   return (
-    <main className="film-grain min-h-screen bg-bg-base px-6 py-10 md:py-14">
-      <div className="mx-auto max-w-[64rem] space-y-10">
-        <motion.header
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: DURATIONS.cinematic, ease: EASE.filmIn }}
-          className="space-y-3"
-        >
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-            <ArrowLeft size={12} strokeWidth={1.5} aria-hidden="true" />
-            Back to landing
-          </Button>
-          <div className="font-body text-[12px] font-medium text-fg-tertiary">
+    <main className="film-grain min-h-screen bg-bg-base px-6 py-6 md:py-8">
+      <div className="mx-auto max-w-[64rem] space-y-7">
+        {/* Top bar — caption-track status left, Back link right. No Fraunces
+            hero, no italic prose receipt. The list is the subject. */}
+        <header className="flex items-center justify-between gap-4">
+          <div className="font-body text-micro font-medium uppercase tracking-[0.08em] text-fg-tertiary">
             Projects · {projects.length} archived
           </div>
-          <h1 className="text-balance font-display text-display-md italic text-fg-primary">
-            Your reels.
-          </h1>
-          <p className="max-w-prose font-display italic text-lg text-fg-secondary">
-            Every project you've started is here. Pick one up, or strike <em>the</em> set.
-          </p>
-        </motion.header>
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary"
+          >
+            <ArrowLeft size={13} strokeWidth={1.5} aria-hidden="true" />
+            Landing
+          </button>
+        </header>
 
         {projects.length === 0 ? (
-          <div className="rounded-md border border-dashed border-fg-tertiary/25 bg-bg-elev-1/30 p-10 text-center">
-            <div className="font-display text-[1.5rem] italic leading-tight text-fg-secondary">
+          <div className="border-y border-fg-tertiary/15 py-16 text-center">
+            <div className="font-body text-body-sm font-medium text-fg-secondary">
               Nothing archived yet.
             </div>
-            <p className="mt-3 max-w-prose mx-auto font-body text-[13px] leading-relaxed text-fg-tertiary">
-              Save and exit a project from the canvas or editor and it'll land here. You can resume it later, or discard it for good.
+            <p className="mx-auto mt-2 max-w-prose font-body text-pill leading-relaxed text-fg-tertiary">
+              Save and exit a project from the canvas or editor and it lands here.
             </p>
           </div>
         ) : (
@@ -65,7 +59,7 @@ export function ProjectsRoute() {
             animate="visible"
             variants={{
               hidden: {},
-              visible: { transition: { staggerChildren: STAGGER.bubbles, delayChildren: 0.15 } },
+              visible: { transition: { staggerChildren: STAGGER.bubbles, delayChildren: 0.1 } },
             }}
             className="divide-y divide-fg-tertiary/12 border-y border-fg-tertiary/12"
           >
@@ -86,37 +80,37 @@ export function ProjectsRoute() {
                 <motion.li
                   key={p.id}
                   variants={{
-                    hidden: { opacity: 0, y: 8 },
+                    hidden: { opacity: 0, y: 4 },
                     visible: { opacity: 1, y: 0 },
                   }}
                   transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
-                  className="grid grid-cols-1 gap-3 py-5 sm:grid-cols-[1fr_auto] sm:items-center sm:gap-6"
+                  className="grid grid-cols-1 gap-2 py-4 sm:grid-cols-[1fr_auto] sm:items-center sm:gap-6"
                 >
-                  <div className="min-w-0 space-y-1.5">
-                    <div className="font-body text-[11px] tabular-nums text-fg-tertiary">
+                  <div className="min-w-0 space-y-1">
+                    <p className="line-clamp-2 font-body text-body-sm font-medium leading-snug text-fg-primary">
+                      {p.masterPrompt}
+                    </p>
+                    <div className="font-mono text-micro tabular-nums text-fg-tertiary">
                       {date} · {time} · {p.manifest.videoType} · {approved}/{total} approved
                     </div>
-                    <p className="line-clamp-2 font-display italic text-[1.125rem] leading-snug text-fg-primary">
-                      "{p.masterPrompt}"
-                    </p>
                   </div>
-                  <div className="flex flex-shrink-0 items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="primary"
+                  <div className="flex flex-shrink-0 items-center gap-1">
+                    <button
+                      type="button"
                       onClick={() => handleResume(p.id)}
+                      className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill font-medium text-brand-ember transition-colors hover:text-brand-ember/80"
                     >
-                      <Play size={11} strokeWidth={1.5} aria-hidden="true" />
+                      <Play size={11} strokeWidth={2} aria-hidden="true" />
                       Resume
-                    </Button>
+                    </button>
                     <button
                       type="button"
                       onClick={() => discardProject(p.id)}
                       aria-label={`Discard project: ${p.masterPrompt}`}
                       title="Discard"
-                      className="grid h-9 w-9 place-items-center rounded-full text-fg-tertiary transition-colors hover:text-state-error focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-state-error"
+                      className="grid h-7 w-7 cursor-pointer place-items-center text-fg-tertiary transition-colors hover:text-state-error focus-visible:outline-none"
                     >
-                      <Trash2 size={12} strokeWidth={1.5} aria-hidden="true" />
+                      <Trash2 size={11} strokeWidth={1.5} aria-hidden="true" />
                     </button>
                   </div>
                 </motion.li>

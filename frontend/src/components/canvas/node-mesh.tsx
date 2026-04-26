@@ -461,7 +461,7 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
           zIndexRange={[8, 0]}
         >
           <div
-            className="flex items-center gap-1.5 whitespace-nowrap font-body text-[14px] font-medium tracking-[-0.005em]"
+            className="flex items-center gap-1.5 whitespace-nowrap font-body text-body-sm font-medium tracking-[-0.005em]"
             style={{
               color: isApproved
                 ? "#f0a868"
@@ -481,7 +481,7 @@ export function NodeMesh({ beat, position, onHoverChange, introIndex = 0, isGuid
             {isApproved ? (
               <span
                 aria-label="Approved"
-                className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-brand-ember/90 text-[10px] font-bold leading-none text-bg-base"
+                className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-brand-ember/90 text-overline font-bold leading-none text-bg-base"
                 style={{ boxShadow: "0 0 12px rgba(240,168,104,0.6)" }}
               >
                 ✓
@@ -762,9 +762,9 @@ function GuidedTargetOverlay({
               e.stopPropagation();
               onActivate?.();
             }}
-            aria-label="Take me to this beat"
-            title="Take me there"
-            className="caption-track pointer-events-auto group whitespace-nowrap rounded-full border border-brand-ember/35 bg-bg-base/70 px-2.5 py-1 text-[9.5px] text-brand-ember backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-200 ease-out hover:border-brand-ember/65 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+            aria-label="You are here — open this beat"
+            title="You are here"
+            className="pointer-events-auto group whitespace-nowrap rounded-full border border-brand-ember/35 bg-bg-base/70 px-3 py-1.5 font-body text-[11.5px] font-medium text-brand-ember backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-200 ease-out hover:border-brand-ember/65 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
             style={{
               boxShadow: "0 0 18px rgba(240,168,104,0.22), inset 0 0 0 1px rgba(240,168,104,0.08)",
               textShadow: "0 1px 12px rgba(0,0,0,0.85)",

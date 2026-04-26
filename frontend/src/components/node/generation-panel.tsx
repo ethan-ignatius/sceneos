@@ -196,7 +196,7 @@ export function GenerationPanel({
           transition={{ duration: 6, ease: "linear", repeat: Infinity }}
         />
 
-        <div className="absolute left-6 top-3 flex items-center gap-2 font-mono text-[11px] tabular-nums text-fg-tertiary">
+        <div className="absolute left-6 top-3 flex items-center gap-2 font-mono text-caption tabular-nums text-fg-tertiary">
           <span aria-hidden className="ember-pulse h-1.5 w-1.5 rounded-full bg-brand-ember" />
           <span>
             <span className="text-fg-secondary">FR</span>{" "}
@@ -206,14 +206,14 @@ export function GenerationPanel({
           </span>
         </div>
 
-        <div className="absolute right-6 top-3 font-mono text-[11px] tabular-nums text-fg-tertiary/85">
+        <div className="absolute right-6 top-3 font-mono text-caption tabular-nums text-fg-tertiary/85">
           {resolutionLabel}
           <span className="mx-1.5 text-fg-tertiary/45">·</span>
           {codecLabel}
         </div>
 
         <div className="absolute inset-0 grid place-items-center px-12">
-          <div className="font-display text-[16px] italic text-brand-ember/90">
+          <div className="font-display text-body italic text-brand-ember/90">
             {STAGES[activeIndex].label.replace(/\.$/, "")}
             <span className="ml-0.5 inline-block animate-pulse">.</span>
           </div>
@@ -255,7 +255,7 @@ export function GenerationPanel({
             <li
               key={stage.id}
               className={cn(
-                "relative flex items-center gap-3 rounded-md px-3 py-2 font-body text-[13px]",
+                "relative flex items-center gap-3 rounded-md px-3 py-2 font-body text-meta",
                 done && "text-fg-secondary",
                 active && "text-brand-ember",
                 !done && !active && "text-fg-tertiary",
@@ -296,7 +296,7 @@ export function GenerationPanel({
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.24, ease: EASE.outQuart }}
             role="alert"
-            className="flex items-start gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2.5 font-body text-[12px] leading-snug text-state-error"
+            className="flex items-start gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2.5 font-body text-pill leading-snug text-state-error"
           >
             <AlertTriangle size={13} strokeWidth={1.6} aria-hidden="true" className="mt-px flex-shrink-0" />
             <div className="flex-1 space-y-1">
@@ -325,7 +325,7 @@ export function GenerationPanel({
       </AnimatePresence>
 
       {/* Live timer + provider stamp. */}
-      <div className="flex items-baseline justify-between border-t border-fg-tertiary/15 pt-3 font-body text-[12px] text-fg-tertiary">
+      <div className="flex items-baseline justify-between border-t border-fg-tertiary/15 pt-3 font-body text-pill text-fg-tertiary">
         <span>
           <span className={cn("font-mono tabular-nums", isStuck ? "text-state-error" : "text-fg-secondary")}>
             {formatTime(elapsed)}

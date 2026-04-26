@@ -57,6 +57,11 @@ export function EditorRoute() {
   const [streamingThought, setStreamingThought] = useState("");
   const [baking, setBaking] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
+  // Inline error chip for the agent panel (separate from boot/bake errors,
+  // which use toast). Stream errors land here so the user sees them
+  // anchored next to the conversation, with a retry hook.
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [pendingRetry, setPendingRetry] = useState<string | null>(null);
   const [urlCopied, setUrlCopied] = useState(false);
   const [selectedClipIndex, setSelectedClipIndex] = useState<number | null>(null);
   const editorAbortRef = useRef<AbortController | null>(null);
@@ -173,6 +178,7 @@ export function EditorRoute() {
       if (!manifest || !editor.decisions || thinking) return;
       setThinking(true);
       setStreamingThought("");
+      setAgentError(null);
       const ctrl = new AbortController();
       editorAbortRef.current = ctrl;
       // 60s ceiling — Vertex Gemini editor turns run ~6–10s warm; 60s
@@ -182,7 +188,8 @@ export function EditorRoute() {
       const timeoutId = window.setTimeout(() => {
         ctrl.abort();
         if (mountedRef.current) {
-          toast.error("Director took too long — try again.");
+          setAgentError("Director took too long — try again.");
+          if (userMessage) setPendingRetry(userMessage);
         }
       }, 60_000);
       try {
@@ -199,7 +206,7 @@ export function EditorRoute() {
           ctrl.signal,
         )) {
           if (!mountedRef.current) break;
-          if (ev.type === "thought") {
+          if (ev.type === "thought" || ev.type === "text") {
             setStreamingThought((prev) => prev + ev.chunk);
           } else if (ev.type === "result") {
             // Re-shape the SSE result into the same EditorTurnResponse
@@ -232,18 +239,24 @@ export function EditorRoute() {
             }
             setStreamingThought("");
           } else if (ev.type === "error") {
-            // Surface the error AND clear the thinking flag immediately so
-            // the agent panel exits its "Watching the cut" state right
-            // away rather than waiting for the finally block to fire on
-            // stream close. Toast for visibility; an inline error chip in
-            // the panel could come later if we add a setLatestError state.
-            toast.error(ev.message);
-            if (mountedRef.current) setThinking(false);
+            // Surface inline + clear thinking immediately so the panel
+            // drops the "Watching the cut" loader at the moment of error
+            // rather than waiting for the stream to close. Inline chip in
+            // the agent panel keeps the error anchored next to the
+            // conversation, with a retry hook tied to the last message.
+            if (mountedRef.current) {
+              setAgentError(ev.message);
+              if (userMessage) setPendingRetry(userMessage);
+              setThinking(false);
+            }
           }
         }
       } catch (err) {
         if ((err as Error)?.name === "AbortError") return;
-        toast.error(err instanceof ApiError ? err.message : "Agent turn failed.");
+        if (mountedRef.current) {
+          setAgentError(err instanceof ApiError ? err.message : "Agent turn failed.");
+          if (userMessage) setPendingRetry(userMessage);
+        }
       } finally {
         window.clearTimeout(timeoutId);
         if (mountedRef.current) setThinking(false);
@@ -340,6 +353,11 @@ export function EditorRoute() {
   };
 
   const handleCommitNow = () => {
+    // The editor agent's system prompt treats "lock it" / "ship it" /
+    // "looks good" as explicit commit signals — the next turn will emit
+    // kind:"commit" rather than another proposal. The result handler in
+    // callAgent then bakes + flips editor.committed; no dedicated commit
+    // endpoint exists by design.
     void callAgent("lock it");
   };
 
@@ -386,7 +404,7 @@ export function EditorRoute() {
             right. No Fraunces hero, no master-prompt quote. The cut is the
             subject; chrome stays out of its way. */}
         <header className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 font-body text-[11px] tabular-nums text-fg-tertiary">
+          <div className="flex items-center gap-3 font-body text-caption tabular-nums text-fg-tertiary">
             <span className="inline-flex items-center gap-1.5">
               <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-brand-ember" />
               Editing
@@ -402,7 +420,7 @@ export function EditorRoute() {
             <button
               type="button"
               onClick={handleSaveAndExit}
-              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-[12px] text-fg-tertiary transition-colors hover:text-fg-primary"
+              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary"
             >
               <LogOut size={13} strokeWidth={1.5} aria-hidden="true" />
               Save &amp; exit
@@ -410,7 +428,7 @@ export function EditorRoute() {
             <button
               type="button"
               onClick={handleBackToCanvas}
-              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-[12px] text-fg-tertiary transition-colors hover:text-fg-primary"
+              className="inline-flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary"
             >
               <ArrowLeft size={13} strokeWidth={1.5} aria-hidden="true" />
               Canvas
@@ -419,7 +437,7 @@ export function EditorRoute() {
               type="button"
               onClick={handleShipIt}
               disabled={!editor.finalUrl || baking || thinking}
-              className="inline-flex cursor-pointer items-center gap-1.5 bg-brand-ember px-3 py-1.5 font-body text-[12px] font-medium text-black transition-colors hover:bg-brand-ember/90 disabled:pointer-events-none disabled:opacity-40"
+              className="inline-flex cursor-pointer items-center gap-1.5 bg-brand-ember px-3 py-1.5 font-body text-pill font-medium text-black transition-colors hover:bg-brand-ember/90 disabled:pointer-events-none disabled:opacity-40"
             >
               Ship the cut
               <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
@@ -444,8 +462,8 @@ export function EditorRoute() {
                   aria-hidden
                   className="ember-pulse h-2 w-2 rounded-full bg-brand-ember shadow-[0_0_18px_rgba(240,168,104,0.55)]"
                 />
-                <span className="font-body text-[12.5px] text-fg-tertiary">
-                  Cloudinary is baking the cut.
+                <span className="font-body text-pill text-fg-tertiary">
+                  Baking the cut.
                 </span>
               </div>
             )}
@@ -498,9 +516,9 @@ export function EditorRoute() {
           {/* Right column — toolbar above, director chat below. The column
               is hairline-divided; no card chrome wraps either section. */}
           <aside className="space-y-8 lg:sticky lg:top-10 lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto lg:overflow-x-hidden lg:[scrollbar-width:thin]">
-            {editor.decisions ? (
-              <EditorToolbar decisions={editor.decisions} onPatch={patchGlobal} />
-            ) : null}
+            {/* Toolbar early-returns null while decisions are still loading;
+                mount unconditionally so callers don't have to gate. */}
+            <EditorToolbar decisions={editor.decisions} onPatch={patchGlobal} />
             <div className="lg:min-h-[28rem]">
               <EditorAgentPanel
                 conversation={editor.conversation}
@@ -513,6 +531,20 @@ export function EditorRoute() {
                 onCommitNow={handleCommitNow}
                 committed={editor.committed}
                 livingDecisions={editor.decisions}
+                error={agentError}
+                onRetry={
+                  pendingRetry && !thinking
+                    ? () => {
+                        const msg = pendingRetry;
+                        setPendingRetry(null);
+                        void callAgent(msg);
+                      }
+                    : undefined
+                }
+                onDismissError={() => {
+                  setAgentError(null);
+                  setPendingRetry(null);
+                }}
               />
             </div>
           </aside>
@@ -618,7 +650,7 @@ function CloudinaryArtifactStrip({
                 toast.error("Couldn't reach the clipboard.");
               }
             }}
-            className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+            className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
             aria-label="Copy master cut URL"
           >
             {urlCopied ? (
@@ -637,7 +669,7 @@ function CloudinaryArtifactStrip({
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+            className="inline-flex items-center gap-1.5 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
             aria-label="Open master cut URL in a new tab"
           >
             <ExternalLink size={11} strokeWidth={1.5} aria-hidden="true" />
@@ -646,7 +678,7 @@ function CloudinaryArtifactStrip({
         </div>
       </div>
 
-      <div className="break-all border border-fg-tertiary/15 bg-bg-base/40 p-3.5 font-mono text-[12px] leading-[1.65] text-fg-secondary">
+      <div className="break-all border border-fg-tertiary/15 bg-bg-base/40 p-3.5 font-mono text-pill leading-[1.65] text-fg-secondary">
         {url}
       </div>
 
@@ -669,7 +701,7 @@ function CloudinaryArtifactStrip({
           href={thumbnailUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="group inline-flex items-center gap-2 font-body text-[11px] text-fg-tertiary transition-colors hover:text-fg-primary"
+          className="group inline-flex items-center gap-2 font-body text-caption text-fg-tertiary transition-colors hover:text-fg-primary"
           aria-label="Open poster-frame derivative in a new tab"
         >
           <ImageIcon size={11} strokeWidth={1.5} aria-hidden="true" />

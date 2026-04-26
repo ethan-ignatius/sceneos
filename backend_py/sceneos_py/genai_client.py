@@ -1,13 +1,12 @@
 """
 Google Gemini (Vertex AI) client for the SceneOS agent.
 
-Returns a `google.genai.Client` configured for Vertex AI auth via
-GOOGLE_APPLICATION_CREDENTIALS. No API-key path — Vertex SA only.
+Vertex Gemini is the only LLM SceneOS uses. Returns a `google.genai.Client`
+configured for Vertex AI auth via GOOGLE_APPLICATION_CREDENTIALS. No API-key
+path — Vertex SA only.
 
-Why Gemini over Claude here:
-- The user already has GCP credentials (Veo + Imagen + Gemini share auth).
-- Vertex Gemini has free-tier credits.
-- One auth surface, one billing surface, fewer keys to juggle.
+One auth surface, one billing surface (Veo + Imagen + Gemini share GCP
+credentials), fewer keys to juggle.
 """
 from __future__ import annotations
 

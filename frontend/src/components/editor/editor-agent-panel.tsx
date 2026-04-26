@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { Send, Loader2, Lock } from "lucide-react";
+import { Send, Loader2, Lock, RotateCcw, X } from "lucide-react";
 import type { EditDecisions, EditorTurnResponse } from "@/types/api";
 import type { EditorTurn } from "@/stores/beat-graph-store";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,17 @@ interface EditorAgentPanelProps {
   onCommitNow: () => void;
   committed: boolean;
   livingDecisions: EditDecisions | null;
+  /**
+   * Inline error chip. When set, replaces the "Watching the cut" loader
+   * with a state-error band anchored above the input. Mirrors the
+   * agent-bubble-stream pattern so both surfaces report errors the
+   * same way.
+   */
+  error?: string | null;
+  /** Provided when the failed turn carried a user message worth retrying. */
+  onRetry?: () => void;
+  /** Dismiss the chip without retrying. */
+  onDismissError?: () => void;
 }
 
 /**
@@ -39,6 +50,9 @@ export function EditorAgentPanel({
   onCommitNow,
   committed,
   livingDecisions,
+  error = null,
+  onRetry,
+  onDismissError,
 }: EditorAgentPanelProps) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -77,13 +91,16 @@ export function EditorAgentPanel({
         className="flex-1 space-y-4 overflow-y-auto pb-4 pr-1 [scrollbar-width:thin]"
       >
         {conversation.length === 0 && !thinking && !latest ? (
-          <p className="font-body text-[13px] leading-relaxed text-fg-tertiary">
+          <p className="font-body text-meta leading-relaxed text-fg-tertiary">
             Tell me what to refine, or wait for a suggestion.
           </p>
         ) : null}
 
         {conversation.map((t, i) => (
-          <ConversationTurn key={i} turn={t} />
+          // Composite key matches agent-bubble-stream's pattern: role-index-
+          // timestamp. Stable across appends; index alone churns when the
+          // agent inserts a turn out-of-order or the list is filtered.
+          <ConversationTurn key={`${t.role}-${i}-${t.timestamp}`} turn={t} />
         ))}
 
         {thinking ? (
@@ -103,7 +120,7 @@ export function EditorAgentPanel({
                   animate={{ opacity: [0.35, 1, 0.35] }}
                   transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
                 />
-                <span className="font-body text-[10px] font-medium uppercase tracking-[0.08em] text-fg-tertiary">
+                <span className="font-body text-overline font-medium uppercase tracking-[0.08em] text-fg-tertiary">
                   Thinking
                 </span>
               </div>
@@ -126,14 +143,14 @@ export function EditorAgentPanel({
         <AnimatePresence mode="wait">
           {proposal ? (
             <motion.div
-              key={proposal.rationale}
+              key={`proposal-${conversation.length}`}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
               className="space-y-3 border-t border-fg-tertiary/15 pt-3"
             >
-              <p className="font-body text-[13px] leading-relaxed text-fg-primary">
+              <p className="font-body text-meta leading-relaxed text-fg-primary">
                 {proposal.rationale}
               </p>
               <div className="flex items-center gap-3">
@@ -144,7 +161,7 @@ export function EditorAgentPanel({
                     <button
                       type="button"
                       onClick={onAcceptProposal}
-                      className="cursor-pointer font-body text-[12px] font-medium text-brand-ember transition-colors hover:text-brand-ember/80"
+                      className="cursor-pointer font-body text-pill font-medium text-brand-ember transition-colors hover:text-brand-ember/80"
                     >
                       Apply
                     </button>
@@ -152,7 +169,7 @@ export function EditorAgentPanel({
                     <button
                       type="button"
                       onClick={onRevertProposal}
-                      className="cursor-pointer font-body text-[12px] text-fg-tertiary transition-colors hover:text-fg-primary"
+                      className="cursor-pointer font-body text-pill text-fg-tertiary transition-colors hover:text-fg-primary"
                     >
                       Keep mine
                     </button>
@@ -162,9 +179,9 @@ export function EditorAgentPanel({
 
               {proposal.suggestedFollowups.length > 0 ? (
                 <div className="border-t border-fg-tertiary/12">
-                  {proposal.suggestedFollowups.map((s, i) => (
+                  {proposal.suggestedFollowups.map((s) => (
                     <button
-                      key={i}
+                      key={s}
                       type="button"
                       onClick={() => handleSuggestion(s)}
                       disabled={thinking || committed}
@@ -186,21 +203,57 @@ export function EditorAgentPanel({
 
           {commit ? (
             <motion.div
-              key={commit.summary}
+              key={`commit-${conversation.length}`}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
               className="space-y-1.5 border-t border-state-success/40 pt-3"
             >
-              <div className="font-body text-[10px] font-medium uppercase tracking-[0.08em] text-state-success">
+              <div className="font-body text-overline font-medium uppercase tracking-[0.08em] text-state-success">
                 Locked
               </div>
-              <p className="font-body text-[13px] font-medium leading-snug text-fg-primary">
+              <p className="font-body text-meta font-medium leading-snug text-fg-primary">
                 {commit.summary}
               </p>
               <p className="font-body text-pill leading-relaxed text-fg-tertiary">
                 {commit.rationale}
               </p>
+            </motion.div>
+          ) : null}
+
+          {error ? (
+            <motion.div
+              key="error"
+              role="alert"
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
+              className="flex items-start justify-between gap-3 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 font-body text-pill text-state-error"
+            >
+              <span className="leading-snug">{error}</span>
+              <div className="flex shrink-0 items-center gap-3">
+                {onRetry ? (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="inline-flex cursor-pointer items-center gap-1 text-fg-secondary transition-colors hover:text-fg-primary"
+                  >
+                    <RotateCcw size={11} strokeWidth={1.5} aria-hidden="true" />
+                    Retry
+                  </button>
+                ) : null}
+                {onDismissError ? (
+                  <button
+                    type="button"
+                    onClick={onDismissError}
+                    aria-label="Dismiss error"
+                    className="cursor-pointer text-fg-tertiary transition-colors hover:text-fg-primary"
+                  >
+                    <X size={11} strokeWidth={1.5} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
             </motion.div>
           ) : null}
         </AnimatePresence>
@@ -217,7 +270,7 @@ export function EditorAgentPanel({
             placeholder={committed ? "Cut is locked" : "Tighten beat 4 by half a second…"}
             disabled={thinking || committed}
             className={cn(
-              "flex-1 bg-transparent py-2 font-body text-[13px] text-fg-primary outline-none",
+              "flex-1 bg-transparent py-2 font-body text-meta text-fg-primary outline-none",
               "placeholder:text-fg-tertiary/60",
               "disabled:cursor-not-allowed",
             )}
@@ -267,7 +320,7 @@ function ConversationTurn({ turn }: { turn: EditorTurn }) {
     );
   }
   return (
-    <p className="font-body text-[13px] leading-relaxed text-fg-secondary">
+    <p className="font-body text-meta leading-relaxed text-fg-secondary">
       {turn.content}
     </p>
   );

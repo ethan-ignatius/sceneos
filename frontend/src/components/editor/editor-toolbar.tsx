@@ -29,10 +29,8 @@ interface EditorToolbarProps {
  * Every change re-bakes the Cloudinary URL via /api/editor/apply.
  */
 export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
-  // Defensive null guard. The route conditionally mounts the toolbar
-  // today, but that guard could regress under refactor or a future caller
-  // could pass null directly — early-return here so a stale state never
-  // crashes the right rail with "cannot read property of null."
+  // The toolbar owns its loading-state contract — callers mount it
+  // unconditionally and we early-return while decisions are still pending.
   if (!decisions) return null;
   const audio = decisions.audio ?? null;
   const look = decisions.look ?? "neutral";
@@ -104,7 +102,7 @@ export function EditorToolbar({ decisions, onPatch }: EditorToolbarProps) {
               })
             }
             className={cn(
-              "mt-2 font-body text-[12px] transition-colors",
+              "mt-2 font-body text-pill transition-colors",
               decisions.duckOriginalAudioDb != null
                 ? "text-brand-ember hover:text-brand-ember/80"
                 : "text-fg-tertiary hover:text-fg-primary",
@@ -171,7 +169,7 @@ function ToolbarSection({
           {eyebrow}
         </span>
         {hint ? (
-          <span className="font-body text-[11px] text-fg-tertiary/70">{hint}</span>
+          <span className="font-body text-caption text-fg-tertiary/70">{hint}</span>
         ) : null}
       </div>
       {children}

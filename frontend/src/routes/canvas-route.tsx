@@ -140,9 +140,17 @@ export function CanvasRoute() {
           Top-right: a single compact rounded-full pill — Stitch progress.
           That's it. The decompose indicator floats as a thin top-edge bar
           while the API call is in flight, then disappears. */}
+      {/* Stitch pill hidden while the tray is open — the tray's own
+          header already shows the count and the open/close affordance,
+          so leaving the pill visible was a doubled card stacked over
+          the tray edge. AnimatePresence fades it out cleanly. */}
+      <AnimatePresence>
+      {!stitchOpen ? (
       <motion.div
+        key="stitch-pill"
         initial={{ opacity: 0, y: -4 }}
         animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4 }}
         transition={{ duration: DURATIONS.smooth, ease: EASE.outQuart }}
         className="pointer-events-none absolute right-4 top-4 z-20 md:right-6 md:top-5"
       >
@@ -150,7 +158,7 @@ export function CanvasRoute() {
           type="button"
           onClick={() => setStitchOpen(!stitchOpen)}
           aria-label={`Open stitch tray — ${approvedCount} of ${totalCount} beats ready`}
-          className="pointer-events-auto group inline-flex min-h-10 items-center gap-3 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 py-2 pl-4 pr-3.5 backdrop-blur-xl shadow-[0_8px_24px_-12px_rgba(0,0,0,0.55)] transition-[border-color,background-color] duration-200 hover:border-brand-ember/45 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
+          className="pointer-events-auto group inline-flex min-h-10 items-center gap-3 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 py-2 pl-4 pr-3.5 backdrop-blur-xl shadow-(--shadow-pill) transition-[border-color,background-color] duration-200 hover:border-brand-ember/45 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
         >
           <span
             aria-hidden
@@ -169,13 +177,15 @@ export function CanvasRoute() {
               as a magazine pull-quote and pulled the eye too hard. Now
               plain body tabular-nums to match the "Save & exit" pill on
               the left and the StageIndicator's count. */}
-          <span className="font-body text-[12px] tabular-nums text-fg-tertiary">
+          <span className="font-body text-pill tabular-nums text-fg-tertiary">
             {approvedCount}
             <span className="mx-1 text-fg-tertiary/45">/</span>
             {totalCount}
           </span>
         </button>
       </motion.div>
+      ) : null}
+      </AnimatePresence>
 
       {/* Decompose status — a thin self-contained bar at the top edge.
           On <md viewports the Save & exit (left) and Stitch (right) pills
@@ -209,7 +219,7 @@ export function CanvasRoute() {
           className="pointer-events-auto group inline-flex min-h-9 items-center gap-2 rounded-full border border-fg-tertiary/18 bg-bg-elev-1/70 px-3 py-1.5 backdrop-blur-xl transition-[border-color,background-color,color] duration-200 hover:border-fg-tertiary/40 hover:bg-bg-elev-1/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ember focus-visible:ring-offset-2 focus-visible:ring-offset-bg-base"
         >
           <LogOut size={11} strokeWidth={1.5} aria-hidden="true" className="text-fg-tertiary transition-colors group-hover:text-fg-secondary" />
-          <span className="font-body text-[12px] font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
+          <span className="font-body text-pill font-medium text-fg-tertiary transition-colors group-hover:text-fg-secondary">
             Save &amp; exit
           </span>
         </button>
@@ -281,7 +291,7 @@ function CanvasFallback() {
           aria-hidden
           className="ember-pulse h-2 w-2 rounded-full bg-brand-ember shadow-[0_0_18px_rgba(240,168,104,0.45)]"
         />
-        <p className="font-body text-[12px] tracking-[0.04em] text-fg-tertiary/80">
+        <p className="font-body text-pill tracking-[0.04em] text-fg-tertiary/80">
           pulling focus
         </p>
       </div>
@@ -296,7 +306,7 @@ function CanvasMissingManifestFallback() {
   return (
     <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
       <div className="max-w-md space-y-5 text-center">
-        <div className="font-body text-[12px] font-medium text-fg-tertiary">No active project</div>
+        <div className="font-body text-pill font-medium text-fg-tertiary">No active project</div>
         <h2 className="text-balance font-display text-display-md italic leading-snug text-fg-primary">
           Start with a sentence.
         </h2>
@@ -320,7 +330,7 @@ function CanvasEmptyBeatsFallback() {
   return (
     <main className="grid min-h-screen w-screen place-items-center bg-bg-base p-8">
       <div className="max-w-md space-y-5 text-center">
-        <div className="font-body text-[12px] font-medium text-state-error">Stale project state</div>
+        <div className="font-body text-pill font-medium text-state-error">Stale project state</div>
         <h2 className="text-balance font-display text-display-md italic leading-snug text-fg-primary">
           The manifest is empty.
         </h2>

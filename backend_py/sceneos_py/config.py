@@ -36,10 +36,6 @@ def _has_vertex_creds() -> bool:
     return bool(project_id and creds)
 
 
-def _has_anthropic_or_openai() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("OPENAI_API_KEY"))
-
-
 def _has_higgsfield_creds() -> bool:
     return bool(os.getenv("HIGGSFIELD_API_KEY") and os.getenv("HIGGSFIELD_API_SECRET"))
 
@@ -50,18 +46,13 @@ def mock_mode() -> bool:
 
     Resolution order:
       1. Explicit MOCK_MODE env override always wins. Set MOCK_MODE=false
-         in production (after the chip removal) to force real backend even
-         on partial creds.
-      2. Real mode requires Cloudinary creds AND at least one viable
-         agent path (Vertex Gemini OR Anthropic/OpenAI) AND at least one
-         viable video-gen path (Vertex Veo OR Higgsfield).
-      3. Anything missing → MOCK_MODE on, so the dev never sees a
-         silent NoneType crash deep in a provider call.
-
-    The Tier 3 frontend chip is gone, but the mock fallback at the
-    BACKEND remains as a safety net for dev environments without keys.
-    Without this, a missing ANTHROPIC_API_KEY would 502 every /api/agent
-    call and lock the user at "Composing the shot." spinner.
+         in production to force real backend even on partial creds.
+      2. Real mode requires Cloudinary creds AND Vertex creds (the only
+         LLM/video stack — Vertex Gemini for the agent + decompose +
+         editor, Vertex Veo for video). Higgsfield is an optional
+         alternate video lane.
+      3. Anything missing → MOCK_MODE on, so the dev never sees a silent
+         NoneType crash deep in a provider call.
     """
     explicit = os.getenv("MOCK_MODE")
     if explicit is not None:
@@ -70,6 +61,6 @@ def mock_mode() -> bool:
     if not _has_cloudinary_creds():
         return True
 
-    has_agent = _has_vertex_creds() or _has_anthropic_or_openai()
+    has_agent = _has_vertex_creds()
     has_video = _has_vertex_creds() or _has_higgsfield_creds()
     return not (has_agent and has_video)

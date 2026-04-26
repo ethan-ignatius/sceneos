@@ -6,9 +6,9 @@ interface EditorPreviewProps {
   src: string;
   /** Total duration the cut bakes to (from /api/editor/apply) for the readout. */
   durationSeconds?: number;
-  /** Re-baking pill shown top-right while a debounced bake is in flight. */
+  /** Baking pill shown top-right while a debounced bake is in flight. */
   baking?: boolean;
-  /** Re-baking caption when `baking` is true. */
+  /** Override the default "Baking the cut" caption when `baking` is true. */
   bakingCaption?: string;
   className?: string;
 }
@@ -30,7 +30,7 @@ export function EditorPreview({
   src,
   durationSeconds,
   baking = false,
-  bakingCaption = "Re-baking",
+  bakingCaption = "Baking the cut",
   className,
 }: EditorPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);

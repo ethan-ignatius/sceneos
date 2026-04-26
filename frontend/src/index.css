@@ -203,12 +203,6 @@
     font-family: var(--font-mono);
   }
 
-  /* .caption-track utility removed — all consumers migrated to the
-     text-pill / text-chip / text-micro token system. The phantom-class
-     era left a long comment here documenting the lock-down rules; the
-     tokens replace it cleanly. If a chrome-label utility comes back,
-     define it here with the same family/weight/case discipline. */
-
   /* Z-index hierarchy (single source of truth — DO NOT use ad-hoc values):
        5   film-grain                       (under all UI)
        10  persistent URL strip             (canvas chrome, bottom)

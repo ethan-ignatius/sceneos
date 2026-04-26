@@ -108,10 +108,46 @@ export type BeatMood =
   | "still-resolve"
   | "punchy-sting";
 
+/**
+ * Structured facts the agent emits at markSufficient. The deterministic
+ * orchestrator (see /api/orchestrate) reads BeatFacts — never raw
+ * conversation. Without this, the orchestrator has nothing to dispatch on.
+ *
+ * Lives in manifest.ts (not api.ts) so Scene can reference it without an
+ * import cycle. Re-exported from "@/types/api" for the consumers that
+ * import it alongside the request/response shapes.
+ */
+export interface BeatFacts {
+  subject?: string;
+  action?: string;
+  setting?: string;
+  framing?: string;
+  mood?: string;
+  /** Free-form character description; used for Imagen reference image. */
+  characterDescription?: string;
+  /** Free-form location description; used for Imagen reference image. */
+  locationDescription?: string;
+  /**
+   * One short narration or dialogue line for this beat (8–18 words,
+   * roughly 5 seconds spoken). Whatever the audience hears over the
+   * image — VO or single overheard line.
+   */
+  voiceLine?: string;
+  /** Optional 5–10 word on-screen phrase (chapter card, stylized cue). */
+  captionLine?: string;
+}
+
 export interface Scene {
   sceneId: string;
   conversation: AgentTurn[];
   refinedPrompt?: string;
+  /**
+   * Structured handoff captured when the agent emits `kind: "sufficient"`.
+   * Forward-compat for /api/orchestrate, which expects `beatFacts` on the
+   * request body. Persisting it on the scene means we don't have to ask
+   * the agent to re-derive it after a resume.
+   */
+  beatFacts?: BeatFacts;
   /** Stamped by /api/orchestrate when it composes the final prompt. */
   clipPrompt?: ClipPrompt;
   jobId?: string;

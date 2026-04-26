@@ -160,7 +160,7 @@ export function CommandMenu() {
                 data-lenis-prevent
                 className="max-h-[24rem] overflow-y-auto p-2 [scrollbar-width:thin]"
               >
-                <Command.Empty className="px-3 py-6 text-center font-display text-[14px] italic text-fg-tertiary">
+                <Command.Empty className="px-3 py-6 text-center font-display text-body-sm italic text-fg-tertiary">
                   No matches.
                 </Command.Empty>
 
