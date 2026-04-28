@@ -43,65 +43,45 @@ if (typeof window !== "undefined" && window.speechSynthesis) {
 let _audio: HTMLAudioElement | null = null;
 const _cache = new Map<string, { text: string; audioSrc: string | null; durationSeconds: number }>();
 
-// Shared Web Audio plumbing for the narrator. Routing the
-// HTMLAudioElement through a MediaElementSource → GainNode → destination
-// lets us drive a gain > 1.0, which is what HTMLAudioElement.volume
-// can't do on its own (capped at 1.0). ElevenLabs' MP3 output is
-// pre-mastered at a moderate level — 1.0 was reading as "quiet"
-// against a 1080p background-video soundbed. 1.6x is the sweet spot:
-// audible over the hero loop without clipping the narrator's chest
-// register.
-let _audioCtx: AudioContext | null = null;
-let _gainNode: GainNode | null = null;
-const _connectedAudios = new WeakSet<HTMLAudioElement>();
-const NARRATOR_GAIN = 1.6;
-
-function _ensureAudioGraph(): GainNode | null {
-  if (typeof window === "undefined") return null;
-  if (_gainNode && _audioCtx) {
-    if (_audioCtx.state === "suspended") {
-      // Browsers gate AudioContext behind a user gesture. If we hit a
-      // "narrate now" moment before any click, the context is suspended
-      // — try to resume; if the gesture hasn't happened yet, the resume
-      // is a no-op until the next interaction. Either way, fall through
-      // and the HTMLAudio plays at its native level.
-      _audioCtx.resume().catch(() => {});
+// Pending moment queue. When a new moment fires while one is already
+// playing or loading, we enqueue instead of preempting — that's why
+// the user kept hearing the director cut off mid-sentence as they
+// navigated through the app. Capped at 2 so a flood of moments
+// doesn't echo back-to-back for minutes; the oldest gets dropped
+// when the cap is exceeded.
+type PendingMoment =
+  | {
+      kind: "moment";
+      moment: NarrationMoment;
+      context: Record<string, unknown>;
+      beatId?: string;
     }
-    return _gainNode;
-  }
-  try {
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
-    _audioCtx = new Ctx();
-    _gainNode = _audioCtx.createGain();
-    _gainNode.gain.value = NARRATOR_GAIN;
-    _gainNode.connect(_audioCtx.destination);
-    if (_audioCtx.state === "suspended") {
-      _audioCtx.resume().catch(() => {});
-    }
-    return _gainNode;
-  } catch {
-    return null;
-  }
+  | {
+      kind: "summary";
+      manifest: Manifest;
+      continuityBible?: string;
+    };
+const _queue: PendingMoment[] = [];
+const QUEUE_MAX = 2;
+function _enqueue(p: PendingMoment): void {
+  while (_queue.length >= QUEUE_MAX) _queue.shift();
+  _queue.push(p);
 }
 
-function _attachAudioToGraph(audio: HTMLAudioElement): void {
-  if (_connectedAudios.has(audio)) return;
-  const gain = _ensureAudioGraph();
-  if (!gain || !_audioCtx) return;
-  try {
-    const src = _audioCtx.createMediaElementSource(audio);
-    src.connect(gain);
-    _connectedAudios.add(audio);
-  } catch {
-    // createMediaElementSource throws if the element is already wired
-    // OR cross-origin without CORS. ElevenLabs MP3s come as data: URIs
-    // in our path, so cross-origin isn't an issue, but the try/catch
-    // is here in case a future call site uses a remote URL — we'll
-    // just play through the audio element's native output at 1.0.
-  }
+// Web Audio routing was removed. The previous version connected the
+// HTMLAudioElement through a GainNode at 1.6× to ride over the hero
+// loop, but ElevenLabs masters MP3s with peaks near 0 dB — 1.6× of
+// a near-0 dB peak clipped on every line. Chrome's soft-limiter
+// then pulled the signal back down to safe levels, which is the
+// "helicopter loud at first then quiets" the user reported. The
+// fix is to play the audio at its native level via HTMLAudioElement
+// (max 1.0) and rely on the upstream master being audible on its
+// own. If we ever need a touch more headroom, add a
+// DynamicsCompressorNode (gentle limiter) before any GainNode bump.
+function _attachAudioToGraph(_audio: HTMLAudioElement): void {
+  // Intentionally a no-op now. Kept as a hook for the future
+  // compressor + gain path so the call site in _playAudio doesn't
+  // change shape and accidentally re-introduce the clipping bug.
 }
 
 function _cacheKey(moment: NarrationMoment, beatId?: string): string {
@@ -274,11 +254,31 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
 
   stop: () => {
     _stopAudio();
+    // Clear the queue too — if the user hits skip mid-line, they
+    // shouldn't immediately get the queued next line as a "surprise"
+    // continuation. Skip means "stop the narrator entirely for now."
+    _queue.length = 0;
     set({ status: "idle", currentText: null, currentMoment: null, currentBeatId: null });
   },
 
   playMoment: async (moment, context, beatId) => {
     if (isAudioMuted()) return;
+
+    // Queue when the director is mid-line. Without this gate the new
+    // call would `_stopAudio()` the playing line and start a fresh
+    // load — the user heard "This is fant—" / "On the canvas—" /
+    // "Beat one—" cutting each other off as they navigated. The
+    // queue lets each moment finish, then the next plays.
+    const liveStatus = get().status;
+    if (liveStatus === "playing" || liveStatus === "loading") {
+      _enqueue({ kind: "moment", moment, context, beatId });
+      return;
+    }
+
+    const setStatusWithDrain = (s: NarrationStatus) => {
+      set({ status: s });
+      if (s === "done" || s === "error") _drainNarrationQueue();
+    };
 
     const key = _cacheKey(moment, beatId);
     const cached = _cache.get(key);
@@ -292,7 +292,7 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
     if (cached && cached.audioSrc) {
       _stopAudio();
       set({ currentText: cached.text, currentMoment: moment, currentBeatId: beatId ?? null });
-      _playAudio(cached.audioSrc, (s) => set({ status: s }));
+      _playAudio(cached.audioSrc, setStatusWithDrain);
       return;
     }
 
@@ -322,19 +322,19 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
           set({ status: "playing" });
           _speakWithBrowserTTS(
             text,
-            () => set({ status: "done" }),
-            () => set({ status: "error" }),
+            () => setStatusWithDrain("done"),
+            () => setStatusWithDrain("error"),
           );
         } else {
-          set({ status: "done" });
+          setStatusWithDrain("done");
         }
         return;
       }
 
-      _playAudio(audioSrc, (s) => set({ status: s }));
+      _playAudio(audioSrc, setStatusWithDrain);
     } catch (err) {
       console.warn(`[narration] ${moment} failed:`, err);
-      set({ status: "error" });
+      setStatusWithDrain("error");
     }
   },
 
@@ -351,15 +351,26 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
   playSummaryNarration: async (manifest, continuityBible) => {
     if (isAudioMuted()) return;
 
+    // Same queue gate as playMoment — summary should never preempt
+    // a beat-level narration that's still finishing.
+    const liveStatus = get().status;
+    if (liveStatus === "playing" || liveStatus === "loading") {
+      _enqueue({ kind: "summary", manifest, continuityBible });
+      return;
+    }
+
+    const setStatusWithDrain = (s: NarrationStatus) => {
+      set({ status: s });
+      if (s === "done" || s === "error") _drainNarrationQueue();
+    };
+
     const key = _cacheKey("summary");
     const cached = _cache.get(key);
 
-    // Only treat the cache as a hit when it has real audio (see the
-    // playMoment comment for the rationale).
     if (cached && cached.audioSrc) {
       _stopAudio();
       set({ currentText: cached.text, currentMoment: "summary", currentBeatId: null });
-      _playAudio(cached.audioSrc, (s) => set({ status: s }));
+      _playAudio(cached.audioSrc, setStatusWithDrain);
       return;
     }
 
@@ -380,21 +391,37 @@ export const useNarrationStore = create<NarrationState>((set, get) => ({
           set({ status: "playing" });
           _speakWithBrowserTTS(
             text,
-            () => set({ status: "done" }),
-            () => set({ status: "error" }),
+            () => setStatusWithDrain("done"),
+            () => setStatusWithDrain("error"),
           );
         } else {
-          set({ status: "done" });
+          setStatusWithDrain("done");
         }
         return;
       }
-      _playAudio(audioSrc, (s) => set({ status: s }));
+      _playAudio(audioSrc, setStatusWithDrain);
     } catch (err) {
       console.warn("[narration] summary failed:", err);
-      set({ status: "error" });
+      setStatusWithDrain("error");
     }
   },
 }));
+
+// Drain helper — defined after the store so it can call the same
+// store actions to fire the next queued moment. Slight 200ms gap
+// between consecutive lines so they don't sound mashed together.
+function _drainNarrationQueue(): void {
+  const next = _queue.shift();
+  if (!next) return;
+  window.setTimeout(() => {
+    const store = useNarrationStore.getState();
+    if (next.kind === "moment") {
+      void store.playMoment(next.moment, next.context, next.beatId);
+    } else {
+      void store.playSummaryNarration(next.manifest, next.continuityBible);
+    }
+  }, 200);
+}
 
 /**
  * Convenience hook — thin wrapper that reads the store.

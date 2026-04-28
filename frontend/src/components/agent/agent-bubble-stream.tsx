@@ -267,7 +267,10 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
             timestamp: nowISO(),
           });
           updateBeat(beat.beatId, { status: "questioning" });
-          setLatestSuggestions(ev.suggestedAnswers ?? null);
+          // Always coerce to an array so the "Open response" hint shows
+          // even when Gemini returns no suggestions. null suggestion =
+          // dead silence in the panel; [] = hint that you can type.
+          setLatestSuggestions(Array.isArray(ev.suggestedAnswers) ? ev.suggestedAnswers : []);
         } else {
           // Edge case: agent considers itself sufficient on first turn.
           // Invalidate any speculative pre-bake — the refinedPrompt the

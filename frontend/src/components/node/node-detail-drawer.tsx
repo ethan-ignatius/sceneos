@@ -553,23 +553,35 @@ export function NodeDetailDrawer() {
     void handleGenerate();
   }, [beat, handleGenerate]);
 
-  // Auto-advance — when the beat is approved, wait a beat then
-  // advance to the next pending beat OR open the stitch tray on the
-  // last one. Manual "Next beat" button still exists as an override
-  // during the wait window.
-  //
-  // Bumped from 1.6s → 3.0s after the user flagged "instantly backs
-  // out of a node after generation" — 1.6s clipped past the approval
-  // chime and the green ✓ animation before the eye registered them.
-  // 3s is long enough that the user reads "Approved" + the
-  // refinedPrompt and feels the take land before the drawer slides
-  // to the next beat.
-  const autoAdvancedRef = useRef<string | null>(null);
+  // Auto-advance — when the beat is approved (auto-approve in
+  // ClipPreview just fired), wait a beat (1.6s — long enough for the
+  // user to register the approval) then advance to the next pending
+  // beat OR open the stitch tray on the last one. Manual "Next beat"
+  // button still exists as an override during the wait window.
+  // Auto-advance once per beat per drawer session — not every time the
+  // user re-opens an already-approved planet to look at the footage.
+  // Tracks ALL beat IDs we've already advanced from in a Set, plus
+  // remembers each beat's status on first sight so we only auto-advance
+  // when the beat TRANSITIONS into approved during this visit (not when
+  // it was already approved before the user clicked in).
+  const autoAdvancedSetRef = useRef<Set<string>>(new Set());
+  const beatInitialStatusRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
-    if (!beat || beat.status !== "approved") return;
+    if (!beat) return;
     const key = beat.beatId;
-    if (autoAdvancedRef.current === key) return;
-    autoAdvancedRef.current = key;
+    // First time we see this beat in this session: snapshot its status.
+    if (!beatInitialStatusRef.current.has(key)) {
+      beatInitialStatusRef.current.set(key, beat.status);
+    }
+    if (beat.status !== "approved") return;
+    if (autoAdvancedSetRef.current.has(key)) return;
+    // Only fire when the beat transitioned INTO approved during this
+    // drawer session — i.e. it wasn't already approved when the user
+    // first opened it. Re-clicking a finished beat to review footage
+    // should never auto-advance.
+    const initial = beatInitialStatusRef.current.get(key);
+    if (initial === "approved") return;
+    autoAdvancedSetRef.current.add(key);
     const t = window.setTimeout(() => {
       handleGoNext();
     }, 3000);
