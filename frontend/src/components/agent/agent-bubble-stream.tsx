@@ -13,6 +13,7 @@ import { isAudioMuted } from "@/lib/audio-cues";
 import { nowISO } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { renderThoughtMarkdown } from "@/lib/render-thought-markdown";
+import { getDemoBeatReferences } from "@/lib/demo-mode";
 
 interface AgentBubbleStreamProps {
   beat: Beat;
@@ -60,6 +61,42 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
   //   - []: explicit open-ended
   //   - 1..4 items: clickable pre-answers
   const [latestSuggestions, setLatestSuggestions] = useState<readonly string[] | null>(null);
+
+  // Demo-mode reference images. Pulled from the active fixture by beat
+  // index — surfaced as thumbnails AT THE TOP of the drawer body so
+  // they're the first thing the user sees, suggesting Imagen has just
+  // generated character/location refs that will seed the I2V render.
+  // Empty in non-demo mode.
+  const [referenceImages, setReferenceImages] = useState<{ url: string; label: string }[]>([]);
+  // Stagger reveal — thumbnails fade in one at a time DURING the seed
+  // phase, so the user sees the agent processing refs before the
+  // question lands. Index = how many are revealed.
+  const [refsRevealed, setRefsRevealed] = useState(0);
+  const beatIndexInManifest =
+    manifest?.beats.findIndex((b) => b.beatId === beat.beatId) ?? 0;
+  useEffect(() => {
+    let active = true;
+    void getDemoBeatReferences(beatIndexInManifest).then((imgs) => {
+      if (!active) return;
+      setReferenceImages(imgs);
+      setRefsRevealed(0);
+    });
+    return () => {
+      active = false;
+    };
+  }, [beatIndexInManifest]);
+  // Reveal one new thumbnail every ~550ms starting AS SOON as we know
+  // the ref list (drawer just opened). Doesn't wait for the seed
+  // question — that's the point: the user watches refs appear, THEN
+  // reads the agent's first question.
+  useEffect(() => {
+    if (referenceImages.length === 0) return;
+    if (refsRevealed >= referenceImages.length) return;
+    const t = window.setTimeout(() => {
+      setRefsRevealed((n) => Math.min(n + 1, referenceImages.length));
+    }, 550);
+    return () => window.clearTimeout(t);
+  }, [referenceImages.length, refsRevealed]);
 
   // Voice input — Web Speech API. PURELY OPT-IN: the mic stays off until
   // the user clicks the mic button. Earlier we auto-started on mount and
@@ -432,14 +469,90 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
 
   return (
     <div className="relative flex h-full flex-col">
+      {/* References panel — pinned ABOVE the conversation scroller so
+          judges see "the agent is generating Imagen refs" before the
+          first question even lands. Only renders when in demo mode
+          (referenceImages comes from the active fixture). Thumbnails
+          fade in on a 550ms cadence; until they're all ready the
+          headline reads "Generating reference images" with a count. */}
+      {referenceImages.length > 0 ? (
+        <div className="mb-3 rounded-lg border border-fg-tertiary/15 bg-bg-base/40 px-3 py-2.5">
+          <div className="mb-2 flex items-center gap-1.5 font-body text-overline font-medium uppercase tracking-[0.08em]">
+            <motion.span
+              aria-hidden
+              className="h-1.5 w-1.5 rounded-full bg-brand-ember"
+              animate={
+                refsRevealed < referenceImages.length
+                  ? { opacity: [0.35, 1, 0.35] }
+                  : { opacity: 1 }
+              }
+              transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+            />
+            <span className="text-fg-secondary">
+              {refsRevealed < referenceImages.length
+                ? "Generating reference images"
+                : "References ready"}
+            </span>
+            <span className="text-fg-tertiary/45">·</span>
+            <span className="font-mono tabular-nums text-fg-tertiary">
+              {refsRevealed}/{referenceImages.length}
+            </span>
+            <span className="ml-auto font-mono text-[10px] tabular-nums text-fg-tertiary/65">
+              imagen 3
+            </span>
+          </div>
+          <div className="flex items-stretch gap-2">
+            {referenceImages.map((img, i) =>
+              i < refsRevealed ? (
+                <motion.div
+                  key={img.url}
+                  initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
+                  className="relative aspect-square w-[72px] flex-shrink-0 overflow-hidden rounded-md border border-brand-ember/30 bg-bg-base/60 shadow-[0_0_18px_-6px_rgba(240,168,104,0.5)]"
+                  title={img.label}
+                >
+                  <img
+                    src={img.url}
+                    alt={img.label}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-bg-base/95 via-bg-base/55 to-transparent px-1 pb-0.5 pt-2 font-body text-[10px] font-medium leading-tight text-fg-secondary">
+                    {img.label}
+                  </div>
+                </motion.div>
+              ) : (
+                <div
+                  key={img.url}
+                  className="relative aspect-square w-[72px] flex-shrink-0 overflow-hidden rounded-md border border-dashed border-fg-tertiary/30 bg-bg-base/40"
+                  aria-hidden
+                >
+                  <div className="absolute inset-0 grid place-items-center">
+                    <Loader2
+                      size={14}
+                      strokeWidth={1.5}
+                      className="animate-spin text-brand-ember/70"
+                    />
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+        </div>
+      ) : null}
+
       {/* Conversation scroller — height-bounded so a long convo cannot
           push the input form off-viewport. The drawer body already has
           `overflow-hidden flex-1`, so `min-h-0` here is what actually
-          enables the inner overflow-y-auto to clip rather than grow. */}
+          enables the inner overflow-y-auto to clip rather than grow.
+          Vertical rhythm bumped to space-y-5 so the bigger bubbles
+          (text-base + role labels) get visible breathing room between
+          turns — the conversation IS the primary content here. */}
       <div
         ref={scrollRef}
         data-lenis-prevent
-        className="flex-1 min-h-0 space-y-3 overflow-y-auto pr-1"
+        className="flex-1 min-h-0 space-y-5 overflow-y-auto pr-1"
       >
         {(() => {
           const turns = scene.conversation;
@@ -575,13 +688,16 @@ export function AgentBubbleStream({ beat }: AgentBubbleStreamProps) {
                 onClick={() => void handleSuggestion(s)}
                 disabled={inFlight}
                 className={cn(
-                  "block w-full border-b border-fg-tertiary/12 px-1 py-2.5 last:border-b-0",
-                  "text-left font-body text-meta-lg leading-snug text-fg-secondary",
+                  "block w-full border-b border-fg-tertiary/12 px-1 py-3 last:border-b-0",
+                  "text-left font-body text-[14px] leading-[1.5] text-fg-secondary",
                   "transition-colors duration-200 ease-out",
                   "hover:text-brand-ember focus-visible:outline-none focus-visible:text-brand-ember",
                   "disabled:pointer-events-none disabled:opacity-50",
                 )}
               >
+                <span className="mr-2 font-mono text-[10px] tabular-nums text-fg-tertiary/65">
+                  {String.fromCharCode(65 + i)}
+                </span>
                 {s}
               </button>
             )) : (

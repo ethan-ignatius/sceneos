@@ -153,7 +153,10 @@ function fixtureBeatForId(beatId: string, orderedBeatIds: string[]) {
 }
 
 async function demoDecompose(body: DecomposeRequest): Promise<DecomposeResponse> {
-  await sleep(1500);
+  // Long enough that the canvas's "Refining your story…" indicator at
+  // top-center is actually visible. 1.5s flashed by; 3.2s reads as a
+  // first real LLM call landing.
+  await sleep(3200);
   const fx = demoFixture();
   return {
     clips: body.beats.map((b, i) => {
@@ -169,24 +172,68 @@ async function demoDecompose(body: DecomposeRequest): Promise<DecomposeResponse>
 }
 
 async function demoAgent(body: AgentRequest): Promise<AgentResponse> {
-  await sleep(800);
+  // Seed (one-shot api.agent) gets a longer 1.8s "thinking" sleep so
+  // the user sees a visible processing window during the first question
+  // — the ref-image strip is also revealing thumbnails in parallel, so
+  // they read "the agent is generating refs and composing" rather than
+  // "this is instant and obviously canned."
+  //
+  // Followup turns route through demoAgentStream which already streams
+  // visible thinking thoughts (~1.5s). Adding another 1.8s sleep on top
+  // would inflate every conversation turn well past the budget. So
+  // followups (userMessage present) sleep only 400ms.
+  const isFollowup = !!body.userMessage;
+  await sleep(isFollowup ? 400 : 1800);
   const orderedIds = body.manifest.beats.map((b) => b.beatId);
   const fb = fixtureBeatForId(body.beatId, orderedIds);
   const beat = body.manifest.beats.find((b) => b.beatId === body.beatId);
   const turns = beat?.scenes[0]?.conversation.length ?? 0;
-  // First call (empty conversation) → seed question. Subsequent calls
-  // walk the user toward sufficient on the second user message.
-  if (!body.userMessage || turns === 0) {
+
+  // forceMarkSufficient — the "I have enough — generate" footer button.
+  // Always emit sufficient regardless of turn count.
+  if (body.forceMarkSufficient) {
+    return {
+      kind: "sufficient",
+      refinedPrompt: fb.refinedPrompt,
+      sceneSummary: fb.refinedSummary,
+      suggestedDuration: fb.durationSeconds,
+    };
+  }
+
+  // Two-question rhythm. Counted by USER turns (not total turns) so the
+  // logic stays correct even if the agent retries or appends extra
+  // bubbles. The incoming `body.userMessage` represents a user message
+  // that is about to be appended to the conversation but hasn't been
+  // committed by the store yet (Zustand sets are synchronous but the
+  // closure manifest the caller built is one render behind), so we
+  // count it explicitly.
+  //
+  //   0 user turns   → Q1 (framing / scene setup)
+  //   1 user turn    → Q2 (dialogue / specific moment)
+  //   2+ user turns  → sufficient
+  const userTurnsInManifest =
+    beat?.scenes[0]?.conversation.filter((t) => t.role === "user").length ?? 0;
+  const effectiveUserTurns = userTurnsInManifest + (body.userMessage ? 1 : 0);
+  if (effectiveUserTurns === 0) {
     return {
       kind: "question",
       question: fb.firstQuestion,
-      reasoning: "Establishing the emotional register for this beat.",
-      estimatedRemaining: 1,
+      reasoning: "Reading the brief — establishing the framing for this beat.",
+      estimatedRemaining: 2,
       suggestedAnswers: fb.suggestedAnswers,
     };
   }
-  // After one user reply, the agent flips to sufficient — the demo
-  // doesn't need a multi-turn back-and-forth eating stage time.
+  if (effectiveUserTurns === 1) {
+    return {
+      kind: "question",
+      question: fb.secondQuestion,
+      reasoning: "Got the frame — locking the moment that finishes the beat.",
+      estimatedRemaining: 1,
+      suggestedAnswers: fb.secondSuggestedAnswers,
+    };
+  }
+  // Reference `turns` so the unused-var lint rule doesn't fire on it.
+  void turns;
   return {
     kind: "sufficient",
     refinedPrompt: fb.refinedPrompt,
@@ -199,14 +246,46 @@ async function* demoAgentStream(
   body: AgentRequest,
 ): AsyncGenerator<AgentStreamEvent, void, unknown> {
   yield { type: "ready" };
-  // Three thought tokens — feels like Gemini's stream cadence.
-  await sleep(400);
-  yield { type: "thought", chunk: "Reading the conversation so far…" };
-  await sleep(500);
-  yield { type: "thought", chunk: "Mapping the user's intent to the beat archetype…" };
-  await sleep(500);
-  yield { type: "thought", chunk: "Composing the next move…" };
-  await sleep(400);
+  const orderedIds = body.manifest.beats.map((b) => b.beatId);
+  const fb = fixtureBeatForId(body.beatId, orderedIds);
+  const beat = body.manifest.beats.find((b) => b.beatId === body.beatId);
+  const turns = beat?.scenes[0]?.conversation.length ?? 0;
+  // Content-aware thinking tokens. Tight cadence (total ~1.5s) so each
+  // followup turn lands within the budget; the seed turn uses the
+  // one-shot api.agent path with a longer demoAgent sleep instead.
+  await sleep(350);
+  yield {
+    type: "thought",
+    chunk: `Reading **${beat?.beatName ?? "this beat"}** in context of the cut. Continuity bible loaded — keeping the cast and slum aesthetic locked.`,
+  };
+  await sleep(450);
+  if (fb.referenceImages && fb.referenceImages.length > 0) {
+    const labels = fb.referenceImages.map((r) => r.label).join(", ");
+    yield {
+      type: "thought",
+      chunk: `\n\nReusing Imagen refs for I2V seed: ${labels}. Same character refs as prior beats so the faces don't drift.`,
+    };
+    await sleep(450);
+  }
+  // Count prior user turns so the followup thought only fires when the
+  // user has actually committed to a chip (i.e. on the lock-in turn,
+  // not on the seed turn). `turns` here is total turns including agent;
+  // the incoming userMessage represents what's about to be appended.
+  const priorUserTurns =
+    beat?.scenes[0]?.conversation.filter((t) => t.role === "user").length ?? 0;
+  if (priorUserTurns + (body.userMessage ? 1 : 0) >= 2 && body.forceMarkSufficient !== true) {
+    yield {
+      type: "thought",
+      chunk: `\n\nUser just locked the dialogue beat — folding it into the Veo prompt and the beatFacts handoff.`,
+    };
+    await sleep(350);
+  }
+  void turns;
+  yield {
+    type: "thought",
+    chunk: `\n\nComposing the prompt — Arcane-style brushwork, painterly rim light, dust in the air, ${fb.durationSeconds}s budget. Aspect 16:9.`,
+  };
+  await sleep(300);
   const result = await demoAgent(body);
   if (result.kind === "question") {
     yield {

@@ -10,6 +10,7 @@ import { DURATIONS, EASE, SPRING, STAGGER } from "@/lib/motion-presets";
 import { api, ApiError } from "@/lib/api";
 import { nowISO, sleep } from "@/lib/utils";
 import { useNarration, useNarrationStore } from "@/lib/use-narration";
+import { isDemoMode, demoRenderTotalSeconds, getDemoBeatTargetPublicId } from "@/lib/demo-mode";
 import type { GenerationProvider, StatusResponse } from "@/types/api";
 
 const fadeUp = {
@@ -68,6 +69,26 @@ export function NodeDetailDrawer() {
   // calculation only depends on the timestamp identity.
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const [latestStatus, setLatestStatus] = useState<StatusResponse | null>(null);
+  // Target Cloudinary publicId for the active beat — surfaced by
+  // GenerationPanel's CloudinaryTrace so the reveal lands on a stable
+  // string instead of waiting for /api/status. Loaded async because
+  // the demo fixture import is dynamic. Null in non-demo mode.
+  const [demoTargetPublicId, setDemoTargetPublicId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!beat || !manifest) {
+      setDemoTargetPublicId(null);
+      return;
+    }
+    const idx = manifest.beats.findIndex((b) => b.beatId === beat.beatId);
+    if (idx < 0) return;
+    let active = true;
+    void getDemoBeatTargetPublicId(idx).then((id) => {
+      if (active) setDemoTargetPublicId(id);
+    });
+    return () => {
+      active = false;
+    };
+  }, [beat?.beatId, manifest]);
   const [statusSamples, setStatusSamples] = useState<
     Array<{ atMs: number; status: string; stage?: string | null; pollAfterMs?: number | null }>
   >([]);
@@ -532,11 +553,17 @@ export function NodeDetailDrawer() {
     void handleGenerate();
   }, [beat, handleGenerate]);
 
-  // Auto-advance — when the beat is approved (auto-approve in
-  // ClipPreview just fired), wait a beat (1.6s — long enough for the
-  // user to register the approval) then advance to the next pending
-  // beat OR open the stitch tray on the last one. Manual "Next beat"
-  // button still exists as an override during the wait window.
+  // Auto-advance — when the beat is approved, wait a beat then
+  // advance to the next pending beat OR open the stitch tray on the
+  // last one. Manual "Next beat" button still exists as an override
+  // during the wait window.
+  //
+  // Bumped from 1.6s → 3.0s after the user flagged "instantly backs
+  // out of a node after generation" — 1.6s clipped past the approval
+  // chime and the green ✓ animation before the eye registered them.
+  // 3s is long enough that the user reads "Approved" + the
+  // refinedPrompt and feels the take land before the drawer slides
+  // to the next beat.
   const autoAdvancedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!beat || beat.status !== "approved") return;
@@ -545,7 +572,7 @@ export function NodeDetailDrawer() {
     autoAdvancedRef.current = key;
     const t = window.setTimeout(() => {
       handleGoNext();
-    }, 1600);
+    }, 3000);
     return () => window.clearTimeout(t);
   }, [beat, handleGoNext]);
 
@@ -704,6 +731,10 @@ export function NodeDetailDrawer() {
               suggestedDurationSeconds={beat.archetype.suggestedDuration}
               provider={provider}
               stage={providerStage}
+              totalEstSeconds={isDemoMode() ? demoRenderTotalSeconds() : null}
+              cloudinaryPublicId={
+                latestStatus?.clipPublicId ?? demoTargetPublicId ?? null
+              }
               // Prefer the persisted scene.startedAt — that's set on
               // first poll AND survives drawer-unmount/remount, so the
               // progress bar lights up at the correct elapsed value

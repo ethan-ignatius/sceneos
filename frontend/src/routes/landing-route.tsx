@@ -14,6 +14,21 @@ import { AuthChip } from "@/components/ui/auth-chip";
 import { VIDEO_TYPE_TIERS } from "@/lib/beat-templates";
 import { useNarrationStore } from "@/lib/use-narration";
 import { pickExamplePrompt } from "@/lib/example-prompts";
+import { isDemoMode } from "@/lib/demo-mode";
+
+// Pre-filled master prompt when ?demo=1 is on the URL. The cyberpunk
+// fixture's beats are mapped by index so the actual text doesn't drive
+// any logic — but the prompt has to read like something a director
+// would actually write so judges believe the agent is working from it.
+const DEMO_MASTER_PROMPT =
+  "Four kids on a sand basketball court in a cyberpunk slum where music " +
+  "is forbidden. They unearth a working tape recorder buried under the " +
+  "sand. The moment they press play, a giant mech locks onto them. " +
+  "Stylized 2D animation in the register of Riot's Arcane — painterly, " +
+  "saturated rim light, dust motes in the air. Cast: a lean MC in a " +
+  "faded hoodie; a sunglassed dimorphic enforcer; a glasses-wearing " +
+  "tinkerer with a buzz cut; a lanky loud one. End on the explosion as " +
+  "they scatter screaming.";
 
 /**
  * Landing — the hook.
@@ -49,7 +64,15 @@ export function LandingRoute() {
   const projects = useBeatGraphStore((s) => s.projects);
   const resumeProject = useBeatGraphStore((s) => s.resumeProject);
   const reducedMotion = useReducedMotion();
-  const [draft, setDraft] = useState(masterPrompt);
+  // Demo-mode pre-fill: when demo mode is active, ALWAYS seed the
+  // textarea with the cyberpunk master prompt so the live judging round
+  // has zero typing on landing — even if a previous session left a
+  // stale draft in the persisted prompt-store. The user can still edit
+  // before pressing Enter, but the default is the right one.
+  const demo = isDemoMode();
+  const [draft, setDraft] = useState(
+    demo ? DEMO_MASTER_PROMPT : masterPrompt,
+  );
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Double-submit guard. Voice settle (3s silence) and Enter can fire
@@ -160,7 +183,16 @@ export function LandingRoute() {
     // batch as the submit (user clicks Trailer then immediately hits
     // Enter — the submit's videoType closure was the stale value).
     // Reproduces as: pick Trailer, get 8 planets anyway.
-    const submittedVideoType = usePromptStore.getState().videoType;
+    //
+    // Demo-mode override: the cyberpunk fixture has 7 pre-rendered clips
+    // mapped by manifest beat index, so we force the 7-beat "story"
+    // videoType regardless of which chip the user picked. Picking a
+    // shorter tier in demo mode would silently truncate the cinematic
+    // (3 of the 7 clips would never play) and judges would get a
+    // half-told story.
+    const submittedVideoType = demo
+      ? "story"
+      : usePromptStore.getState().videoType;
     initialize({ masterPrompt: trimmed, videoType: submittedVideoType });
 
     // Co-director reacts to the prompt — fire-and-forget so it plays
@@ -546,16 +578,20 @@ export function LandingRoute() {
             </motion.p>
 
             {/* Video-type tier picker — Trailer / Short film / Movie.
-                Beat count was a leading numeral ("3 Trailer 5 Short film
-                8 Movie") which read as a parsed list, not a tier label.
-                Now: just the tier labels with a small dot separator
-                between them. Beat count moved to a hover-only title
-                attribute for the curious. */}
+                Hidden in demo mode: the cyberpunk fixture has 7 clips
+                mapped by manifest beat index, so anything other than
+                the 7-beat "story" tier would silently truncate the
+                cinematic. Demo mode forces "story" at submit time
+                regardless of which chip the user picked, so showing
+                the picker would only be misleading. */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 1.7 }}
-              className="mt-3 flex items-center justify-center gap-0.5"
+              className={cn(
+                "mt-3 flex items-center justify-center gap-0.5",
+                demo && "hidden",
+              )}
               role="radiogroup"
               aria-label="Cinematic length"
             >

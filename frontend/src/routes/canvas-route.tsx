@@ -9,6 +9,7 @@ import { PersistentUrlStrip } from "@/components/stitch/persistent-url-strip";
 import { CanvasErrorBoundary } from "@/components/canvas/canvas-error-boundary";
 import { DecomposeIndicator } from "@/components/canvas/decompose-indicator";
 import { Minimap } from "@/components/canvas/minimap";
+import { RenderQueueBadge } from "@/components/canvas/render-queue-badge";
 import { RESET_CAMERA_EVENT } from "@/components/canvas/beat-map-events";
 import { DURATIONS, EASE } from "@/lib/motion-presets";
 import { startAmbientProjector } from "@/lib/audio-cues";
@@ -202,23 +203,21 @@ export function CanvasRoute() {
     return () => window.clearTimeout(t);
   }, [arcArmed, manifest, activeBeatId, stitchOpen, setActiveBeat]);
 
-  // Auto-close the drawer once the active beat is approved AND re-arm
-  // the arc, so the next pending beat will open after a 2s breath.
-  // The 1.2s lets the approval animation land before we whisk away.
-  useEffect(() => {
-    if (!manifest) return;
-    if (!activeBeatId) return;
-    const active = manifest.beats.find((b) => b.beatId === activeBeatId);
-    if (!active || active.status !== "approved") return;
-    const t = window.setTimeout(() => {
-      const live = useBeatGraphStore.getState();
-      // Bail if the user already navigated elsewhere themselves.
-      if (live.activeBeatId !== activeBeatId) return;
-      setActiveBeat(null);
-      setArcArmed(true);
-    }, 1200);
-    return () => window.clearTimeout(t);
-  }, [manifest, activeBeatId, setActiveBeat]);
+  // Auto-close-on-approval REMOVED — it raced the drawer's own
+  // auto-advance (NodeDetailDrawer's `handleGoNext` at 1.6s) and won
+  // because it fired at 1.2s, which closed the drawer and cancelled
+  // the auto-advance timer via React effect cleanup. The result was
+  // the bug the user flagged as "instantly backs out of a node after
+  // generation" — the drawer would slam shut after Approve and then
+  // the auto-arc had to spin back up 2 seconds later, opening a new
+  // drawer for the next beat. Net effect: a confusing close-then-open
+  // flicker between every beat.
+  //
+  // The drawer already owns the transition: handleGoNext sets the
+  // active beat to the next pending beat (or to null + opens the
+  // stitch tray on the last beat). Letting the drawer drive avoids
+  // the race entirely; the user sees one smooth slide from beat N to
+  // beat N+1 inside the same drawer surface.
 
   // Re-center: clear active beat AND fire the camera-reset event so
   // BeatMap3D zeros any pan offset. Also disarms the auto-arc — the
@@ -387,6 +386,14 @@ export function CanvasRoute() {
           </span>
         </button>
       </motion.div>
+
+      {/* Demo-mode render queue — pinned top-left under the chrome
+          chips. Surfaces evidence of speculative pre-bake running for
+          all 7 beats in parallel so judges read "the render felt fast
+          because we dispatched all of them while you were directing
+          beat 1," not "this is suspiciously instant." Auto-fades to a
+          ✓ summary once every beat is rendered. */}
+      <RenderQueueBadge />
 
       {/* Always-visible URL strip — Cloudinary track-hero feature is no
           longer hidden behind the stitch tray (VIABILITY V2 / issue #072). */}

@@ -45,16 +45,36 @@ function AgentBubbleImpl({ turn, reveal = true }: AgentBubbleProps) {
       initial={{ opacity: 0, y: 6, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={SPRING.bubble}
-      className={cn("flex w-full", isAgent ? "justify-start" : "justify-end")}
+      className={cn(
+        "flex w-full flex-col",
+        isAgent ? "items-start" : "items-end",
+      )}
     >
+      {/* Tiny role label above each bubble — anchors the conversation
+          register so judges read "Agent ↔ Director" rather than two
+          floating bubbles of text. Mono caps for the agent side, plain
+          tracked caps for the user side; both subdued so they don't
+          fight the bubble itself. */}
+      <span
+        className={cn(
+          "mb-1 px-1 font-mono text-[10px] uppercase tracking-[0.14em]",
+          isAgent ? "text-brand-ember/85" : "text-brand-cool/85",
+        )}
+      >
+        {isAgent ? "Agent" : "You"}
+      </span>
       <div
         className={cn(
-          // Rounded "chat bubble" geometry — 2xl corners with one tail-style
-          // tight corner that signals which side the message came from.
-          "max-w-[85%] break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+          // Rounded "chat bubble" geometry — 2xl corners with one tail-
+          // style tight corner that signals which side the message came
+          // from. Sized at text-base (16px, was text-sm/15px) so the
+          // conversation IS the primary content of the drawer. Padding
+          // bumped to px-4 py-3.5 so each bubble sits with breathing
+          // room and reads as a real chat message.
+          "max-w-[92%] break-words rounded-2xl px-4 py-3.5 text-base leading-[1.55]",
           isAgent
-            ? "rounded-bl-md bg-brand-ember/12 text-fg-primary ring-1 ring-brand-ember/20"
-            : "rounded-br-md bg-brand-cool/15 text-fg-primary ring-1 ring-brand-cool/30",
+            ? "rounded-bl-sm bg-brand-ember/15 text-fg-primary ring-1 ring-brand-ember/35 shadow-[0_2px_18px_-8px_rgba(240,168,104,0.4)]"
+            : "rounded-br-sm bg-brand-cool/22 text-fg-primary ring-1 ring-brand-cool/40 shadow-[0_2px_18px_-8px_rgba(108,160,220,0.4)]",
         )}
       >
         {isAgent && reveal ? (

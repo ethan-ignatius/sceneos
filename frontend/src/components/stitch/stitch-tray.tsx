@@ -30,6 +30,7 @@ import { renderHighlightedUrl } from "@/lib/url-display";
 import { api, ApiError } from "@/lib/api";
 import { playRenderWhoosh } from "@/lib/audio-cues";
 import { useNarration } from "@/lib/use-narration";
+import { isDemoMode } from "@/lib/demo-mode";
 import { SPRING, DURATIONS, EASE } from "@/lib/motion-presets";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -129,16 +130,23 @@ export function StitchTray({ onClose }: StitchTrayProps) {
       // No client-side audio mixing needed; the cinematic IS the
       // narrated cinematic.
       let narrationPublicId: string | undefined;
-      try {
-        const narrationRes = await api.narrateSummary({ manifest });
-        if (narrationRes?.publicId) {
-          narrationPublicId = narrationRes.publicId;
+      // Demo mode skips ElevenLabs entirely. The /api/narrate/summary
+      // endpoint isn't mocked, so calling it during a live demo with
+      // the backend offline would hang on a connection-refused/timeout
+      // before falling through. The pre-stitched master cut already
+      // carries its own audio bed.
+      if (!isDemoMode()) {
+        try {
+          const narrationRes = await api.narrateSummary({ manifest });
+          if (narrationRes?.publicId) {
+            narrationPublicId = narrationRes.publicId;
+          }
+        } catch (err) {
+          // Narration is best-effort — if it fails (ElevenLabs key
+          // missing, quota, etc.) we fall through to a silent or
+          // music-only stitch. Render must not block on narration.
+          console.warn("[stitch] narration failed; rendering without narrator", err);
         }
-      } catch (err) {
-        // Narration is best-effort — if it fails (ElevenLabs key
-        // missing, quota, etc.) we fall through to a silent or
-        // music-only stitch. Render must not block on narration.
-        console.warn("[stitch] narration failed; rendering without narrator", err);
       }
 
       // The stitch URL is the OPENING cut. The editor route will re-bake it
@@ -155,7 +163,13 @@ export function StitchTray({ onClose }: StitchTrayProps) {
         thumbnailUrl: res.thumbnailUrl,
         durationSeconds: res.durationSeconds,
       });
-      navigate("/edit");
+      // Demo mode skips the editor route — its backend endpoints
+      // (/api/editor/init, /api/editor/apply, /api/editor/stream) are
+      // not part of the demo-mode mock surface, so a nav to /edit would
+      // immediately surface "Couldn't load the cut for editing." For
+      // the live judging round we land directly on /final with the
+      // pre-stitched master cut playing.
+      navigate(isDemoMode() ? "/final" : "/edit");
     } catch (err) {
       if (!mountedRef.current) return;
       setRenderError(err instanceof ApiError ? err.message : "Render failed.");
