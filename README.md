@@ -2,12 +2,7 @@
 
 > Powerful filmmaking, reimagined for one. SceneOS turns one idea into a finished cinematic, collapsing a film crew, 24 hours of editing, and a cinematographer's vocabulary into one creator's hands.
 
-LA Hacks 2026. Built by Alex (frontend lead), Vishnu, Ethan.
-
-**Submission tracks**
-- Cloudinary Company Challenge — `fl_splice` is the artifact. Every edit deterministically rewrites a single CDN URL; no render server, Cloudinary owns delivery end-to-end.
-- Flicker to Flow (productivity) — agentic director conversation collapses 7 beats × 24h of editing into a 60-second walkthrough.
-- Higgsfield prize — first-class video provider with deterministic `/api/orchestrate` per beat (Vertex Veo + fal alternates available).
+Built at LA Hacks 2026 by Alex, Vishnu, and Ethan.
 
 ---
 
